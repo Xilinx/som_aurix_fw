@@ -152,14 +152,47 @@ static void prv_AssertPwrgd(void)
     IfxPort_setPinHigh(AppPin_GetPort(PIN_COMHPC_PWRGD.portIdx), PIN_COMHPC_PWRGD.pinIdx);
 }
 
+/* ---- UART MUX helpers ------------------------------------------------
+ * PIN_UART_MUX_SEL (P14.6):
+ *   HIGH (1) = AURIX owns ASCLIN0 on P14.0/P14.1
+ *   LOW  (0) = x86 SoC owns the shared UART connector
+ *
+ * AURIX holds the UART from power-on until SYS_RESET_L is released,
+ * ensuring all boot-time diagnostic output is visible.  The MUX hands
+ * off to the SoC immediately before COLD_RST is deasserted and is
+ * reclaimed immediately after COLD_RST is (re-)asserted.
+ * --------------------------------------------------------------------- */
+static void prv_UartClaimByAurix(void)
+{
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                       PIN_UART_MUX_SEL.pinIdx);
+}
+
+static void prv_UartReleaseToSoc(void)
+{
+    /* Print last AURIX diagnostic before relinquishing the UART path. */
+    Debug_Print("[PM] UART MUX → x86 SoC (UART_MUX_SEL=0)\r\n");
+    IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                      PIN_UART_MUX_SEL.pinIdx);
+}
+
 static void prv_AssertApuReset(void)
 {
-    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx), PIN_APU_RESET_OUT_L.pinIdx);
+    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+                      PIN_APU_RESET_OUT_L.pinIdx);
+    /* Reclaim UART immediately after asserting reset — SoC is now in
+     * reset so the shared line is free for AURIX diagnostic use. */
+    prv_UartClaimByAurix();
+    Debug_Print("[PM] COLD_RST asserted. UART MUX → AURIX (UART_MUX_SEL=1)\r\n");
 }
 
 static void prv_DeassertApuReset(void)
 {
-    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx), PIN_APU_RESET_OUT_L.pinIdx);
+    /* Hand UART to x86 SoC before releasing reset so it owns the line
+     * from its first boot cycle.  This is the last AURIX UART message. */
+    prv_UartReleaseToSoc();
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+                       PIN_APU_RESET_OUT_L.pinIdx);
 }
 
 static void prv_SetState(PM_State_t newState)

@@ -154,7 +154,10 @@ void Port_Init(void)
     initOutput(&PIN_TLF_WDI, FALSE);
 
     /* ---- UART MUX (Port 14) --------------------------------------------- */
-    initOutput(&PIN_UART_MUX_SEL, FALSE);
+    /* HIGH = AURIX owns ASCLIN0 (P14.0/P14.1).
+     * AURIX holds the UART from power-on until SYS_RESET_L is released,
+     * at which point PowerManager switches to LOW (x86 SoC). */
+    initOutput(&PIN_UART_MUX_SEL, TRUE);
 
     /* ---- APML Alert (Port 11) ------------------------------------------- */
     initInputPU(&PIN_APML_ALERT);

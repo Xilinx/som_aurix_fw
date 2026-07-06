@@ -105,6 +105,25 @@ is propagated to the COM-HPC `PROCHOT#` output (P2.10) within 5 ms.
 Future: AMD APML interface (I2C1, P11.13/14) will provide telemetry-based
 throttle control via `SysMonitor_AssertApuProchot()`.
 
+### 7. UART MUX Control
+
+The ASCLIN0 debug UART (P14.0 TX / P14.1 RX) is shared between the AURIX
+and the x86 SoC via a board-level multiplexer controlled by `UART_MUX_SEL`
+(P14.6):
+
+| `UART_MUX_SEL` | Owner | Period |
+|---|---|---|
+| `1` (HIGH) | AURIX | Power-on through `SYS_RESET_L` release |
+| `0` (LOW) | x86 SoC | After `SYS_RESET_L` is deasserted |
+
+The AURIX holds the UART from the moment the firmware starts, ensuring all
+power-sequencing diagnostic output is available on the shared connector during
+bring-up.  The MUX switches to the x86 SoC immediately before `COLD_RST`
+(`SYS_RESET_L`) is deasserted so the SoC owns the line from its first boot
+cycle.  If `COLD_RST` is re-asserted (power-down, THERMTRIP, or fault), the
+AURIX reclaims the MUX instantly so diagnostic messages remain visible while
+the platform is not running.
+
 ---
 
 ## Code Structure
