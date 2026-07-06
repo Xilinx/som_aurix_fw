@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?fileVersion 4.0.0?>
+<!--
+    .cproject — CDT indexer / IntelliSense settings only.
+
+    Build is driven by the Makefile, NOT by CDT managed build.
+    This file exists solely so that ADS code-completion and the
+    Problems view know the include paths and preprocessor macros.
+
+    If ADS reports "toolchain not found" on import, dismiss the warning —
+    it does not affect building (make is used) or indexing.
+-->
+<cproject storage_type_id="org.eclipse.cdt.core.XmlProjectDescriptionStorage">
+
+    <storageModule moduleId="org.eclipse.cdt.core.settings">
+        <cconfiguration id="org.eclipse.cdt.make.core.buildConfig.Debug.1">
+
+            <storageModule buildSystemId="org.eclipse.cdt.make.core.buildSystemId"
+                          id="org.eclipse.cdt.make.core.buildConfig.Debug.1"
+                          moduleId="org.eclipse.cdt.core.settings"
+                          name="Debug">
+                <externalSettings/>
+                <extensions>
+                    <extension id="org.eclipse.cdt.core.ELF"
+                               point="org.eclipse.cdt.core.BinaryParser"/>
+                    <extension id="org.eclipse.cdt.core.GCCErrorParser"
+                               point="org.eclipse.cdt.core.ErrorParser"/>
+                    <extension id="org.eclipse.cdt.core.GmakeErrorParser"
+                               point="org.eclipse.cdt.core.ErrorParser"/>
+                    <extension id="org.eclipse.cdt.core.GLDErrorParser"
+                               point="org.eclipse.cdt.core.ErrorParser"/>
+                    <extension id="org.eclipse.cdt.core.CWDLocator"
+                               point="org.eclipse.cdt.core.ErrorParser"/>
+                    <extension id="org.eclipse.cdt.core.GASErrorParser"
+                               point="org.eclipse.cdt.core.ErrorParser"/>
+                </extensions>
+            </storageModule>
+
+            <!-- Language settings providers for IntelliSense / indexer -->
+            <storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders">
+                <provider copy-of="extension" id="org.eclipse.cdt.make.core.CompilationDatabaseParser"/>
+                <provider copy-of="extension" id="org.eclipse.cdt.ui.UserLanguageSettingsProvider"/>
+                <provider-reference id="org.eclipse.cdt.core.ReferencedProjectsLanguageSettingsProvider" ref="shared-provider"/>
+                <provider-reference id="org.eclipse.cdt.managedbuilder.core.MBSLanguageSettingsProvider" ref="shared-provider"/>
+            </storageModule>
+
+            <storageModule moduleId="cdtBuildSystem" version="4.0.0">
+                <configuration artifactName="TC387_COMHPCController"
+                              buildArtefactType="org.eclipse.cdt.build.core.buildArtefactType.exe"
+                              id="org.eclipse.cdt.make.core.buildConfig.Debug.1"
+                              name="Debug">
+                    <folderInfo id="org.eclipse.cdt.make.core.buildConfig.Debug.1."
+                               name="/"
+                               resourcePath="">
+                        <toolChain id="org.eclipse.cdt.make.core.toolChain.1"
+                                  name="No ToolChain"
+                                  superClass="org.eclipse.cdt.build.core.prefbase.toolchain">
+                            <targetPlatform
+                                    id="org.eclipse.cdt.make.core.targetPlatform.1"
+                                    name="Debug Platform"
+                                    superClass="org.eclipse.cdt.build.core.prefbase.toolchain"/>
+                            <builder id="org.eclipse.cdt.make.core.builder.1"
+                                    keepEnvironmentInBuildfile="false"
+                                    managedBuildOn="false"
+                                    name="Gnu Make Builder"
+                                    superClass="org.eclipse.cdt.make.core.makeBuilder"/>
+                            <!--
+                                GCC C Tool — used only for IntelliSense include paths.
+                                Defines the include paths visible to the CDT indexer.
+                            -->
+                            <tool id="org.eclipse.cdt.make.core.tool.1"
+                                 name="CDT Scanner"
+                                 superClass="org.eclipse.cdt.build.core.settings.holder.cSourceFile">
+                                <option id="org.eclipse.cdt.make.core.tool.option.includes.1"
+                                       name="Include Paths"
+                                       superClass="org.eclipse.cdt.build.core.settings.holder.incpaths"
+                                       valueType="includePath">
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/AppSw/Main}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/AppSw/Bsp}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/AppSw/Platform}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/AppSw/PowerManager}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/AppSw/UsbPd}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/Src/BaseSw}"/>
+                                    <listOptionValue builtIn="false"
+                                                    value="${workspace_loc:/${ProjName}/iLLD}"/>
+                                </option>
+                                <option id="org.eclipse.cdt.make.core.tool.option.defines.1"
+                                       name="Preprocessor Defines"
+                                       superClass="org.eclipse.cdt.build.core.settings.holder.symbols"
+                                       valueType="definedSymbols">
+                                    <listOptionValue builtIn="false" value="IFX_CFG_TC3XX_DEVICE=IFX_CFG_TC38XA"/>
+                                    <listOptionValue builtIn="false" value="DEBUG"/>
+                                </option>
+                            </tool>
+                        </toolChain>
+                    </folderInfo>
+
+                    <!-- Source paths visible to CDT project explorer and indexer -->
+                    <sourceEntries>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="Src/AppSw/Main"/>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="Src/AppSw/Bsp"/>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="Src/AppSw/Platform"/>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="Src/AppSw/PowerManager"/>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="Src/AppSw/UsbPd"/>
+                        <entry flags="VALUE_WORKSPACE_PATH"
+                               kind="sourcePath" name="iLLD"/>
+                    </sourceEntries>
+                </configuration>
+            </storageModule>
+
+            <storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+        </cconfiguration>
+    </storageModule>
+
+    <storageModule moduleId="org.eclipse.cdt.make.core.buildtargets">
+        <buildTargets>
+            <target name="all" path="" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
+                <buildCommand>make</buildCommand>
+                <buildArguments>-j4</buildArguments>
+                <buildTarget>all</buildTarget>
+                <stopOnError>true</stopOnError>
+                <useDefaultCommand>false</useDefaultCommand>
+            </target>
+            <target name="clean" path="" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
+                <buildCommand>make</buildCommand>
+                <buildArguments/>
+                <buildTarget>clean</buildTarget>
+                <stopOnError>true</stopOnError>
+                <useDefaultCommand>false</useDefaultCommand>
+            </target>
+            <target name="release" path="" targetID="org.eclipse.cdt.make.MakeTargetBuilder">
+                <buildCommand>make</buildCommand>
+                <buildArguments>-j4 CONFIG=Release</buildArguments>
+                <buildTarget>all</buildTarget>
+                <stopOnError>true</stopOnError>
+                <useDefaultCommand>false</useDefaultCommand>
+            </target>
+        </buildTargets>
+    </storageModule>
+
+    <storageModule moduleId="scannerConfiguration">
+        <autodiscovery enabled="true"
+                      problemReportingEnabled="true"
+                      selectedProfileId=""/>
+    </storageModule>
+
+    <storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders">
+        <provider-reference id="org.eclipse.cdt.core.ReferencedProjectsLanguageSettingsProvider"
+                           ref="shared-provider"/>
+    </storageModule>
+
+</cproject>

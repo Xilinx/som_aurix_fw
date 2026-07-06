@@ -1,0 +1,31 @@
+/**
+ * @file    Ifx_Cfg.h
+ * @brief   Top-level iLLD configuration for the TC387 COM-HPC controller.
+ *
+ * This file is included by iLLD headers via the IFX_CFG_H inclusion guard.
+ * Set MCU variant, oscillator frequency, and any iLLD feature switches here.
+ */
+
+#ifndef IFX_CFG_H
+#define IFX_CFG_H
+
+/* ---- MCU variant -------------------------------------------------------- */
+#define IFX_CFG_TC3XX_DEVICE        IFX_CFG_TC38XA
+
+/* ---- External oscillator ------------------------------------------------ */
+/* Verify against the board crystal / XTAL specification. */
+#define IFX_CFG_SCU_XTAL_FREQUENCY  20000000u   /* 20 MHz board crystal     */
+
+/* ---- CPU clock target --------------------------------------------------- */
+#define IFX_CFG_SCU_PLL_FREQUENCY   300000000u  /* 300 MHz fCPU             */
+
+/* ---- iLLD feature enables ----------------------------------------------- */
+#define IFX_USE_SW_MANAGED_INT      0
+#define IFX_CFG_USE_COMMUNITY       0
+
+/* ---- Watchdog ------------------------------------------------------------ */
+/* Watchdog is disabled in Cpu0_Main during development.
+ * Set to 1 to enable iLLD watchdog servicing if required. */
+#define IFX_CFG_SCU_ENABLE_WATCHDOG 0
+
+#endif /* IFX_CFG_H */

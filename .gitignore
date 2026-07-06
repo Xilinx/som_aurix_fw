@@ -1,0 +1,31 @@
+# Build artefacts
+Build/
+*.elf
+*.hex
+*.bin
+*.map
+*.lss
+*.d
+*.o
+
+# Eclipse / ADS workspace metadata (do NOT commit these — they are machine-local)
+.metadata/
+.settings/
+RemoteSystemsTempFiles/
+
+# ADS debug launch configs (machine-specific paths inside)
+*.launch
+
+# HIGHTEC GCC dependency files
+*.d
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# iLLD library — not committed; each developer unpacks their own copy
+iLLD/
+
+# Reference documents — AMD Confidential / proprietary SOM materials
+# Obtain separately per NDA / AMD partner portal
+Docs/
