@@ -10,7 +10,7 @@
 #include "IfxPort.h"
 #include <string.h>
 
-#define MAX_MONITORED_RAILS     12u
+#define MAX_MONITORED_RAILS     16u
 
 typedef struct
 {
@@ -39,7 +39,8 @@ void PwrGood_MonArm(const PwrRail_Cfg_t *rails, uint8 count, PgFaultCb_t faultCb
     s_monCount = count;
     s_faultCb  = faultCb;
 
-    for (uint8 i = 0u; i < count; i++)
+    uint8 i;
+    for (i = 0u; i < count; i++)
     {
         s_mon[i].rail        = &rails[i];
         s_mon[i].stableCount = 0u;
@@ -57,12 +58,13 @@ void PwrGood_MonDisarm(void)
 
 void PwrGood_MonRun(void)
 {
+    uint8 i;
+
     if (!s_armed)
     {
         return;
     }
-
-    for (uint8 i = 0u; i < s_monCount; i++)
+    for ( i = 0u; i < s_monCount; i++)
     {
         if (prv_ReadPg(s_mon[i].rail) == FALSE)
         {
@@ -95,8 +97,8 @@ boolean PwrGood_WaitAllPg(const PwrRail_Cfg_t *rails, uint8 count,
     Stm_DelayMs(rampDelayMs);
 
     uint32 deadline = Stm_GetTimeMs() + timeoutMs;
-
-    for (uint8 i = 0u; i < count; i++)
+    uint8 i;
+    for (i = 0u; i < count; i++)
     {
         /* Wait for each rail in sequence. */
         while (prv_ReadPg(&rails[i]) == FALSE)

@@ -1,5 +1,16 @@
+/* ---- Toolchain Note -----------------------------------------------------
+ * This linker script uses HighTec GCC extensions (REGION_MAP, REGION_MIRROR,
+ * CORE_ID, CORE_SEC) that are not part of standard GNU ld syntax.
+ * It requires the HighTec tricore-gcc toolchain which provides these
+ * extensions natively.  The .ld extension is used instead of .lsl for
+ * compatibility with the Makefile's -T flag — both are accepted by the
+ * HighTec linker.  Do not use with upstream GNU ld.
+ * ----------------------------------------------------------------------- */
+
 /**********************************************************************************************************************
- * \file Lcf_Gnuc_Tricore_Tc.lsl
+ * \file tc387.ld
+ *  \note Originally derived from Lcf_Gnuc_Tricore_Tc.lsl in the
+ *  AURIX Development Studio / HighTec GCC board support package.
  * \brief Linker command file for Gnuc compiler.
  * \copyright Copyright (C) Infineon Technologies AG 2019
  * 
@@ -179,7 +190,7 @@ REGION_MIRROR("cpu2_dlmu", "cpu2_dlmu_nc")
 REGION_MIRROR("cpu3_dlmu", "cpu3_dlmu_nc")
 REGION_MIRROR("lmuram", "lmuram_nc")
 
-/*Un comment one of the below statement groups to enable CpuX DMI RAM to hold global variables*/
+/*Uncomment one of the below statement groups to enable CpuX DMI RAM to hold global variables*/
 
 REGION_ALIAS( default_ram , dsram0)
 REGION_ALIAS( default_rom , pfls0)

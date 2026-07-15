@@ -29,6 +29,11 @@
 #include "PowerManager.h"
 #include "UsbPd_Manager.h"
 #include "SysMonitor.h"
+#include "Eru_FaultIsr.h"
+#include "VoltMon.h"
+#include "Tlf35585.h"
+#include "ComHpcWdt.h"
+
 
 /* Banner printed on UART at startup */
 #define FW_VERSION_STR  "TC387 COM-HPC Controller v0.1\r\n"
@@ -45,8 +50,9 @@ int core0_main(void)
     /* ---- 3. GPIO: configure all board pins --------------------------------- */
     Port_Init();
 
-    /* ---- 4. System timer --------------------------------------------------- */
+    /* ---- 4. System and Watchdog timer --------------------------------------------------- */
     Stm_Init();
+    Tlf35585_Init();
 
     /* ---- 5. Debug UART: 115200 8N1 on P14.0/P14.1 ------------------------- */
     Debug_Init();
@@ -63,14 +69,30 @@ int core0_main(void)
 
     /* ---- 8. System monitor (PROCHOT / CATERR default drive) ---------------- */
     SysMonitor_Init();
+    SysMonitor_RegisterShutdownCb(PowerManager_OnThermtripIsr);
     Debug_Print("[SYS] Init: SysMonitor OK\r\n");
 
+
+
+    /* Register THERMTRIP callback to trigger PowerManager S5 suspend */
+    Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
+    Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
+    Eru_FaultIsr_Init();
+    Debug_Print("[SYS] Init: ERU fault ISRs OK\r\n");
+    /* ---- 11. Voltage monitoring ----------------------------------------- */
+    VoltMon_Init();
+    VoltMon_RegisterFaultCb(PowerManager_OnVoltageFault);
+    Debug_Print("[SYS] Init: VoltMon OK\r\n");
+
+    ComHpcWdt_Init();
+    Debug_Print("[SYS] Init: ComHpcWdt OK\r\n");
     /* ---- 9. USB PD manager ------------------------------------------------- */
     /* Note: UsbPdManager_Init() holds I2C traffic; call after PowerManager
      * so that CYPD6129 supply rails are not assumed to be up here.
      * If the CYPD6129 devices are powered by always-on rails, move this call
      * after the power manager reaches PM_STATE_ON. */
     UsbPdManager_Init();
+    
     Debug_Print("[SYS] Init: UsbPdManager OK\r\n");
 
     Debug_Print("[SYS] Entering main loop\r\n");
@@ -78,9 +100,21 @@ int core0_main(void)
     /* ---- Main loop --------------------------------------------------------- */
     for (;;)
     {
+        Tlf35585_ServiceWdt();
         PowerManager_Run();
         SysMonitor_Run();
-        UsbPdManager_Run();
+        VoltMon_Scan(); 
+        ComHpcWdt_Run();
+        if (PowerManager_GetState() == PM_STATE_ON)
+        {
+            static uint32 s_usbPdLastMs = 0u;
+            uint32 nowMs = Stm_GetTimeMs();
+            if ((nowMs - s_usbPdLastMs) >= 5u)
+            {
+                s_usbPdLastMs = nowMs;
+                UsbPdManager_Run();
+            }
+        }
 
         /* Future: service IPC calls from CPU1 / CPU2 here */
     }

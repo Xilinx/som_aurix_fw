@@ -21,9 +21,26 @@
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
 #include "IfxPort.h"
+#include "I2c_Master.h"
+
 
 #define SYSMON_POLL_INTERVAL_MS     5u   /* main-loop poll rate for PROCHOT# */
 #define SYSMON_LOG_INTERVAL_MS      1000u /* re-log PROCHOT assertion once/sec */
+
+#define SYSMON_THERMAL_POLL_MS      100u
+
+/* Temperature thresholds in degrees C — update from AMD thermal spec */
+#define SYSMON_WARNING_TEMP_C       95
+#define SYSMON_SHUTDOWN_TEMP_C      105
+#define SYSMON_TEMP_HYSTERESIS_C    5
+#define SYSMON_TEMP_INVALID         (-128)
+
+#define SBTSI_I2C_ADDR_7BIT     0x4Cu
+#define SBTSI_REG_CPU_TEMP_INT  0x01u
+#define SBTSI_REG_CPU_TEMP_DEC  0x10u
+
+
+static SysMonitor_ShutdownCb_t s_shutdownCb = NULL_PTR;
 
 /* ---- Private helpers ----------------------------------------------------- */
 
@@ -40,11 +57,50 @@ static boolean prv_ReadPin(const AppPin_t *pin)
     return (boolean)IfxPort_getPinState(AppPin_GetPort(pin->portIdx), pin->pinIdx);
 }
 
+static sint16 prv_ReadApuTempC(void)
+{
+    uint8 tempInt;
+    uint8 tempDec;
+    I2c_Status_t st;
+
+    tempInt = 0u;
+    tempDec = 0u;
+
+    /* Read integer first — latches decimal (atomic read, ReadOrder=0) */
+    st = I2cMaster_ApmlReadByte(SBTSI_I2C_ADDR_7BIT,
+                                SBTSI_REG_CPU_TEMP_INT, &tempInt);
+    if (st != I2C_OK)
+    {
+        return SYSMON_TEMP_INVALID;
+    }
+
+    /* Read latched decimal */
+    st = I2cMaster_ApmlReadByte(SBTSI_I2C_ADDR_7BIT,
+                                SBTSI_REG_CPU_TEMP_DEC, &tempDec);
+    if (st != I2C_OK)
+    {
+        return SYSMON_TEMP_INVALID;
+    }
+
+    if ((tempDec >> 5u) >= 4u)
+    {
+        return (sint16)tempInt + 1;
+    }
+
+    return (sint16)tempInt;
+}
+
 /* ---- Private state ------------------------------------------------------- */
 
 static boolean s_prochotActive = FALSE;   /* last observed PROCHOT state */
+static boolean s_thermalThrottle = FALSE;
 
 /* ---- Public API ---------------------------------------------------------- */
+
+void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb)
+{
+    s_shutdownCb = cb;
+}
 
 void SysMonitor_Init(void)
 {
@@ -69,30 +125,75 @@ void SysMonitor_Init(void)
 void SysMonitor_Run(void)
 {
     boolean apuProchotLow;
-    static uint32 s_lastPoll  = 0u;
-    static uint32 s_lastLog   = 0u;
+    static uint32 s_lastPoll    = 0u;
+    static uint32 s_lastLog     = 0u;
+    static uint32 s_lastThermal = 0u;
 
     if (!Stm_IsElapsedMs(&s_lastPoll, SYSMON_POLL_INTERVAL_MS))
     {
         return;
     }
 
-    /* Read the actual pad state of APU_PROCHOT_L.
-     * Returns FALSE (LOW) if the APU or TC387 is asserting the open-drain line. */
+    /* ---- APML Thermal Polling -------------------------------------------
+     * Read APU die temperature via I2C1 (SIC/SID, P11.13/P11.14).
+     * Compare against warning (PROCHOT) and error (shutdown) thresholds.
+     *
+     * APML register map is pending AMD documentation for Glacier Peak.
+     * Once available, replace prv_ReadApuTempC() with the actual I2C
+     * transaction targeting the correct APML register address.
+     * ------------------------------------------------------------------ */
+    if (Stm_IsElapsedMs(&s_lastThermal, SYSMON_THERMAL_POLL_MS))
+    {
+        sint16 tempC = prv_ReadApuTempC();
+
+        if (tempC != SYSMON_TEMP_INVALID)
+        {
+            if (tempC >= SYSMON_SHUTDOWN_TEMP_C)
+            {
+                Debug_Printf("[SYS] THERMAL SHUTDOWN: APU die %dC >= %dC\r\n",
+                             (int)tempC, (int)SYSMON_SHUTDOWN_TEMP_C);
+                SysMonitor_AssertApuProchot();
+                prv_SetPin(&PIN_PROCHOT_L, FALSE);
+                if (s_shutdownCb != NULL_PTR)
+                {
+                    s_shutdownCb();
+                }
+            }
+            else if (tempC >= SYSMON_WARNING_TEMP_C)
+            {
+                /* Assert PROCHOT to throttle APU */
+                if (!s_thermalThrottle)
+                {
+                    s_thermalThrottle = TRUE;
+                    Debug_Printf("[SYS] THERMAL WARNING: APU die %dC >= %dC, "
+                                 "asserting PROCHOT\r\n",
+                                 (int)tempC, (int)SYSMON_WARNING_TEMP_C);
+                }
+                SysMonitor_AssertApuProchot();
+            }
+            else if (s_thermalThrottle &&
+                     tempC < (SYSMON_WARNING_TEMP_C - SYSMON_TEMP_HYSTERESIS_C))
+            {
+                /* Clear throttle with hysteresis */
+                s_thermalThrottle = FALSE;
+                SysMonitor_DeassertApuProchot();
+                Debug_Printf("[SYS] THERMAL CLEAR: APU die %dC, releasing PROCHOT\r\n",
+                             (int)tempC);
+            }
+        }
+    }
     apuProchotLow = !prv_ReadPin(&PIN_APU_PROCHOT_L);
 
     if (apuProchotLow)
     {
-        /* Assert carrier PROCHOT# (drive LOW) to inform the carrier board. */
         prv_SetPin(&PIN_PROCHOT_L, FALSE);
 
         if (!s_prochotActive)
         {
             s_prochotActive = TRUE;
-            s_lastLog = 0u;   /* force immediate log */
+            s_lastLog = 0u;
         }
 
-        /* Periodic log while PROCHOT is active. */
         if (Stm_IsElapsedMs(&s_lastLog, SYSMON_LOG_INTERVAL_MS))
         {
             Debug_Print("[SYS] PROCHOT# asserted — APU_PROCHOT_L LOW\r\n");
@@ -100,7 +201,6 @@ void SysMonitor_Run(void)
     }
     else
     {
-        /* Release carrier PROCHOT# (drive HIGH). */
         prv_SetPin(&PIN_PROCHOT_L, TRUE);
 
         if (s_prochotActive)

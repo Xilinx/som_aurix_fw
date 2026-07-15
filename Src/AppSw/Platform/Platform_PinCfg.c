@@ -144,3 +144,5 @@ const AppPin_t PIN_MMC_RSMRST_L       = {34u,  1u};
 const AppPin_t PIN_PLTRST_L           = {34u,  2u};
 const AppPin_t PIN_APU_PWRBTN         = {34u,  3u};
 const AppPin_t PIN_BLINK              = {34u,  4u};
+
+const AppPin_t PIN_TESTMODE           = {20u, 2u};

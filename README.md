@@ -220,15 +220,15 @@ som_aurix_fw/
 
 4. **Import into ADS**
    ```
-   File → Import → General → Existing Projects into Workspace
-   → Browse to: som_aurix_fw/
-   → Finish
+   File -> Import -> General -> Existing Projects into Workspace
+   -> Browse to: som_aurix_fw/
+   -> Finish
    ```
 
 5. **Configure source folders** (if not resolved automatically)
    ```
-   Right-click project → Properties → C/C++ General → Source Location
-   → Confirm Src/AppSw/* folders are listed
+   Right-click project -> Properties -> C/C++ General -> Source Location
+   -> Confirm Src/AppSw/* folders are listed
    ```
 
 6. **Fill in GPIO pin assignments** (if board schematic differs)
@@ -238,7 +238,7 @@ som_aurix_fw/
 
 7. **Build**
    ```
-   Project → Build Project  (Ctrl+B)
+   Project -> Build Project  (Ctrl+B)
    ```
    Output: `TriCore Debug/TC387_COMHPC_PMC.elf`
 
@@ -258,8 +258,8 @@ make clean
 
 | Parameter | Value | AMD 58241 Reference |
 |---|---|---|
-| Min delay: S5 rails stable → RSMRST\_L rising | **10 ms** | Table 28, T1 |
-| Min delay: PWR\_GOOD rising → RESET\_L rising | **28.5 ms** | Table 30, T7 |
+| Min delay: S5 rails stable -> RSMRST\_L rising | **10 ms** | Table 28, T1 |
+| Min delay: PWR\_GOOD rising -> RESET\_L rising | **28.5 ms** | Table 30, T7 |
 | Min setup: all rails stable before PWR\_GOOD | **1 ms** (5 ms implemented) | §16.1.1 |
 | Group A stable before Group B > 10 % | Required | §16.1.2 |
 | Group B stable before Group C > 10 % | Required | §16.1.2 |
