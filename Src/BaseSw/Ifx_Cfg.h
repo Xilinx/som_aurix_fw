@@ -10,7 +10,17 @@
 #define IFX_CFG_H
 
 /* ---- MCU variant -------------------------------------------------------- */
+#ifndef IFX_CFG_TC3XX_DEVICE
 #define IFX_CFG_TC3XX_DEVICE        IFX_CFG_TC38XA
+#endif /* IFX_CFG_TC3XX_DEVICE */
+
+#ifndef DEVICE_TC38X
+#define DEVICE_TC38X    1
+#endif
+
+#ifndef IFX_PIN_PACKAGE_516
+#define IFX_PIN_PACKAGE_516    1
+#endif
 
 /* ---- External oscillator ------------------------------------------------ */
 /* Verify against the board crystal / XTAL specification. */

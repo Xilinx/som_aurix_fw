@@ -16,10 +16,10 @@
 #define PM_INTER_RAIL_DELAY_MS          2u    /* gap between enabling successive rails */
 #define PM_PWRGD_DEGLITCH_MS            5u    /* AMD 58241 §16.1.1: all rails stable ≥1ms before PWR_GOOD */
 
-/* AMD 58241 §16.1.5 Table 28 T1: S5 rails stable → RSMRST_L rising, min 10ms */
+/* AMD 58241 §16.1.5 Table 28 T1: S5 rails stable -> RSMRST_L rising, min 10ms */
 #define PM_RSMRST_DELAY_AFTER_S5_MS    10u
 
-/* AMD 58241 §16.1.5 Table 30 T7: PWR_GOOD rising → RESET_L rising, min 28.5ms.
+/* AMD 58241 §16.1.5 Table 30 T7: PWR_GOOD rising -> RESET_L rising, min 28.5ms.
  * RESET_L must remain asserted for this period AFTER PWR_GOOD is asserted. */
 #define PM_RESET_HOLD_AFTER_PWRGD_MS   30u
 
@@ -44,5 +44,8 @@
 #define PM_RAIL_S5_COUNT                2u
 #define PM_RAIL_S3_COUNT                2u
 #define PM_RAIL_S0_COUNT                4u
+
+#define PM_MAX_RETRIES              30u      /* attempts before latch-off, N retries */
+#define PM_RETRY_DELAY_MS           500u 
 
 #endif /* PLATFORM_CFG_H */

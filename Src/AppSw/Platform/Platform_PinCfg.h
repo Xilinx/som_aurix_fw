@@ -67,7 +67,8 @@ extern const AppPin_t PIN_FAN_PWM;              /* P10.1 GPIO Out */
 extern const AppPin_t PIN_CARRIER_HOT;          /* P10.2 ERUIN2 */
 extern const AppPin_t PIN_THERMTRIP_L;          /* P10.3 ERUIN3 */
 extern const AppPin_t PIN_USBC_PD_ALERT_L;      /* P10.7 ERUIN0 — wired-OR from CYPDs */
-extern const AppPin_t PIN_USBC_PD_INT_TO_APU;   /* P10.8 GPIO Out */
+extern const AppPin_t PIN_USBC_PD_INT_TO_APU;   /* P10.8 GPIO Out — forwards PD event to APU */
+
 
 /* ==========================================================================
  * APU APML Interface (Port 11)
@@ -139,7 +140,7 @@ extern const AppPin_t PIN_TLF_ERR;              /* P33.8  GPIO Bidir */
 extern const AppPin_t PIN_TLF_SS;               /* P33.9  GPIO Bidir */
 extern const AppPin_t PIN_TLF_WAKE;             /* P33.10 GPIO Bidir */
 extern const AppPin_t PIN_TLF_WDI;              /* P33.11 GPIO Out   */
-
+extern const AppPin_t PIN_TESTMODE;            /* P20.2 — reserved */     
 /* ==========================================================================
  * APU State Control (Port 34)
  * ========================================================================== */
@@ -162,4 +163,30 @@ extern const AppPin_t PIN_BLINK;                /* P34.4 GPIO Out */
 #define PIN_CYPD0_RESET_L       PIN_PLTRST_L
 #define PIN_CYPD1_RESET_L       PIN_PLTRST_L
 
+/* ==========================================================================
+ * Peripheral-mode pins (configured by driver, not GPIO — listed for reference)
+ * --------------------------------------------------------------------------
+ * ASCLIN0  P14.0/P14.1   MCU Debug UART (TX/RX)
+ * ASCLIN4  P22.5/P22.6   APU sideband UART (RXD/TXD)
+ * I2C0     P13.1/P13.2   USBC PD I2C (SCL/SDA)
+ * I2C1     P11.13/P11.14 APML I2C (SDA/SCL)
+ * QSPI0    P22.7/9/10/11 BIOS ROM SPI (CLK/MISO/MOSI/CS)
+ * QSPI2    P15.2/3/6/7   TLF35585 PMIC SPI (SCS/SCL/SDI/SDO)
+ * QSPI3    P2.4/5/6/7    FuSa SPI Slave (CS/MISO/MOSI/CLK)
+ * ========================================================================== */
+
+/* ==========================================================================
+ * ERU Input Channel Assignments
+ * --------------------------------------------------------------------------
+ * ERUIN0   P10.7   USBC_PD_ALERT#
+ * ERUIN1   P10.8   USBC_PD_INT
+ * ERUIN2   P10.2   CARRIER_HOT
+ * ERUIN3   P10.3   THERMTRIP#
+ * ERUIN4   P15.5   APU_RESET_L
+ * ERUIN6   P11.10  APML_ALERT
+ * ERUIN7   P20.9   WD_STROBE#
+ * ========================================================================== */
+
+
+ 
 #endif /* PLATFORM_PINCFG_H */

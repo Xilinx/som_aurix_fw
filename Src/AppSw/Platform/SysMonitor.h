@@ -55,4 +55,7 @@ void SysMonitor_AssertCaterr(void);
  */
 void SysMonitor_DeassertCaterr(void);
 
+typedef void (*SysMonitor_ShutdownCb_t)(void);
+void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
+
 #endif /* SYS_MONITOR_H */

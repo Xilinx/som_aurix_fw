@@ -10,10 +10,10 @@
  *
  * Sequencing order (each stage waits for all PGs before proceeding):
  *
- *   Stage 0 — 12V EFUSE (MAIN_12V_EFUSE_EN → MAIN_12V_EFUSE_PG)
- *   Stage 1 — Group B   (PWR_GROUP_B_EN → VR_APU_3V3, VDD_MISC, VDD_1V2, VDD_1V8)
- *   Stage 2 — Group C   (PWR_GROUP_C_EN → VDD_MEM_ChA/B, VDDIO_MEM_ChA/B, VDD_MEMQ_ChA/B)
- *   Stage 3 — Group D   (PWR_GROUP_D_EN → VDDCR via MP2825A)
+ *   Stage 0 — 12V EFUSE (MAIN_12V_EFUSE_EN -> MAIN_12V_EFUSE_PG)
+ *   Stage 1 — Group B   (PWR_GROUP_B_EN -> VR_APU_3V3, VDD_MISC, VDD_1V2, VDD_1V8)
+ *   Stage 2 — Group C   (PWR_GROUP_C_EN -> VDD_MEM_ChA/B, VDDIO_MEM_ChA/B, VDD_MEMQ_ChA/B)
+ *   Stage 3 — Group D   (PWR_GROUP_D_EN -> VDDCR via MP2825A)
  *
  * Note: Within each group, PG inputs are checked individually after the group
  * enable is asserted. The group enable is a single GPIO output; the individual
@@ -84,6 +84,10 @@ extern PwrRail_Cfg_t PM_RAILS_GRP_D[PM_RAIL_GRP_D_COUNT];
                                  PM_RAIL_GRP_B_COUNT  + \
                                  PM_RAIL_GRP_C_COUNT  + \
                                  PM_RAIL_GRP_D_COUNT)
+
+#define PM_RAIL_ALL_MON_COUNT   (PM_RAIL_GRP_B_COUNT + PM_RAIL_GRP_C_COUNT + PM_RAIL_GRP_D_COUNT)
+
+extern PwrRail_Cfg_t PM_RAILS_ALL_MON[PM_RAIL_ALL_MON_COUNT];
 
 /**
  * @brief Populate all rail tables at runtime.

@@ -14,8 +14,11 @@
 #include "IfxI2c_I2c.h"
 #include "IfxI2c_PinMap.h"
 
-static IfxI2c_I2c        s_i2cHandle;
+static IfxI2c_I2c s_i2cHandle;
+static IfxI2c_I2c s_i2c1Handle;   /* I2C1 — APML (P11.14/P11.13) */
 static IfxI2c_I2c_Device s_deviceHandle;
+static IfxI2c_I2c_Device s_apmlDevHandle; /* I2C1 — APML (P11.14/P11.13) */
+
 
 void I2cMaster_Init(void)
 {
@@ -33,6 +36,19 @@ void I2cMaster_Init(void)
     cfg.pins     = &pins;
 
     IfxI2c_I2c_initModule(&s_i2cHandle, &cfg);
+    /* ---- I2C1: APML SB-TSI (P11.14 SCL / P11.13 SDA) ------------------- */
+    const IfxI2c_Pins pins1 = {
+        &IfxI2c1_SCL_P11_14_INOUT,
+        &IfxI2c1_SDA_P11_13_INOUT,
+        IfxPort_PadDriver_cmosAutomotiveSpeed1
+    };
+
+    IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C1);
+    cfg.baudrate = 400000.0f;   /* 400 kHz fast-mode per PPR §5.3.2 */
+    cfg.mode     = IfxI2c_Mode_StandardAndFast;
+    cfg.pins     = &pins1;
+
+    IfxI2c_I2c_initModule(&s_i2c1Handle, &cfg);
 }
 
 /* Initialise device handle for a given 7-bit address. */
@@ -111,5 +127,29 @@ I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
 
     prv_SetDevice(addr7bit, FALSE);
     st = IfxI2c_I2c_write2(&s_deviceHandle, (volatile uint8 *)buf, (Ifx_SizeT)(2u + len));
+    return prv_MapStatus(st);
+}
+
+I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData)
+{
+    IfxI2c_I2c_Status st;
+    IfxI2c_I2c_deviceConfig devCfg;
+
+    IfxI2c_I2c_initDeviceConfig(&devCfg, &s_i2c1Handle);
+    devCfg.deviceAddress       = (uint16)((uint16)addr7bit << 1u);
+    devCfg.enableRepeatedStart = TRUE;
+    IfxI2c_I2c_initDevice(&s_apmlDevHandle, &devCfg);
+
+    /* Write register address (repeated start, no STOP) */
+    st = IfxI2c_I2c_write2(&s_apmlDevHandle,
+                            (volatile uint8 *)&regAddr, (Ifx_SizeT)1);
+    if (st != IfxI2c_I2c_Status_ok)
+    {
+        return prv_MapStatus(st);
+    }
+
+    /* Read one data byte */
+    st = IfxI2c_I2c_read2(&s_apmlDevHandle,
+                           (volatile uint8 *)pData, (Ifx_SizeT)1);
     return prv_MapStatus(st);
 }

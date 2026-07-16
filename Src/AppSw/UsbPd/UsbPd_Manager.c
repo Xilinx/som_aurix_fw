@@ -86,12 +86,14 @@ void UsbPdManager_Init(void)
 {
     /* Populate config table before any driver access (Tasking E306 workaround). */
     UsbPd_CfgInit();
+    uint8 i;
+    Cypd_Status_t st;
 
-    for (uint8 i = 0u; i < CYPD_DEVICE_COUNT; i++)
+    for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
     {
         s_portState[i] = USBPD_PORT_DETACHED;
 
-        Cypd_Status_t st = Cypd_HardReset(i);
+        st = Cypd_HardReset(i);
         if (st != CYPD_OK)
         {
             Debug_Printf("[USBPD %s] INIT FAILED (err=%d)\r\n",
@@ -107,13 +109,14 @@ void UsbPdManager_Init(void)
 void UsbPdManager_Run(void)
 {
     static uint32 s_lastPoll = 0u;
-
+    uint8 i;
+    
     if (!Stm_IsElapsedMs(&s_lastPoll, USBPD_MGR_POLL_INTERVAL_MS))
     {
         return;
     }
 
-    for (uint8 i = 0u; i < CYPD_DEVICE_COUNT; i++)
+    for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
     {
         if (Cypd_IsIntAsserted(i))
         {

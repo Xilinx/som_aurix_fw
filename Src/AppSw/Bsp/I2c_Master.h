@@ -55,4 +55,11 @@ I2c_Status_t I2cMaster_ReadReg16(uint8 addr7bit, uint16 regAddr,
 I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
                                    const uint8 *pData, uint16 len);
 
+
+/**
+ * @brief Reads bytes from 8-bit register
+ */
+I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData);
+
+
 #endif /* I2C_MASTER_H */

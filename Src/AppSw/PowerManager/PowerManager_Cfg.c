@@ -49,6 +49,7 @@ PwrRail_Cfg_t PM_RAILS_EFUSE[PM_RAIL_EFUSE_COUNT];
 PwrRail_Cfg_t PM_RAILS_GRP_B[PM_RAIL_GRP_B_COUNT];
 PwrRail_Cfg_t PM_RAILS_GRP_C[PM_RAIL_GRP_C_COUNT];
 PwrRail_Cfg_t PM_RAILS_GRP_D[PM_RAIL_GRP_D_COUNT];
+PwrRail_Cfg_t PM_RAILS_ALL_MON[PM_RAIL_ALL_MON_COUNT];
 
 void PowerManager_CfgInit(void)
 {
@@ -91,7 +92,7 @@ void PowerManager_CfgInit(void)
     /* ====================================================================
      * STAGE 1 — Group B / S5 rails (4 entries)
      * NB706/NB693A powered by 12V_MAIN.  Load switches use VR_APU_3V3.
-     * AMD Table 26 Group B internal order: VDD_MISC_S5 → VDD_18_S5 → VDDIO_33_S5
+     * AMD Table 26 Group B internal order: VDD_MISC_S5 -> VDD_18_S5 -> VDDIO_33_S5
      * ==================================================================== */
 
     /* [0] Pre-Group B: verify VR_APU_3V3_PG immediately before asserting
@@ -211,4 +212,22 @@ void PowerManager_CfgInit(void)
     PM_RAILS_GRP_D[2].pgoodPin     = PIN_VDDCR_PG;
     PM_RAILS_GRP_D[2].rampDelayMs  = 10u;
     PM_RAILS_GRP_D[2].pgTimeoutMs  = 100u;
+
+    uint8 idx = 0u;
+    uint8 j;
+    for (j = 0u; j < PM_RAIL_GRP_B_COUNT; j++)
+    {
+        PM_RAILS_ALL_MON[idx] = PM_RAILS_GRP_B[j];
+        idx++;
+    }
+    for (j = 0u; j < PM_RAIL_GRP_C_COUNT; j++)
+    {
+        PM_RAILS_ALL_MON[idx] = PM_RAILS_GRP_C[j];
+        idx++;
+    }
+    for (j = 0u; j < PM_RAIL_GRP_D_COUNT; j++)
+    {
+        PM_RAILS_ALL_MON[idx] = PM_RAILS_GRP_D[j];
+        idx++;
+    }
 }
