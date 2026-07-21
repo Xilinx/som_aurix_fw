@@ -4,11 +4,18 @@
 # Toolchain: HIGHTEC GCC for TriCore
 #
 # Usage:
-#   make                  — build Debug (default)
+#   make                  — build Debug for System-on-Module (default)
+#   make BOARD=eval       — build Debug for Eval Board
 #   make CONFIG=Release   — build Release (optimised)
+#   make BOARD=eval CONFIG=Release — build Release for Eval Board
 #   make clean            — remove build artefacts
 #   make size             — print section sizes for the last build
 #   make disasm           — generate disassembly listing
+#
+# Board variants:
+#   BOARD=som  (default)  — targets the GP System-on-Module (defines TARGET_GP_SOM)
+#   BOARD=eval            — targets the Eval Board (defines TARGET_EVAL_BOARD),
+#                           excludes SysMonitor, ComHpcWdt, and UsbPd sources
 #
 # Prerequisites:
 #   - HIGHTEC GCC TriCore toolchain on PATH  (tricore-gcc, tricore-objcopy, ...)
@@ -45,6 +52,8 @@ BIN_DIR     := $(BUILD_DIR)/bin
 # Final artefact base name (extensions added below)
 TARGET      := $(BIN_DIR)/TC387_COMHPCController
 
+
+
 # -----------------------------------------------------------------------------
 # Application source directories
 # -----------------------------------------------------------------------------
@@ -79,6 +88,22 @@ ILLD_SRC_DIRS := \
 # Collect .c files from application and iLLD directories
 APP_SRCS    := $(foreach d, $(APP_SRC_DIRS),  $(wildcard $(d)/*.c))
 ILLD_SRCS   := $(foreach d, $(ILLD_SRC_DIRS), $(wildcard $(d)/*.c))
+
+BOARD ?= som
+
+ifeq ($(BOARD),eval)
+    BOARD_DEFINE += -DTARGET_EVAL_BOARD=1
+    APP_SRCS := $(filter-out \
+        Src/AppSw/Platform/SysMonitor.c \
+        Src/AppSw/Platform/ComHpcWdt.c \
+        Src/AppSw/UsbPd/UsbPd_Manager.c \
+        Src/AppSw/UsbPd/UsbPd_Cfg.c \
+        Src/AppSw/UsbPd/Cypd6129_Drv.c, \
+        $(APP_SRCS))
+else
+    BOARD_DEFINE += -DTARGET_GP_SOM=1
+endif
+
 ALL_SRCS    := $(APP_SRCS) $(ILLD_SRCS)
 
 # Collect .S / .sx startup assembly files (iLLD startup code)
@@ -145,6 +170,7 @@ DEFINES_REL := $(DEFINES_COMMON) -DNDEBUG
 MCPU_FLAGS  := -mcpu=$(CPU)
 
 CFLAGS_COMMON := \
+	$(BOARD_DEFINE) 			\
 	$(MCPU_FLAGS)               \
 	-std=gnu99                  \
 	-ffunction-sections         \

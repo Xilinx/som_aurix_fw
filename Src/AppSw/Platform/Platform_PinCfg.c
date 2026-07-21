@@ -11,6 +11,45 @@
 
 #include "Platform_PinCfg.h"
 
+#if defined(TARGET_EVAL_BOARD)
+
+/* ---- Eval Board Pin Map -------------------------------------------------
+ * KIT-A2G-TC387-5V-TRB
+ * Power enables mapped to onboard LEDs for visual state machine feedback.
+ * Power good inputs mapped to header pins — use jumpers to VCC to simulate.
+ * ----------------------------------------------------------------------- */
+
+/* Power Enables (LEDs — directly observable) */
+const AppPin_t PIN_MAIN_12V_EFUSE_EN    = {20u, 11u};  /* P20.11 LED0 */
+const AppPin_t PIN_PWR_GROUP_B_EN       = {20u, 12u};  /* P20.12 LED1 */
+const AppPin_t PIN_PWR_GROUP_C_EN       = {20u, 13u};  /* P20.13 LED2 */
+const AppPin_t PIN_PWR_GROUP_D_EN       = {20u, 14u};  /* P20.14 LED3 */
+
+/* FuSa Status (standby LEDs) */
+const AppPin_t PIN_FUSA_STATUS0         = {33u,  4u};  /* P33.4 */
+const AppPin_t PIN_FUSA_STATUS1         = {33u,  5u};  /* P33.5 */
+
+/* APU Control Outputs (standby LEDs + headers) */
+const AppPin_t PIN_APU_PWR_GOOD         = {33u,  6u};  /* P33.6 */
+const AppPin_t PIN_COLD_RST             = {33u,  7u};  /* P33.7 */
+const AppPin_t PIN_RSMRST_L             = {10u,  1u};  /* P10.1 header */
+const AppPin_t PIN_WARM_RST             = {10u,  2u};  /* P10.2 header */
+
+/* Simulated Power Good Inputs (headers — jumper to VCC) */
+const AppPin_t PIN_VR_APU_3V3_PG        = { 0u,  0u};  /* P00.0 */
+const AppPin_t PIN_GROUP_B_PG           = { 0u,  1u};  /* P00.1 */
+const AppPin_t PIN_GROUP_C_PG           = { 2u,  0u};  /* P02.0 */
+const AppPin_t PIN_GROUP_D_PG           = { 2u,  1u};  /* P02.1 */
+
+/* Control Inputs (headers — buttons/switches) */
+const AppPin_t PIN_CB_PWRBTN_L          = { 2u,  4u};  /* P02.4 */
+const AppPin_t PIN_VIN_PWR_OK           = { 0u,  2u};  /* P00.2 — tie HIGH */
+
+/* THERMTRIP (ERU capable) */
+const AppPin_t PIN_THERMTRIP_L          = {10u,  5u};  /* P10.5 header */
+
+#else /* TARGET_GP_SOM */
+
 /* ==========================================================================
  * APU Power Control — Enable Outputs
  * ========================================================================== */
@@ -146,3 +185,5 @@ const AppPin_t PIN_APU_PWRBTN         = {34u,  3u};
 const AppPin_t PIN_BLINK              = {34u,  4u};
 
 const AppPin_t PIN_TESTMODE           = {20u, 2u};
+
+#endif

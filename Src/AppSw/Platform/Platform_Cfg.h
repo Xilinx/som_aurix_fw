@@ -48,4 +48,12 @@
 #define PM_MAX_RETRIES              30u      /* attempts before latch-off, N retries */
 #define PM_RETRY_DELAY_MS           500u 
 
+#if defined(TARGET_EVAL_BOARD) && defined(TARGET_GP_SOM)
+#error "Cannot define both TARGET_EVAL_BOARD and TARGET_GP_SOM"
+#endif
+
+#if !defined(TARGET_EVAL_BOARD) && !defined(TARGET_GP_SOM)
+#error "No target defined - build with BOARD=eval or BOARD=som"
+#endif
+
 #endif /* PLATFORM_CFG_H */
