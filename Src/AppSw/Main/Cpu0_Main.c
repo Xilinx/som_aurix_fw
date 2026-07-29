@@ -47,13 +47,13 @@
 
 int core0_main(void)
 {
+    IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
+
     Clk_Init();
     Port_Init();
-
     Stm_Init();
-    Tlf35585_Init();
 
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
@@ -94,14 +94,25 @@ int core0_main(void)
 
     Debug_Print("[SYS] Entering main loop\r\n");
 
-    /* ---- Main loop -------------------------------------------------------- */
     for (;;)
     {
-        Tlf35585_ServiceWdt();
         PowerManager_Run();
         VoltMon_Scan();
 
+#if defined(TARGET_EVAL_BOARD)
+        {
+            static uint32 s_lastReportMs = 0u;
+            uint32 nowMs = Stm_GetTimeMs();
+            if ((nowMs - s_lastReportMs) >= 2000u)
+            {
+                s_lastReportMs = nowMs;
+                VoltMon_PrintReport();
+            }
+        }
+#endif
+
 #if !defined(TARGET_EVAL_BOARD)
+        Tlf35585_ServiceWdt();
         SysMonitor_Run();
         ComHpcWdt_Run();
 

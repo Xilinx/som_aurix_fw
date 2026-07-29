@@ -19,7 +19,11 @@
 #endif
 
 #ifndef IFX_PIN_PACKAGE_516
+#if defined(TARGET_EVAL_BOARD)
+#define IFX_PIN_PACKAGE_LFBGA292    1
+#else
 #define IFX_PIN_PACKAGE_516    1
+#endif
 #endif
 
 /* ---- External oscillator ------------------------------------------------ */

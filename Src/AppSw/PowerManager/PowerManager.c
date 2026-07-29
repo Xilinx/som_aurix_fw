@@ -17,7 +17,6 @@
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
 #include "IfxPort.h"
-#include "UsbPd_Manager.h"
 #include "ComHpcWdt.h"
 
 /* ---- Private state ------------------------------------------------------- */

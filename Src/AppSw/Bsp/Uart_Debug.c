@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include "IfxCpu_Irq.h"
 
 #define TX_DATA_SIZE    64u
 #define FMT_BUF_SIZE    256u
@@ -75,7 +76,9 @@ void Debug_Print(const char *str)
     }
     while (*str != '\0')
     {
-        IfxAsclin_Asc_blockingWrite(&s_ascHandle, (uint8)*str);
+        while (IfxAsclin_getTxFifoFillLevel(s_ascHandle.asclin) != 0) {}
+        uint8 c = (uint8)*str;
+        IfxAsclin_write8(s_ascHandle.asclin, &c, 1u);
         str++;
     }
 }
