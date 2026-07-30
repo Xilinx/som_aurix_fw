@@ -67,7 +67,7 @@ const Ifx_Ssw_Bmhd bmhd_0_orig=
 {
   0x00FE,     /**< \brief 0x000: .bmi: Boot Mode Index (BMI)*/
   0xB359,     /**< \brief 0x002: .bmhdid: Boot Mode Header ID (CODE) = B359H*/
-  0xA0000000,   /**< \brief 0x004: .stad: User Code start address*/
+  0xA00A0020,   /**< \brief 0x004: .stad: User Code start address*/
   0x0780F06E,   /**< \brief 0x008: .crc: Check Result for the BMI Header (offset 000H - 007H)*/
   0xF87F0F91,   /**< \brief 0x00C: .crcInv: Inverted Check Result for the BMI Header (offset 000H - 007H)*/
   {

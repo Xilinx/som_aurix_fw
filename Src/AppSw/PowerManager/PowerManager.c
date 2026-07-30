@@ -73,7 +73,9 @@ static void prv_UpdateFusaStatus(PM_State_t state)
             /* 00 — MAIN_12V_EFUSE_EN not enabled */
             prv_SetFusaStatus(FUSA_PWR_OFF);
             break;
-
+        case PM_STATE_POWER_UP:              /* <-- ADD */
+            prv_SetFusaStatus(FUSA_RESET);   /* <-- ADD */
+            break;  
         case PM_STATE_ON:
             /* 01 — all rails stable, system in good power state */
             prv_SetFusaStatus(FUSA_PWR_GOOD);
@@ -296,6 +298,7 @@ static void prv_GoToS5(void)
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
     PwrGood_MonDisarm();
+    VoltMon_Disable();
 
     /* Disable Group D (VDDCR core) then Group C (memory).
      * Group B (S5 rails) and EFUSE stay powered. */
@@ -532,7 +535,8 @@ void PowerManager_Run(void)
             if (s_powerOnReq && prv_VinPwrOk())
             {
                 s_powerOnReq = FALSE;
-                prv_SetState(PM_STATE_RAMP_ALW);
+                VoltMon_Disable(); /* suppresses faults in sequencing */
+                prv_SetState(PM_STATE_POWER_UP);
             }
             else if (s_powerOnReq && !prv_VinPwrOk())
             {
@@ -540,7 +544,26 @@ void PowerManager_Run(void)
                 s_powerOnReq = FALSE;
             }
             break;
-
+        case PM_STATE_POWER_UP:
+            /* Initial power-up sequencing entry point.
+            * Disable voltage monitoring for the duration of rail bring-up.
+            * VoltMon will be re-enabled at the end of RAMP_S0 once all
+            * rails are confirmed stable and PWRGD is asserted. */
+            Debug_Print("[PM] Power-up sequence started. "
+                        "Voltage monitoring suspended.\r\n");
+            VoltMon_Disable();
+            prv_SetState(PM_STATE_RAMP_VR3V3);
+            break;
+        case PM_STATE_RAMP_VR3V3:
+            if (!prv_RampGroup(PM_RAILS_VR3V3, PM_RAIL_VR3V3_COUNT))
+            {
+                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                prv_OnPgFault(&PM_RAILS_VR3V3[0], 0u);
+                break;
+            }
+            Debug_Print("[PM] VR_APU_3V3 stable (standby rail).\r\n");
+            prv_SetState(PM_STATE_RAMP_ALW);
+            break;
         /* ------------------------------------------------------------------ */
         /* Stage 0: 12V EFUSE */
         case PM_STATE_RAMP_ALW:
@@ -625,7 +648,8 @@ void PowerManager_Run(void)
             PwrGood_MonArm(PM_RAILS_GRP_B, PM_RAIL_GRP_B_COUNT, prv_OnPgFault);
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                              COMHPC_WDT_DEFAULT_TIMEOUT_MS);
-            s_retryCount = 0u; 
+            s_retryCount = 0u;
+            VoltMon_Enable(); 
             prv_SetState(PM_STATE_ON);
             Debug_Print("[PM] System ON. APU_PWR_GOOD asserted, COLD_RST released.\r\n");
             break;
@@ -641,6 +665,7 @@ void PowerManager_Run(void)
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
+                VoltMon_Disable();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
             }
@@ -651,6 +676,7 @@ void PowerManager_Run(void)
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
+                VoltMon_Disable();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
             }
@@ -739,7 +765,7 @@ void PowerManager_Run(void)
                 Stm_DelayMs(PM_RETRY_DELAY_MS);
                 Debug_Printf("[PM] Retrying power-on (attempt %u)...\r\n",
                              (unsigned)s_retryCount);
-                prv_SetState(PM_STATE_RAMP_ALW);
+                prv_SetState(PM_STATE_POWER_UP);
             }
             break;
         case PM_STATE_WARM_RESET:

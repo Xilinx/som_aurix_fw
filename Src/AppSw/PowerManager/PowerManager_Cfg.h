@@ -44,6 +44,11 @@ typedef struct
     uint32      pgTimeoutMs;    /* max time for PG to assert */
 } PwrRail_Cfg_t;
 
+#define PM_RAIL_VR3V3_COUNT     1u
+
+extern PwrRail_Cfg_t PM_RAILS_VR3V3[PM_RAIL_VR3V3_COUNT];
+
+
 /*
  * Rail tables — defined and populated in PowerManager_Cfg.c.
  * NOT declared static const: Tasking ctc E306 rejects IfxPort_Pin members
@@ -55,7 +60,7 @@ typedef struct
  *   [1] 12V_EFUSE enable + PG (assertEnable=TRUE)  — enable EFUSE, verify output
  *   [2] VR_APU_3V3 post-check (assertEnable=FALSE) — verify 3V3 still stable
  */
-#define PM_RAIL_EFUSE_COUNT     3u
+#define PM_RAIL_EFUSE_COUNT     2u
 extern PwrRail_Cfg_t PM_RAILS_EFUSE[PM_RAIL_EFUSE_COUNT];
 
 /* --------------------------------------------------------------------------

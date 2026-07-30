@@ -37,9 +37,8 @@
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
 
-/* ---- EVADC iLLD handles ------------------------------------------------ */
-
-static IfxEvadc_Adc          s_evadc;
+static IfxEvadc_Adc s_evadc;
+static boolean s_voltMonEnabled = FALSE;
 
 /* clang-format off */
 
@@ -237,13 +236,27 @@ void VoltMon_RegisterFaultCb(VoltMon_FaultCb_t cb)
     s_faultCb = cb;
 }
 
+void VoltMon_Enable(void)
+{
+    s_voltMonEnabled = TRUE;
+    Debug_Print("[VMON] Monitoring enabled\r\n");
+}
+
+void VoltMon_Disable(void)
+{
+    s_voltMonEnabled = FALSE;
+    Debug_Print("[VMON] Monitoring disabled\r\n");
+}
+
+
+
 void VoltMon_Scan(void)
 {
     uint8 i;
     uint8 g;
     Ifx_EVADC_G_RES convResult;
 
-    if (!s_initialised)
+    if (!s_initialised || !s_voltMonEnabled)
     {
         return;
     }
