@@ -70,14 +70,14 @@ void Port_Init(void)
 
     /* ---- VRM Power Good Inputs — pull-down (PG is active high) ---------- */
     initInputPD(&PIN_MAIN_12V_EFUSE_PG);
-    initInputPD(&PIN_VR_APU_3V3_PG);
+    initInputNP(&PIN_VR_APU_3V3_PG);
     initInputPD(&PIN_VDD_MISC_PG);
     initInputPD(&PIN_VDD_1V2_PG);
     initInputPD(&PIN_VDD_1V8_PG);
     initInputPD(&PIN_VDD_MEMQ_CHA_PG);
     initInputPD(&PIN_VDD_MEMQ_CHB_PG);
-    initInputPD(&PIN_VDDIO_MEM_CHA_PG);
-    initInputPD(&PIN_VDDIO_MEM_CHB_PG);
+    initInputNP(&PIN_VDDIO_MEM_CHA_PG);
+    initInputNP(&PIN_VDDIO_MEM_CHB_PG);
     initInputPD(&PIN_VDD_MEM_CHA_PG);
     initInputPD(&PIN_VDD_MEM_CHB_PG);
     initInputPD(&PIN_MP2825A_1_PG);

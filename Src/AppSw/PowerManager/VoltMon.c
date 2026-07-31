@@ -79,16 +79,21 @@ static const VoltMon_ChCfg_t s_chTable[] =
     { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
     { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
     { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(950u),  UV_FAULT(950u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
 
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
-    { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
+    { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
     { "VDDIO_MEM_A",  1u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 
     /* ---- Group 2: Memory channel B (S0) --------------------------------- */
-    { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
+    { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
     { "VDDIO_MEM_B",  2u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 
     /* ---- Group 3: Misc / S5 rails --------------------------------------- */
@@ -102,8 +107,9 @@ static const VoltMon_ChCfg_t s_chTable[] =
     /* ---- Group 4: I/O rails --------------------------------------------- */
     { "VDDIO_3V3",    4u, 0u, 0u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
     { "VDDIO_3V3_S5", 4u, 1u, 1u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_MEM_VAA",4u, 3u, 3u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+//  { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
+    { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+//  { "VDDIO_MEM_VAA",4u, 3u, 3u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
 };
 /* clang-format on */
 
@@ -129,9 +135,9 @@ static uint16 prv_CountsToRailMv(uint16 counts, uint16 dividerScale)
     /* ADC voltage = counts * VREF / ADC_MAX
      * Rail voltage = ADC_voltage * dividerScale / 1000
      * Combined: rail_mV = counts * VREF_mV * dividerScale / (ADC_MAX * 1000) */
-    uint32 num;
+    uint64 num;
 
-    num = (uint32)counts * VOLTMON_VREF_MV;
+    num = (uint64)counts * VOLTMON_VREF_MV;
     num = (num * dividerScale) / (VOLTMON_ADC_MAX * 1000u);
 
     return (uint16)num;
