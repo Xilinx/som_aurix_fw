@@ -31,6 +31,8 @@ static uint8           s_retryCount    = 0u;
 static uint32     s_rsmrstDeassertTimeMs = 0u;
 static PM_ResetCause_t s_resetCause    = PM_RESET_CAUSE_NONE;
 static PM_ResetCause_t s_pendingCause  = PM_RESET_CAUSE_NONE;
+static boolean s_coldBoot = FALSE;
+
 
 #define PM_SLP_S5_TIMEOUT_MS    250u //SUBJECT TO CHANGE
 #define PM_SLP_S3_TIMEOUT_MS    250u //SUBJECT TO CHANGE
@@ -549,6 +551,7 @@ void PowerManager_Run(void)
             Debug_Print("[PM] Power-up sequence started. "
                         "Voltage monitoring suspended.\r\n");
             VoltMon_Disable();
+            s_coldBoot = TRUE;
             prv_SetState(PM_STATE_RAMP_ALW);
             break;
                     /* Stage 0: 12V EFUSE */
@@ -591,19 +594,6 @@ void PowerManager_Run(void)
                                PIN_MMC_RSMRST_L.pinIdx);
             s_rsmrstDeassertTimeMs = Stm_GetTimeMs(); //records the time
             Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
-            while (prv_SlpS5Active() && (waitMs < PM_SLP_S5_TIMEOUT_MS)) {
-                Stm_DelayMs(1u);
-                waitMs++;
-            }
-            if (prv_SlpS5Active()) {
-                Debug_Print("[PM] SLP_S5 still active after RSMRST — "
-                            "chipset not responding\r\n");
-                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
-            }
-            Debug_Printf("[PM] SLP_S5 deasserted after %ums\r\n",
-                        (unsigned)waitMs);
             prv_SetState(PM_STATE_RAMP_S3);
             break;
 
@@ -611,7 +601,7 @@ void PowerManager_Run(void)
         /* Stage 2: Group C — memory rails */
         case PM_STATE_RAMP_S3:
             /* Guard Check for miscellaneous assertions */
-            if (prv_SlpS5Active())
+            if (!s_coldBoot && prv_SlpS5Active())
             {
                 Debug_Print("[PM] SLP_S5 asserted during Group C ramp — aborting\r\n");
                 s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
@@ -632,7 +622,7 @@ void PowerManager_Run(void)
         /* Stage 3: Group D — VDDCR core */
         case PM_STATE_RAMP_S0:
             /* Guard Check for miscellaneous assertions */
-            if (prv_SlpS5Active())
+            if (!s_coldBoot && prv_SlpS5Active())
             {
                 Debug_Print("[PM] SLP_S5 asserted during Group D ramp — aborting\r\n");
                 s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
@@ -646,11 +636,11 @@ void PowerManager_Run(void)
                 break;
             }
 
-            /* AMD 58241 §16.1.1: all rails stable ≥1ms before PWR_GOOD.
+            /* AMD 58241 16.1.1: all rails stable ≥1ms before PWR_GOOD.
              * PM_PWRGD_DEGLITCH_MS = 5ms satisfies this requirement. */
             prv_AssertPwrgd();
 
-            /* AMD 58241 §16.1.5 Table 30 T7: RESET_L must remain asserted
+            /* AMD 58241 16.1.5 Table 30 T7: RESET_L must remain asserted
              * a minimum of 28.5ms AFTER PWR_GOOD assertion.
              * Wait PM_RESET_HOLD_AFTER_PWRGD_MS (30ms) then release COLD_RST. */
             Stm_DelayMs(PM_RESET_HOLD_AFTER_PWRGD_MS);
@@ -673,26 +663,32 @@ void PowerManager_Run(void)
             IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                             PIN_APU_PWRBTN.pinIdx);
             Debug_Print("[PM] APU_PWRBTN pulsed LOW 200ms.\r\n");
-            uint16 s3WaitMs = 0u;
-            while (prv_SlpS3Active() && (s3WaitMs < PM_SLP_S3_TIMEOUT_MS))
-            {
-                Stm_DelayMs(1u);
-                s3WaitMs++;
+            /* T3: SLP_S3_L and SLP_S5_L both deassert after PWR_BTN */
+            if (s_coldBoot) {
+                uint16 slpWaitMs = 0u;
+                while ((prv_SlpS5Active() || prv_SlpS3Active()) &&
+                    (slpWaitMs < PM_SLP_S3_TIMEOUT_MS))
+                {
+                    Stm_DelayMs(1u);
+                    slpWaitMs++;
+                }
+                if (prv_SlpS5Active() || prv_SlpS3Active())
+                {
+                    Debug_Printf("[PM] SLP signals still active after PWR_BTN "
+                                "(S5=%u S3=%u)\r\n",
+                                (unsigned)prv_SlpS5Active(),
+                                (unsigned)prv_SlpS3Active());
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+                Debug_Printf("[PM] SLP_S5 and SLP_S3 deasserted after %ums\r\n",
+                            (unsigned)slpWaitMs);
             }
-            if (prv_SlpS3Active())
-            {
-                Debug_Print("[PM] SLP_S3 still active after PWR_BTN — "
-                            "chipset not transitioning to S0\r\n");
-                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
-            }
-            Debug_Printf("[PM] SLP_S3 deasserted after %ums\r\n",
-                        (unsigned)s3WaitMs);
             /* Arm continuous PG monitoring on Group B rails (always-on set).
              * Expand to GRP_C / GRP_D by adding chained monitor calls or
              * a unified flat table when the monitor supports multiple segments. */
-            PwrGood_MonArm(PM_RAILS_GRP_B, PM_RAIL_GRP_B_COUNT, prv_OnPgFault);
+            PwrGood_MonArm(PM_RAILS_GRP_B, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                              COMHPC_WDT_DEFAULT_TIMEOUT_MS);
             s_retryCount = 0u;
@@ -759,6 +755,7 @@ void PowerManager_Run(void)
                 if (s_powerOnReq || prv_PwrBtnPressed())
                 {
                     s_powerOnReq = FALSE;
+                    s_coldBoot = TRUE;
                     Debug_Print("[PM] Wake from S5: THERMTRIP# cleared, "
                                 "re-enabling Group C/D.\r\n");
                     Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
@@ -802,6 +799,7 @@ void PowerManager_Run(void)
             if (!s_shutdownToOff && !prv_SlpS3Active())
             {
                 /* Resume to S0 — re-enable memory + core rails. */
+                s_coldBoot = FALSE;
                 prv_DeassertRsmrst();
                 prv_SetState(PM_STATE_RAMP_S3);
             }
