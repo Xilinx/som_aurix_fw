@@ -32,10 +32,47 @@
 #define OV_FAULT(nom)   ((uint16)((nom) * 110u / 100u))
 
 #ifndef IFXEVADC_QUEUE_REFILL
-#define IFXEVADC_QUEUE_REFILL  (1u)   /* auto-refill queue entry after conversion */
+#define IFXEVADC_QUEUE_REFILL  (1u)
 #endif
 
+#define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
+
+static IfxEvadc_Adc s_evadc;
+static boolean s_voltMonEnabled = FALSE;
+
 /* clang-format off */
+
+#if defined(TARGET_EVAL_BOARD)
+/*
+ * TRB eval board — no SOM power rails present.
+ * Monitor the 6 filtered ADC channels (4.7K + 47nF on the TRB)
+ * to validate the full EVADC driver path.
+ *
+ * Thresholds wide open (0 / 5000) — no false faults on floating pins.
+ * Readings are printed periodically for validation.
+ *
+ * TC387 EVADC group mapping:
+ *   AN0-AN7   = Group 0
+ *   AN16-AN23 = Group 2
+ *   AN24-AN31 = Group 3
+ *   AN40-AN47 = Group 5
+ */
+static const VoltMon_ChCfg_t s_chTable[] =
+{
+    /*  name          grp  ch  res  nom    uvW  uvF   ovW    ovF   div   */
+    { "AN7_FILT",     0u, 7u, 7u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+    { "AN20_FILT",    2u, 4u, 4u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+    { "AN21_FILT",    2u, 5u, 5u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+    { "AN31_FILT",    3u, 7u, 7u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+    { "AN44_FILT",    5u, 4u, 4u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+    { "AN45_FILT",    5u, 5u, 5u,  0u,    0u,  0u, 5500u, 5500u, 1000u },
+};
+
+/* Groups used: 0, 2, 3, 5 — array indexed by group number, so size = 6 */
+#define VOLTMON_NUM_GROUPS   6u
+
+#else /* TARGET_GP_SOM */
+
 static const VoltMon_ChCfg_t s_chTable[] =
 {
     /* ---- Group 0: VID rails (S0) ---------------------------------------- */
@@ -70,15 +107,12 @@ static const VoltMon_ChCfg_t s_chTable[] =
 };
 /* clang-format on */
 
-#define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
-
-/* ---- EVADC iLLD handles ------------------------------------------------ */
-
-static IfxEvadc_Adc          s_evadc;
 
 /* We need one group handle per EVADC group used (0-4).
  * TC387 has groups 0-11, but we only use 0-4. */
 #define VOLTMON_NUM_GROUPS   5u
+
+#endif
 
 static IfxEvadc_Adc_Group    s_groups[VOLTMON_NUM_GROUPS];
 static IfxEvadc_Adc_Channel  s_channels[VOLTMON_CH_COUNT];
@@ -202,13 +236,27 @@ void VoltMon_RegisterFaultCb(VoltMon_FaultCb_t cb)
     s_faultCb = cb;
 }
 
+void VoltMon_Enable(void)
+{
+    s_voltMonEnabled = TRUE;
+    Debug_Print("[VMON] Monitoring enabled\r\n");
+}
+
+void VoltMon_Disable(void)
+{
+    s_voltMonEnabled = FALSE;
+    Debug_Print("[VMON] Monitoring disabled\r\n");
+}
+
+
+
 void VoltMon_Scan(void)
 {
     uint8 i;
     uint8 g;
     Ifx_EVADC_G_RES convResult;
 
-    if (!s_initialised)
+    if (!s_initialised || !s_voltMonEnabled)
     {
         return;
     }
@@ -269,3 +317,45 @@ uint8 VoltMon_GetChannelCount(void)
 {
     return (uint8)VOLTMON_CH_COUNT;
 }
+
+#if defined(TARGET_EVAL_BOARD)
+void VoltMon_PrintReport(void)
+{
+    uint8 i;
+    Debug_Print("[VMON] --- ADC Report ---\r\n");
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        Debug_Print("[VMON] ");
+        Debug_Print(s_chTable[i].name);
+        Debug_Print(" = ");
+        /* Print mV as decimal manually to avoid Debug_Printf float issues */
+        {
+            char buf[16];
+            uint16 mv = s_lastMv[i];
+            int len = 0;
+            if (mv == 0u)
+            {
+                buf[len++] = '0';
+            }
+            else
+            {
+                char tmp[8];
+                int tl = 0;
+                while (mv > 0u)
+                {
+                    tmp[tl++] = '0' + (mv % 10u);
+                    mv /= 10u;
+                }
+                while (tl > 0)
+                {
+                    buf[len++] = tmp[--tl];
+                }
+            }
+            buf[len] = '\0';
+            Debug_Print(buf);
+        }
+        Debug_Print(" mV\r\n");
+    }
+    Debug_Print("[VMON] -----------------\r\n");
+}
+#endif

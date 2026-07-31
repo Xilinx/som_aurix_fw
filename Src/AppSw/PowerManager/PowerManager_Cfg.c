@@ -50,44 +50,54 @@ PwrRail_Cfg_t PM_RAILS_GRP_B[PM_RAIL_GRP_B_COUNT];
 PwrRail_Cfg_t PM_RAILS_GRP_C[PM_RAIL_GRP_C_COUNT];
 PwrRail_Cfg_t PM_RAILS_GRP_D[PM_RAIL_GRP_D_COUNT];
 PwrRail_Cfg_t PM_RAILS_ALL_MON[PM_RAIL_ALL_MON_COUNT];
+PwrRail_Cfg_t PM_RAILS_VR3V3[PM_RAIL_VR3V3_COUNT];
 
 void PowerManager_CfgInit(void)
 {
+
     /* ====================================================================
-     * STAGE 0 — EFUSE (3 entries)
-     * ==================================================================== */
+    * STAGE 0 — VR_APU_3V3 (1 entry)
+    * NB706A powered from standby rail (+3V5B), independent of 12V EFUSE.
+    * Must be stable before any downstream rail is enabled.
+    * ==================================================================== */
+
+    PM_RAILS_VR3V3[0].name         = "VR_APU_3V3";
+    PM_RAILS_VR3V3[0].enablePin    = PIN_MAIN_12V_EFUSE_EN; /* unused */
+    PM_RAILS_VR3V3[0].assertEnable = FALSE;
+    PM_RAILS_VR3V3[0].pgoodPin     = PIN_VR_APU_3V3_PG;
+    PM_RAILS_VR3V3[0].rampDelayMs  = 0u;
+    PM_RAILS_VR3V3[0].pgTimeoutMs  = 1000u;
+
 
     /* [0] Pre-EFUSE: verify VR_APU_3V3 (Group A) is present.
      *     AMD §16.1.2: Group A must be stable before Group B > 10%.
      *     VR_APU_3V3 also feeds MP2825A bias (Group D) and load switches.
      *     No enable asserted — read only. 1-second timeout to allow
      *     carrier 3V3 to stabilise after carrier power-on. */
-    PM_RAILS_EFUSE[0].name         = "VR_APU_3V3_PRE_EFUSE";
-    PM_RAILS_EFUSE[0].enablePin    = PIN_MAIN_12V_EFUSE_EN; /* unused (assertEnable=FALSE) */
-    PM_RAILS_EFUSE[0].assertEnable = FALSE;
-    PM_RAILS_EFUSE[0].pgoodPin     = PIN_VR_APU_3V3_PG;
-    PM_RAILS_EFUSE[0].rampDelayMs  = 0u;
-    PM_RAILS_EFUSE[0].pgTimeoutMs  = 1000u;
+    PM_RAILS_EFUSE[0].name         = "12V_EFUSE";
+    PM_RAILS_EFUSE[0].enablePin    = PIN_MAIN_12V_EFUSE_EN;
+    PM_RAILS_EFUSE[0].assertEnable = TRUE;
+    PM_RAILS_EFUSE[0].pgoodPin     = PIN_MAIN_12V_EFUSE_PG;
+    PM_RAILS_EFUSE[0].rampDelayMs  = 5u;
+    PM_RAILS_EFUSE[0].pgTimeoutMs  = 100u;
 
-    /* [1] Enable 12V EFUSE, verify output PG.
-     *     COM-HPC: MAIN_12V_EFUSE_PG must assert before any Group B VRM
-     *     is enabled (NB706 etc. take 12V_MAIN as input). */
-    PM_RAILS_EFUSE[1].name         = "12V_EFUSE";
-    PM_RAILS_EFUSE[1].enablePin    = PIN_MAIN_12V_EFUSE_EN;
-    PM_RAILS_EFUSE[1].assertEnable = TRUE;
-    PM_RAILS_EFUSE[1].pgoodPin     = PIN_MAIN_12V_EFUSE_PG;
-    PM_RAILS_EFUSE[1].rampDelayMs  = 5u;
-    PM_RAILS_EFUSE[1].pgTimeoutMs  = 100u;
+    /* [1] Re-verify VR_APU_3V3 stable under 12V load. */
+    PM_RAILS_EFUSE[1].name         = "VR_APU_3V3_POST_EFUSE";
+    PM_RAILS_EFUSE[1].enablePin    = PIN_MAIN_12V_EFUSE_EN; /* unused */
+    PM_RAILS_EFUSE[1].assertEnable = FALSE;
+    PM_RAILS_EFUSE[1].pgoodPin     = PIN_VR_APU_3V3_PG;
+    PM_RAILS_EFUSE[1].rampDelayMs  = 2u;
+    PM_RAILS_EFUSE[1].pgTimeoutMs  = 50u;
 
-    /* [2] Post-EFUSE: re-verify VR_APU_3V3 still stable under load.
-     *     Confirms 3V3 rail is healthy after 12V connects to the SOM.
-     *     No enable asserted — read only. */
+/*
     PM_RAILS_EFUSE[2].name         = "VR_APU_3V3_POST_EFUSE";
-    PM_RAILS_EFUSE[2].enablePin    = PIN_MAIN_12V_EFUSE_EN; /* unused */
+    PM_RAILS_EFUSE[2].enablePin    = PIN_MAIN_12V_EFUSE_EN; // unused
     PM_RAILS_EFUSE[2].assertEnable = FALSE;
     PM_RAILS_EFUSE[2].pgoodPin     = PIN_VR_APU_3V3_PG;
     PM_RAILS_EFUSE[2].rampDelayMs  = 2u;
     PM_RAILS_EFUSE[2].pgTimeoutMs  = 50u;
+*/
+
 
     /* ====================================================================
      * STAGE 1 — Group B / S5 rails (4 entries)

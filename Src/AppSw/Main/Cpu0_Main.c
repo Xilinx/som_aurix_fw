@@ -8,103 +8,114 @@
  *   3. GPIO port direction init
  *   4. STM0 timer init
  *   5. ASCLIN0 debug UART init
- *   6. I2C0 master init
+ *   6. I2C master init
  *   7. Power manager init
- *   8. USB PD manager init
+ *   8. System monitor (SoM only)
+ *   9. ERU fault ISRs
+ *  10. Voltage monitoring
+ *  11. COM-HPC watchdog (SoM only)
+ *  12. USB PD manager (SoM only)
  *
- * Main loop executes the power manager state machine and USB PD polling
- * on every iteration. Timing is handled internally by each module using
- * the STM-based Stm_IsElapsedMs() helper.
+ * Build with BOARD=eval to exclude SoM-specific peripherals.
  */
 
 #include "Ifx_Types.h"
 #include "IfxCpu.h"
 #include "IfxScuWdt.h"
-
 #include "Clk_Cfg.h"
 #include "Port_Init.h"
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
 #include "I2c_Master.h"
 #include "PowerManager.h"
-#include "UsbPd_Manager.h"
-#include "SysMonitor.h"
 #include "Eru_FaultIsr.h"
 #include "VoltMon.h"
 #include "Tlf35585.h"
-#include "ComHpcWdt.h"
 
+#if !defined(TARGET_EVAL_BOARD)
+#include "UsbPd_Manager.h"
+#include "SysMonitor.h"
+#include "ComHpcWdt.h"
+#endif
 
 /* Banner printed on UART at startup */
+#if defined(TARGET_EVAL_BOARD)
+#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.1 [EVAL BOARD]\r\n"
+#else
 #define FW_VERSION_STR  "TC387 COM-HPC Controller v0.1\r\n"
+#endif
 
 int core0_main(void)
 {
-    /* ---- 1. Disable watchdog (development) -------------------------------- */
+    IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
 
-    /* ---- 2. Clock: 300 MHz via PLL ---------------------------------------- */
     Clk_Init();
-
-    /* ---- 3. GPIO: configure all board pins --------------------------------- */
     Port_Init();
-
-    /* ---- 4. System and Watchdog timer --------------------------------------------------- */
     Stm_Init();
-    Tlf35585_Init();
 
-    /* ---- 5. Debug UART: 115200 8N1 on P14.0/P14.1 ------------------------- */
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
     Debug_Print("[SYS] Init: UART OK\r\n");
 
-    /* ---- 6. I2C0 master: 400 kHz on P13.1/P13.2 --------------------------- */
     I2cMaster_Init();
     Debug_Print("[SYS] Init: I2C OK\r\n");
 
-    /* ---- 7. Power manager -------------------------------------------------- */
     PowerManager_Init();
     Debug_Print("[SYS] Init: PowerManager OK\r\n");
 
-    /* ---- 8. System monitor (PROCHOT / CATERR default drive) ---------------- */
+#if !defined(TARGET_EVAL_BOARD)
     SysMonitor_Init();
     SysMonitor_RegisterShutdownCb(PowerManager_OnThermtripIsr);
     Debug_Print("[SYS] Init: SysMonitor OK\r\n");
+#endif
 
-
-
-    /* Register THERMTRIP callback to trigger PowerManager S5 suspend */
     Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
+#if !defined(TARGET_EVAL_BOARD)
     Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
+#endif
     Eru_FaultIsr_Init();
     Debug_Print("[SYS] Init: ERU fault ISRs OK\r\n");
-    /* ---- 11. Voltage monitoring ----------------------------------------- */
+
     VoltMon_Init();
     VoltMon_RegisterFaultCb(PowerManager_OnVoltageFault);
     Debug_Print("[SYS] Init: VoltMon OK\r\n");
 
+#if !defined(TARGET_EVAL_BOARD)
     ComHpcWdt_Init();
     Debug_Print("[SYS] Init: ComHpcWdt OK\r\n");
-    /* ---- 9. USB PD manager ------------------------------------------------- */
-    /* Note: UsbPdManager_Init() holds I2C traffic; call after PowerManager
-     * so that CYPD6129 supply rails are not assumed to be up here.
-     * If the CYPD6129 devices are powered by always-on rails, move this call
-     * after the power manager reaches PM_STATE_ON. */
+#endif
+
+#if !defined(TARGET_EVAL_BOARD)
     UsbPdManager_Init();
-    
     Debug_Print("[SYS] Init: UsbPdManager OK\r\n");
+#endif
 
     Debug_Print("[SYS] Entering main loop\r\n");
 
-    /* ---- Main loop --------------------------------------------------------- */
     for (;;)
     {
-        Tlf35585_ServiceWdt();
         PowerManager_Run();
+        VoltMon_Scan();
+
+#if defined(TARGET_EVAL_BOARD)
+        {
+            static uint32 s_lastReportMs = 0u;
+            uint32 nowMs = Stm_GetTimeMs();
+            if ((nowMs - s_lastReportMs) >= 2000u)
+            {
+                s_lastReportMs = nowMs;
+                VoltMon_PrintReport();
+            }
+        }
+#endif
+
+#if !defined(TARGET_EVAL_BOARD)
+        Tlf35585_ServiceWdt();
         SysMonitor_Run();
-        VoltMon_Scan(); 
         ComHpcWdt_Run();
+
         if (PowerManager_GetState() == PM_STATE_ON)
         {
             static uint32 s_usbPdLastMs = 0u;
@@ -115,10 +126,8 @@ int core0_main(void)
                 UsbPdManager_Run();
             }
         }
-
-        /* Future: service IPC calls from CPU1 / CPU2 here */
+#endif
     }
 
-    /* Unreachable */
     return 0;
 }

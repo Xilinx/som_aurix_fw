@@ -94,4 +94,21 @@ uint16 VoltMon_GetLastMv(uint8 chIdx);
  */
 uint8 VoltMon_GetChannelCount(void);
 
+/**
+ * @brief  Enables voltage monitor
+ */
+void VoltMon_Enable(void);
+
+
+/**
+ * @brief Disables voltage monitor
+ */
+void VoltMon_Disable(void);
+
+
+
+#if defined(TARGET_EVAL_BOARD)
+void VoltMon_PrintReport(void);
+#endif
+
 #endif /* VOLTMON_H */
