@@ -6,13 +6,10 @@
  * COM-HPC platform requirements:
  *
  * EFUSE Stage (3 entries):
- *   [0] VR_APU_3V3 pre-check  — AMD §16.1.2: Group A (VR_APU_3V3) must be
- *       stable before any Group B rail exceeds 10% of nominal.
- *       assertEnable=FALSE: PG read only, no enable asserted.
- *   [1] 12V_EFUSE enable      — Assert MAIN_12V_EFUSE_EN, verify
+ *   [0] 12V_EFUSE enable      — Assert MAIN_12V_EFUSE_EN, verify
  *       MAIN_12V_EFUSE_PG. COM-HPC requirement: 12V output confirmed
  *       before enabling Group B VRMs.
- *   [2] VR_APU_3V3 post-EFUSE — Re-verify VR_APU_3V3_PG is still stable
+ *   [1] VR_APU_3V3 post-EFUSE — Re-verify VR_APU_3V3_PG is still stable
  *       after EFUSE load connects.  assertEnable=FALSE.
  *
  * Group B Stage (4 entries):
@@ -64,7 +61,7 @@ void PowerManager_CfgInit(void)
     PM_RAILS_VR3V3[0].name         = "VR_APU_3V3";
     PM_RAILS_VR3V3[0].enablePin    = PIN_MAIN_12V_EFUSE_EN; /* unused */
     PM_RAILS_VR3V3[0].assertEnable = FALSE;
-    PM_RAILS_VR3V3[0].pgoodPin     = PIN_VR_APU_3V3_PG;
+    PM_RAILS_VR3V3[0].pgoodPin     = PIN_VIN_PWR_OK;
     PM_RAILS_VR3V3[0].rampDelayMs  = 0u;
     PM_RAILS_VR3V3[0].pgTimeoutMs  = 1000u;
 
