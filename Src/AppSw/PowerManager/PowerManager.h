@@ -15,8 +15,8 @@ typedef enum
 {
     PM_STATE_OFF        = 0,    /* all rails off, system unpowered              */
     PM_STATE_POWER_UP,
-    PM_STATE_RAMP_VR3V3,
     PM_STATE_RAMP_ALW,          /* enabling EFUSE + pre-checks                  */
+    PM_STATE_RAMP_VR3V3,
     PM_STATE_RAMP_S5,           /* enabling S5 (soft-off) rails                 */
     PM_STATE_RAMP_S3,           /* enabling S3 (suspend-to-RAM) rails           */
     PM_STATE_RAMP_S0,           /* enabling S0 (full power) rails               */

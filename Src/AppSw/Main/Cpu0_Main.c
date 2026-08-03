@@ -1,7 +1,7 @@
 /**
  * @file    Cpu0_Main.c
  * @brief   CPU0 entry point for the TC387 COM-HPC power and USB PD controller.
- *
+ * 
  * Initialisation order:
  *   1. Watchdog disable (development mode)
  *   2. SCU clock init — 300 MHz
@@ -15,7 +15,7 @@
  *  10. Voltage monitoring
  *  11. COM-HPC watchdog (SoM only)
  *  12. USB PD manager (SoM only)
- *
+ * 
  * Build with BOARD=eval to exclude SoM-specific peripherals.
  */
 
@@ -50,7 +50,7 @@ int core0_main(void)
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
-
+    
     Clk_Init();
     Port_Init();
     Stm_Init();
@@ -96,6 +96,8 @@ int core0_main(void)
 
     for (;;)
     {
+        //IfxPort_togglePin(&MODULE_P34,4);
+
         PowerManager_Run();
         VoltMon_Scan();
 
