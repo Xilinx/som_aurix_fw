@@ -278,15 +278,43 @@ disasm: $(TARGET).elf
 	$(OBJDUMP) -d -S $< > $(TARGET).lss
 	@echo "Disassembly: $(TARGET).lss"
 
-FLASHER := /mnt/c/Infineon/AURIX-Studio-1.10.36/tools/AurixFlasherSoftwareTool_v3.0.18/AURIXFlasher.exe
-HEX_WIN := C:/Users/kanchugh/TC387.hex
+FLASHER_SEARCH_PATHS := \
+    /mnt/c/Infineon/AURIX-Studio-*/tools/AurixFlasherSoftwareTool_*/AURIXFlasher.exe \
+    /mnt/c/Program\ Files/Infineon/*/AURIXFlasher.exe \
+    /opt/Infineon/*/AURIXFlasher.exe \
+    /usr/local/bin/AURIXFlasher
 
-.PHONY: flash
+FLASHER ?= $(firstword $(wildcard $(FLASHER_SEARCH_PATHS)))
+HEX_STAGING_DIR ?= $(firstword $(wildcard /mnt/c/Users/$(USER)) $(wildcard /mnt/c/Users/$(USERNAME)) /tmp)
+HEX_WIN = $(subst /mnt/c/,C:/,$(HEX_STAGING_DIR))/TC387.hex
+
+.PHONY: setup flash
+
+setup:
+	@echo "==============================="
+	@echo " AURIX Build Environment Setup"
+	@echo "==============================="
+	@if [ -n "$(FLASHER)" ] && [ -f "$(FLASHER)" ]; then \
+		echo "[OK] Flasher found: $(FLASHER)"; \
+	else \
+		echo "[!!] AURIXFlasher not found. Searched:"; \
+		echo "     $(FLASHER_SEARCH_PATHS)"; \
+		echo "     Set manually: make flash FLASHER=/path/to/AURIXFlasher.exe"; \
+	fi
+	@if [ -d "$(HEX_STAGING_DIR)" ]; then \
+		echo "[OK] HEX staging dir: $(HEX_STAGING_DIR)"; \
+		echo "[OK] HEX Windows path: $(HEX_WIN)"; \
+	else \
+		echo "[!!] HEX staging dir not found. Set HEX_STAGING_DIR=/your/path"; \
+	fi
+	@echo "==============================="
 
 flash: $(TARGET).elf
-	@cp $(TARGET).hex /mnt/c/Users/kanchugh/TC387.hex
+	@if [ -z "$(FLASHER)" ] || [ ! -f "$(FLASHER)" ]; then \
+		echo "[ERROR] AURIXFlasher not found. Run 'make setup' or set FLASHER="; \
+		exit 1; \
+	fi
+	@cp $(TARGET).hex $(HEX_STAGING_DIR)/TC387.hex
 	@echo "[FLASH] Programming..."
 	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on
-# Include auto-generated dependency files (.d) so header changes trigger rebuild
--include $(ALL_OBJS:.o=.d)
 

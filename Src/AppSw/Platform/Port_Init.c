@@ -93,7 +93,7 @@ void Port_Init(void)
     /* ---- APU State Control — Outputs ------------------------------------ */
     initOutput(&PIN_APU_PWR_GOOD,   FALSE);
     initOutput(&PIN_COLD_RST,       FALSE);
-    initOutput(&PIN_WARM_RST,       FALSE);
+    initOutput(&PIN_WARM_RST,       TRUE);
     initOutput(&PIN_MMC_RSMRST_L,   FALSE);
     initOutput(&PIN_APU_PWRBTN,     TRUE);
     initOutput(&PIN_PLTRST_L,       FALSE);
