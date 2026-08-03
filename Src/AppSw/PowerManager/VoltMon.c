@@ -80,11 +80,10 @@ static const VoltMon_ChCfg_t s_chTable[] =
 //  { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1350u), OV_FAULT(1350u), 1000u },
-    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1250u), OV_FAULT(1250u), 1000u },
-    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(700u),  UV_FAULT(700u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
-
+    { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1570u), OV_FAULT(1590u), 1000u },
+    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1570u), OV_FAULT(1590u), 1000u },
+    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1220u), OV_FAULT(1240u), 1000u },
+    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(600u),  UV_FAULT(550u),  OV_WARN(1020u), OV_FAULT(1090u), 1000u },
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
 //  { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },

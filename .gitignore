@@ -8,6 +8,8 @@ Build/
 *.d
 *.o
 
+!Image/*.elf
+
 # Eclipse / ADS workspace metadata (do NOT commit these — they are machine-local)
 .metadata/
 .settings/
@@ -29,3 +31,4 @@ iLLD/
 # Reference documents — AMD Confidential / proprietary SOM materials
 # Obtain separately per NDA / AMD partner portal
 Docs/
+
