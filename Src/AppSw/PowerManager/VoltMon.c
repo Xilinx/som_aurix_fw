@@ -37,7 +37,7 @@
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
 
-static IfxEvadc_Adc s_evadc;
+static IfxEvadc_Adc          s_evadc;
 static boolean s_voltMonEnabled = FALSE;
 
 /* clang-format off */
@@ -76,11 +76,14 @@ static const VoltMon_ChCfg_t s_chTable[] =
 static const VoltMon_ChCfg_t s_chTable[] =
 {
     /* ---- Group 0: VID rails (S0) ---------------------------------------- */
-    { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+//  { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(950u),  UV_FAULT(950u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
+    { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1350u), OV_FAULT(1350u), 1000u },
+    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1250u), OV_FAULT(1250u), 1000u },
+    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(600u),  UV_FAULT(600u),  OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(700u),  UV_FAULT(700u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
 
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
 //  { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
@@ -135,8 +138,10 @@ static uint16 prv_CountsToRailMv(uint16 counts, uint16 dividerScale)
     /* ADC voltage = counts * VREF / ADC_MAX
      * Rail voltage = ADC_voltage * dividerScale / 1000
      * Combined: rail_mV = counts * VREF_mV * dividerScale / (ADC_MAX * 1000) */
-    uint64 num;
+//  uint32 num;
+//  num = (uint32)counts * VOLTMON_VREF_MV;
 
+    uint64 num;
     num = (uint64)counts * VOLTMON_VREF_MV;
     num = (num * dividerScale) / (VOLTMON_ADC_MAX * 1000u);
 
@@ -306,6 +311,20 @@ void VoltMon_Scan(void)
                 s_chTable[i].dividerScale);
 
             prv_CheckThresholds(i, s_lastMv[i]);
+
+            /*
+            Debug_Printf("[VMON] %s = %u current:%umV (%umV ~ %umV)",
+                         s_chTable[i].name,
+                         convResult.B.RESULT,
+                         s_lastMv[i],
+                         s_chTable[i].uvFaultMv,
+                         s_chTable[i].ovFaultMv
+                         );
+            if (s_lastMv[i] < s_chTable[i].uvFaultMv || s_lastMv[i] > s_chTable[i].ovFaultMv)
+                Debug_Printf(" [*]");
+            Debug_Printf("\r\n");
+            */
+
         }
     }
 }

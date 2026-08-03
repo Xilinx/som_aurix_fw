@@ -196,7 +196,7 @@ void SysMonitor_Run(void)
 
         if (Stm_IsElapsedMs(&s_lastLog, SYSMON_LOG_INTERVAL_MS))
         {
-            Debug_Print("[SYS] PROCHOT# asserted — APU_PROCHOT_L LOW\r\n");
+            Debug_Print("[SYS] PROCHOT# asserted - APU_PROCHOT_L LOW\r\n");
         }
     }
     else
@@ -206,7 +206,7 @@ void SysMonitor_Run(void)
         if (s_prochotActive)
         {
             s_prochotActive = FALSE;
-            Debug_Print("[SYS] PROCHOT# deasserted — APU_PROCHOT_L returned HIGH\r\n");
+            Debug_Print("[SYS] PROCHOT# deasserted - APU_PROCHOT_L returned HIGH\r\n");
         }
     }
 }

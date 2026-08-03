@@ -111,8 +111,10 @@ void Eru_FaultIsr_Init(void)
     IfxScuEru_selectExternalInput(IfxScuEru_InputChannel_3,
                                   IfxScuEru_ExternalInputSelection_0);
 
-    IfxScuEru_enableFallingEdgeDetection(IfxScuEru_InputChannel_3);
-    IfxScuEru_disableRisingEdgeDetection(IfxScuEru_InputChannel_3);
+//  IfxScuEru_enableFallingEdgeDetection(IfxScuEru_InputChannel_3);
+//  IfxScuEru_disableRisingEdgeDetection(IfxScuEru_InputChannel_3);
+    IfxScuEru_disableFallingEdgeDetection(IfxScuEru_InputChannel_3);    //;THERMTRIL
+    IfxScuEru_enableRisingEdgeDetection(IfxScuEru_InputChannel_3);      //;THERMTRIL
     IfxScuEru_enableTriggerPulse(IfxScuEru_InputChannel_3);
     IfxScuEru_connectTrigger(IfxScuEru_InputChannel_3,
                              IfxScuEru_OutputChannel_1);
@@ -125,7 +127,8 @@ void Eru_FaultIsr_Init(void)
 
     IfxCpu_Irq_installInterruptHandler(&eruThermtripISR, ERU_PRIO_THERMTRIP);
 
-    Debug_Print("[ERU] THERMTRIP# (P10.3): falling edge -> OGU1\r\n");
+//  Debug_Print("[ERU] THERMTRIP# (P10.3): falling edge -> OGU1\r\n");
+    Debug_Print("[ERU] THERMTRIP# (P10.3): Rising edge -> OGU1\r\n");
 
     /* ==================================================================
      * WD_STROBE# — ERU Input Channel 7, P20.9, rising edge -> OGU2

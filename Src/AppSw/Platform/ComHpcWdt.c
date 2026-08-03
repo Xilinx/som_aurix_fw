@@ -20,7 +20,7 @@ typedef enum
     WDT_STATE_FIRED         /* Timeout — WD_OUT asserted, PLTRST# low */
 } WdtState_t;
 
-static WdtState_t       s_state             = WDT_STATE_IDLE;
+static WdtState_t       g_state             = WDT_STATE_IDLE;
 static uint32           s_enableDelayEndMs  = 0u;
 static uint32           s_timeoutMs         = COMHPC_WDT_DEFAULT_TIMEOUT_MS;
 static volatile uint32  s_lastStrobeMs      = 0u;
@@ -56,7 +56,7 @@ static void prv_DeassertPltrst(void)
 
 void ComHpcWdt_Init(void)
 {
-    s_state          = WDT_STATE_IDLE;
+    g_state          = WDT_STATE_IDLE;
     s_strobeReceived = FALSE;
     prv_DeassertWdOut();
     Debug_Print("[WDT] Init: host watchdog idle.\r\n");
@@ -80,7 +80,7 @@ void ComHpcWdt_Enable(uint16 enableDelayS, uint32 timeoutMs)
     s_timeoutMs        = timeoutMs;
     s_enableDelayEndMs = Stm_GetTimeMs() + (delayS * 1000u);
     s_strobeReceived   = FALSE;
-    s_state            = WDT_STATE_ENABLE_DELAY;
+    g_state            = WDT_STATE_ENABLE_DELAY;
 
     Debug_Printf("[WDT] Enabled: %us delay, %ums timeout.\r\n",
                  (unsigned)delayS, (unsigned)timeoutMs);
@@ -88,12 +88,12 @@ void ComHpcWdt_Enable(uint16 enableDelayS, uint32 timeoutMs)
 
 void ComHpcWdt_Disable(void)
 {
-    if (s_state == WDT_STATE_FIRED)
+    if (g_state == WDT_STATE_FIRED)
     {
         prv_DeassertPltrst();
     }
     prv_DeassertWdOut();
-    s_state = WDT_STATE_IDLE;
+    g_state = WDT_STATE_IDLE;
     Debug_Print("[WDT] Disabled.\r\n");
 }
 
@@ -109,7 +109,7 @@ void ComHpcWdt_Run(void)
 {
     uint32 nowMs;
 
-    switch (s_state)
+    switch (g_state)
     {
         case WDT_STATE_IDLE:
             /* Nothing to do */
@@ -124,7 +124,7 @@ void ComHpcWdt_Run(void)
                  * window starts from now, not from zero. */
                 s_lastStrobeMs   = nowMs;
                 s_strobeReceived = FALSE;
-                s_state          = WDT_STATE_ACTIVE;
+                g_state          = WDT_STATE_ACTIVE;
                 Debug_Print("[WDT] Enable delay expired. Monitoring active.\r\n");
             }
             break;
@@ -148,7 +148,7 @@ void ComHpcWdt_Run(void)
                              (unsigned)s_timeoutMs);
                 prv_AssertWdOut();
                 prv_AssertPltrst();
-                s_state = WDT_STATE_FIRED;
+                g_state = WDT_STATE_FIRED;
             }
             break;
 
@@ -159,12 +159,12 @@ void ComHpcWdt_Run(void)
             break;
 
         default:
-            s_state = WDT_STATE_IDLE;
+            g_state = WDT_STATE_IDLE;
             break;
     }
 }
 
 boolean ComHpcWdt_HasFired(void)
 {
-    return (boolean)(s_state == WDT_STATE_FIRED);
+    return (boolean)(g_state == WDT_STATE_FIRED);
 }

@@ -28,14 +28,8 @@ static boolean    s_shutdownToOff      = FALSE;
 static volatile boolean s_thermtripIsrFlag = FALSE;
 static uint8      s_thermtripDebounce  = 0u;  /* consecutive LOW-read counter */
 static uint8           s_retryCount    = 0u;
-static uint32     s_rsmrstDeassertTimeMs = 0u;
 static PM_ResetCause_t s_resetCause    = PM_RESET_CAUSE_NONE;
 static PM_ResetCause_t s_pendingCause  = PM_RESET_CAUSE_NONE;
-static boolean s_coldBoot = FALSE;
-
-
-#define PM_SLP_S5_TIMEOUT_MS    250u //SUBJECT TO CHANGE
-#define PM_SLP_S3_TIMEOUT_MS    250u //SUBJECT TO CHANGE
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -79,8 +73,8 @@ static void prv_UpdateFusaStatus(PM_State_t state)
             /* 00 — MAIN_12V_EFUSE_EN not enabled */
             prv_SetFusaStatus(FUSA_PWR_OFF);
             break;
-        case PM_STATE_POWER_UP:          
-            prv_SetFusaStatus(FUSA_RESET);  
+        case PM_STATE_POWER_UP:              /* <-- ADD */
+            prv_SetFusaStatus(FUSA_RESET);   /* <-- ADD */
             break;  
         case PM_STATE_ON:
             /* 01 — all rails stable, system in good power state */
@@ -107,9 +101,8 @@ static void prv_UpdateFusaStatus(PM_State_t state)
 
 void PowerManager_OnThermtripIsr(void)
 {
-    if (s_state == PM_STATE_ON) {
-        s_thermtripIsrFlag = TRUE;  /* ISR-safe — just set the flag */
-    }
+    if (s_state == PM_STATE_ON)
+    s_thermtripIsrFlag = TRUE;  /* ISR-safe — just set the flag */
 }
 
 // Add this public function for voltage faults:
@@ -217,18 +210,25 @@ static void prv_UartReleaseToSoc(void)
 
 static void prv_AssertApuReset(void)
 {
-    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),   // was setPinLow
-                       PIN_APU_RESET_OUT_L.pinIdx);
+//  IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+//                    PIN_APU_RESET_OUT_L.pinIdx);
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+                      PIN_APU_RESET_OUT_L.pinIdx);
+    /* Reclaim UART immediately after asserting reset — SoC is now in
+     * reset so the shared line is free for AURIX diagnostic use. */
     prv_UartClaimByAurix();
-    Debug_Print("[PM] COLD_RST asserted. UART MUX -> AURIX\r\n");
+    Debug_Print("[PM] COLD_RST asserted. UART MUX -> AURIX (UART_MUX_SEL=1)\r\n");
 }
 
-// prv_DeassertApuReset — CHANGE setPinHigh → setPinLow
 static void prv_DeassertApuReset(void)
 {
+    /* Hand UART to x86 SoC before releasing reset so it owns the line
+     * from its first boot cycle.  This is the last AURIX UART message. */
     prv_UartReleaseToSoc();
-    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),    // was setPinHigh
-                      PIN_APU_RESET_OUT_L.pinIdx);
+//  IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+//                     PIN_APU_RESET_OUT_L.pinIdx);
+    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
+                       PIN_APU_RESET_OUT_L.pinIdx);
 }
 
 /* ---- BIOS ROM validation stub -------------------------------------------
@@ -250,11 +250,18 @@ static boolean prv_BiosRomValidate(void)
     Debug_Printf("[PM] BSEL[2:0] = %u\r\n", (unsigned)bsel);
 
     /* Assert SPI MUX select — AURIX owns BIOS ROM flash. */
-    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
+//  IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
+//                     PIN_APU_ROM_SPI_SEL.pinIdx);
+    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
                        PIN_APU_ROM_SPI_SEL.pinIdx);
 
+    /* TODO: QSPI0 read of ROM contents + AMD-defined integrity check.
+     *       Stub returns TRUE until validation method is defined. */
+
     /* Release SPI MUX — APU owns BIOS ROM flash. */
-    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
+//  IfxPort_setPinLow(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
+//                    PIN_APU_ROM_SPI_SEL.pinIdx);
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_ROM_SPI_SEL.portIdx),
                       PIN_APU_ROM_SPI_SEL.pinIdx);
 
     return TRUE;
@@ -431,8 +438,10 @@ static boolean prv_PwrBtnPressed(void)
 
 static boolean prv_ThermTripActive(void)
 {
-    return (IfxPort_getPinState(
-        AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx) != 0u);
+//  return (IfxPort_getPinState(
+//      AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx) == 0u);
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx);
 }
 
 static boolean prv_VinPwrOk(void)
@@ -481,11 +490,12 @@ void PowerManager_RequestPowerOff(void)
 
 void PowerManager_Run(void)
 {
-    uint16 waitMs = 0u;
     if (s_thermtripIsrFlag)
     {
         s_thermtripIsrFlag = FALSE;
-        if (s_state == PM_STATE_ON)
+        if ((s_state != PM_STATE_OFF) &&
+            (s_state != PM_STATE_S5)  &&
+            (s_state != PM_STATE_FAULT))
         {
             Debug_Print("[PM] THERMTRIP# ISR triggered\r\n");
             s_resetCause = PM_RESET_CAUSE_THERMAL;
@@ -501,6 +511,9 @@ void PowerManager_Run(void)
      * ------------------------------------------------------------------ */
     if (prv_ThermTripActive())
     {
+//      if ((s_state != PM_STATE_OFF)   &&
+//          (s_state != PM_STATE_S5)    &&
+//          (s_state != PM_STATE_FAULT))
         if (s_state == PM_STATE_ON)
         {
             s_thermtripDebounce++;
@@ -551,10 +564,11 @@ void PowerManager_Run(void)
             Debug_Print("[PM] Power-up sequence started. "
                         "Voltage monitoring suspended.\r\n");
             VoltMon_Disable();
-            s_coldBoot = TRUE;
+//          prv_SetState(PM_STATE_RAMP_VR3V3);
             prv_SetState(PM_STATE_RAMP_ALW);
             break;
-                    /* Stage 0: 12V EFUSE */
+        /* ------------------------------------------------------------------ */
+        /* Stage 0: 12V EFUSE */
         case PM_STATE_RAMP_ALW:
             if (!prv_RampGroup(PM_RAILS_EFUSE, PM_RAIL_EFUSE_COUNT))
             {
@@ -562,6 +576,7 @@ void PowerManager_Run(void)
                 prv_OnPgFault(&PM_RAILS_EFUSE[0], 0u);
                 break;
             }
+//          prv_SetState(PM_STATE_RAMP_S5);
             prv_SetState(PM_STATE_RAMP_VR3V3);
             break;
         case PM_STATE_RAMP_VR3V3:
@@ -572,11 +587,9 @@ void PowerManager_Run(void)
                 break;
             }
             Debug_Print("[PM] VR_APU_3V3 stable (standby rail).\r\n");
+//          prv_SetState(PM_STATE_RAMP_ALW);
             prv_SetState(PM_STATE_RAMP_S5);
             break;
-        /* ------------------------------------------------------------------ */
-
-
         /* ------------------------------------------------------------------ */
         /* Stage 1: Group B — S5 rails (MISC, 1V2, 1V8 + 3V3 pre-check) */
         case PM_STATE_RAMP_S5:
@@ -592,23 +605,14 @@ void PowerManager_Run(void)
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
             IfxPort_setPinHigh(AppPin_GetPort(PIN_MMC_RSMRST_L.portIdx),
                                PIN_MMC_RSMRST_L.pinIdx);
-            s_rsmrstDeassertTimeMs = Stm_GetTimeMs(); //records the time
             Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
+
             prv_SetState(PM_STATE_RAMP_S3);
             break;
 
         /* ------------------------------------------------------------------ */
         /* Stage 2: Group C — memory rails */
         case PM_STATE_RAMP_S3:
-            /* Guard Check for miscellaneous assertions */
-            if (!s_coldBoot && prv_SlpS5Active())
-            {
-                Debug_Print("[PM] SLP_S5 asserted during Group C ramp — aborting\r\n");
-                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
-            }
-
             if (!prv_RampGroup(PM_RAILS_GRP_C, PM_RAIL_GRP_C_COUNT))
             {
                 s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
@@ -621,14 +625,6 @@ void PowerManager_Run(void)
         /* ------------------------------------------------------------------ */
         /* Stage 3: Group D — VDDCR core */
         case PM_STATE_RAMP_S0:
-            /* Guard Check for miscellaneous assertions */
-            if (!s_coldBoot && prv_SlpS5Active())
-            {
-                Debug_Print("[PM] SLP_S5 asserted during Group D ramp — aborting\r\n");
-                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
-            }
             if (!prv_RampGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT))
             {
                 s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
@@ -636,11 +632,11 @@ void PowerManager_Run(void)
                 break;
             }
 
-            /* AMD 58241 16.1.1: all rails stable ≥1ms before PWR_GOOD.
+            /* AMD 58241 §16.1.1: all rails stable ≥1ms before PWR_GOOD.
              * PM_PWRGD_DEGLITCH_MS = 5ms satisfies this requirement. */
             prv_AssertPwrgd();
 
-            /* AMD 58241 16.1.5 Table 30 T7: RESET_L must remain asserted
+            /* AMD 58241 §16.1.5 Table 30 T7: RESET_L must remain asserted
              * a minimum of 28.5ms AFTER PWR_GOOD assertion.
              * Wait PM_RESET_HOLD_AFTER_PWRGD_MS (30ms) then release COLD_RST. */
             Stm_DelayMs(PM_RESET_HOLD_AFTER_PWRGD_MS);
@@ -652,10 +648,7 @@ void PowerManager_Run(void)
                 break;
             }
             prv_DeassertApuReset();
-            uint32 elapsed = Stm_GetTimeMs() - s_rsmrstDeassertTimeMs;
-            if (elapsed < 16u) {
-                Stm_DelayMs(16u - elapsed);
-            }
+
             /* Pulse APU_PWRBTN LOW to trigger SoC boot (>16ms per ACPI spec). */
             IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                             PIN_APU_PWRBTN.pinIdx);
@@ -663,37 +656,15 @@ void PowerManager_Run(void)
             IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                             PIN_APU_PWRBTN.pinIdx);
             Debug_Print("[PM] APU_PWRBTN pulsed LOW 200ms.\r\n");
-            /* T3: SLP_S3_L and SLP_S5_L both deassert after PWR_BTN */
-            if (s_coldBoot) {
-                uint16 slpWaitMs = 0u;
-                while ((prv_SlpS5Active() || prv_SlpS3Active()) &&
-                    (slpWaitMs < PM_SLP_S3_TIMEOUT_MS))
-                {
-                    Stm_DelayMs(1u);
-                    slpWaitMs++;
-                }
-                if (prv_SlpS5Active() || prv_SlpS3Active())
-                {
-                    Debug_Printf("[PM] SLP signals still active after PWR_BTN "
-                                "(S5=%u S3=%u)\r\n",
-                                (unsigned)prv_SlpS5Active(),
-                                (unsigned)prv_SlpS3Active());
-                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                    prv_OnPgFault(NULL_PTR, 0u);
-                    break;
-                }
-                Debug_Printf("[PM] SLP_S5 and SLP_S3 deasserted after %ums\r\n",
-                            (unsigned)slpWaitMs);
-            }
+
             /* Arm continuous PG monitoring on Group B rails (always-on set).
              * Expand to GRP_C / GRP_D by adding chained monitor calls or
              * a unified flat table when the monitor supports multiple segments. */
-            PwrGood_MonArm(PM_RAILS_GRP_B, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
+            PwrGood_MonArm(PM_RAILS_GRP_B, PM_RAIL_GRP_B_COUNT, prv_OnPgFault);
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                              COMHPC_WDT_DEFAULT_TIMEOUT_MS);
-            s_retryCount = 0u;
-            VoltMon_Enable();
-            Stm_DelayMs(50u); // Let APU deassert after PWRBTN pulse
+            s_retryCount = 0u; 
+            VoltMon_Enable(); 
             prv_SetState(PM_STATE_ON);
             Debug_Print("[PM] System ON. APU_PWR_GOOD asserted, COLD_RST released.\r\n");
             break;
@@ -703,6 +674,7 @@ void PowerManager_Run(void)
             /* Check APU-initiated sleep state transitions. */
             if (s_powerOffReq || prv_SlpS5Active())
             {
+                Debug_Print("[PM] SLP_S5 ACTIVEED.\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE; //full shutdown to off
                 prv_AssertApuReset();
@@ -715,6 +687,7 @@ void PowerManager_Run(void)
             }
             else if (prv_SlpS3Active())
             {
+                Debug_Print("[PM] SLP_S3 ACTIVEED.\r\n");
                 s_shutdownToOff = FALSE;
                 prv_AssertApuReset();
                 prv_AssertRsmrst();
@@ -755,28 +728,9 @@ void PowerManager_Run(void)
                 if (s_powerOnReq || prv_PwrBtnPressed())
                 {
                     s_powerOnReq = FALSE;
-                    s_coldBoot = TRUE;
                     Debug_Print("[PM] Wake from S5: THERMTRIP# cleared, "
                                 "re-enabling Group C/D.\r\n");
-                    Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                     prv_DeassertRsmrst();
-                    uint16 waitMs = 0u;
-                    while (prv_SlpS5Active() && (waitMs < PM_SLP_S5_TIMEOUT_MS))
-                    {
-                        Stm_DelayMs(1u);
-                        waitMs++;
-                    }
-                    if (prv_SlpS5Active())
-                    {
-                        Debug_Print("[PM] SLP_S5 still active after "
-                                    "RSMRST — chipset not responding\r\n");
-                        s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                        prv_OnPgFault(NULL_PTR, 0u);
-                        break;
-                    }
-                    Debug_Printf("[PM] SLP_S5 deasserted after %ums\r\n",
-                                (unsigned)waitMs);
-
                     prv_SetState(PM_STATE_RAMP_S3);
                 }
             }
@@ -799,7 +753,6 @@ void PowerManager_Run(void)
             if (!s_shutdownToOff && !prv_SlpS3Active())
             {
                 /* Resume to S0 — re-enable memory + core rails. */
-                s_coldBoot = FALSE;
                 prv_DeassertRsmrst();
                 prv_SetState(PM_STATE_RAMP_S3);
             }
@@ -836,7 +789,7 @@ void PowerManager_Run(void)
             /* Warm reset: KBRST_L asserted without dropping MAIN rails.
             * Re-validate BIOS ROM, then release KBRST_L. */
             Debug_Print("[PM] Warm reset: asserting KBRST_L...\r\n");
-            IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
+            IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
                             PIN_WARM_RST.pinIdx);
 
             /* UART MUX to AURIX during reset for debug visibility */
@@ -854,7 +807,7 @@ void PowerManager_Run(void)
 
             /* Release KBRST_L, hand UART back to SoC */
             prv_UartReleaseToSoc();
-            IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
+            IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
                             PIN_WARM_RST.pinIdx);
 
             Debug_Print("[PM] Warm reset complete.\r\n");
