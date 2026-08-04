@@ -45,6 +45,8 @@ typedef struct
 } PwrRail_Cfg_t;
 
 #define PM_RAIL_VR3V3_COUNT     1u
+#define PM_PG_TIMEOUT_MS    5u
+
 
 extern PwrRail_Cfg_t PM_RAILS_VR3V3[PM_RAIL_VR3V3_COUNT];
 
@@ -55,10 +57,6 @@ extern PwrRail_Cfg_t PM_RAILS_VR3V3[PM_RAIL_VR3V3_COUNT];
  * (hardware register pointers) in any file-scope aggregate initialiser.
  * Tables are filled at runtime by PowerManager_CfgInit().
  *
- * EFUSE table has 3 entries per AMD 58241 §16 and COM-HPC requirements:
- *   [0] VR_APU_3V3 pre-check  (assertEnable=FALSE) — AMD Group A must be stable
- *   [1] 12V_EFUSE enable + PG (assertEnable=TRUE)  — enable EFUSE, verify output
- *   [2] VR_APU_3V3 post-check (assertEnable=FALSE) — verify 3V3 still stable
  */
 #define PM_RAIL_EFUSE_COUNT     2u
 extern PwrRail_Cfg_t PM_RAILS_EFUSE[PM_RAIL_EFUSE_COUNT];
