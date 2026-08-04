@@ -36,6 +36,8 @@ static boolean  s_coldBoot             = FALSE;
 
 #define PM_SLP_S5_TIMEOUT_MS            250u
 #define PM_SLP_S3_TIMEOUT_MS            500u
+#define PM_T6_WAIT_MS               22u
+
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -494,14 +496,26 @@ static boolean prv_WaitSlpDeassert(uint16 timeoutMs)
     return TRUE;
 }
 
-static void prv_PulsePwrBtn(void)
+/* Cold boot (S5->S0): 360us pulse per AMD T3. */
+static void prv_PulsePwrBtnCold(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                       PIN_APU_PWRBTN.pinIdx);
     Stm_DelayUs(360u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
-    Debug_Print("[PM] APU_PWRBTN pulsed 360us (T3)\r\n");
+    Debug_Print("[PM] APU_PWRBTN pulsed 360us (T3 cold)\r\n");
+}
+
+/* S0i3 resume (S0 -> S3 -> S0): 16ms minimum per AMD T2 Table 30. */
+static void prv_PulsePwrBtnWarm(void)
+{
+    IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
+                      PIN_APU_PWRBTN.pinIdx);
+    Stm_DelayMs(16u);
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
+                       PIN_APU_PWRBTN.pinIdx);
+    Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T2 warm)\r\n");
 }
 
 
@@ -511,7 +525,6 @@ void PowerManager_Init(void)
 {
     /* Populate rail tables before any GPIO access (Tasking E306 workaround). */
     PowerManager_CfgInit();
-
     prv_DeassertPwrgd();
     prv_AssertApuReset();
     prv_AssertRsmrst();     /* hold RSMRST_L until S5 rails stable + 10ms */
@@ -655,7 +668,7 @@ void PowerManager_Run(void)
             Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
 
             prv_WaitSinceRsmrst(16u);   /* T1a: >=16ms RSMRST to PWR_BTN */
-            prv_PulsePwrBtn();
+            prv_PulsePwrBtnCold();
 
             if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
             {
@@ -714,6 +727,7 @@ void PowerManager_Run(void)
                 break;
             }
             prv_DeassertApuReset();
+            Stm_DelayMs(PM_T6_WAIT_MS);
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                             COMHPC_WDT_DEFAULT_TIMEOUT_MS);
@@ -801,8 +815,8 @@ void PowerManager_Run(void)
              *     by the time spent in S5 — far exceeds 10ms minimum).
              *   - Jump directly to PM_STATE_RAMP_S3 to re-enable Group C/D.
              */
-            if (!prv_ThermTripActive())
-            {
+            //if (!prv_ThermTripActive())
+            //{
                 if (s_powerOnReq || prv_PwrBtnPressed())
                 {
                     s_powerOnReq = FALSE;
@@ -813,7 +827,7 @@ void PowerManager_Run(void)
                     s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                     Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
                     prv_WaitSinceRsmrst(16u);   /* T1a */
-                    prv_PulsePwrBtn();
+                    prv_PulsePwrBtnCold();
                     if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                     {
                         s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
@@ -822,19 +836,22 @@ void PowerManager_Run(void)
                     }
                     prv_SetState(PM_STATE_RAMP_S3);
                 }
-            }
-            else
-            {
-                /* THERMTRIP still active — log periodically if needed. */
-                s_thermtripDebounce = 0u;   /* keep counter reset while in S5 */
-            }
+           // }
+    //        else
+    //        {
+    //            /* Don't need to read THERMTRIP in this state */
+    //           s_thermtripDebounce = 0u;   /* keep counter reset while in S5 */
+    //        }
             break;
 
         /* ------------------------------------------------------------------ */
         case PM_STATE_DN_S0_S3:
             /* Disable Group D (VDDCR core) then Group C (memory) */
             prv_DisableGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT);
-            prv_DisableGroup(PM_RAILS_GRP_C, PM_RAIL_GRP_C_COUNT);
+            if (s_shutdownToOff) {
+                prv_DisableGroup(PM_RAILS_GRP_C, PM_RAIL_GRP_C_COUNT);
+            }
+            /* S0i3: Group C stays powered on */
             prv_SetState(PM_STATE_DN_S3_S5);
             break;
 
@@ -851,7 +868,7 @@ void PowerManager_Run(void)
                 /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert */
                 s_coldBoot = FALSE;
                 prv_DeassertRsmrst();
-                prv_PulsePwrBtn();
+                prv_PulsePwrBtnWarm();
 
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
