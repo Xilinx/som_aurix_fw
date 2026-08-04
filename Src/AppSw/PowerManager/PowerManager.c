@@ -851,6 +851,7 @@ void PowerManager_Run(void)
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
                 prv_AssertApuReset();
+                prv_AssertKbrst();
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
@@ -985,8 +986,7 @@ void PowerManager_Run(void)
             /* Warm reset: KBRST_L asserted without dropping MAIN rails.
             * Re-validate BIOS ROM, then release KBRST_L. */
             Debug_Print("[PM] Warm reset: asserting KBRST_L...\r\n");
-            IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
-                            PIN_WARM_RST.pinIdx);
+            prv_AssertKbrst();
 
             /* UART MUX to AURIX during reset for debug visibility */
             prv_UartClaimByAurix();
@@ -1003,8 +1003,7 @@ void PowerManager_Run(void)
 
             /* Release KBRST_L, hand UART back to SoC */
             prv_UartReleaseToSoc();
-            prv_AssertKbrst();
-
+            prv_DeassertKbrst(); 
             Debug_Print("[PM] Warm reset complete.\r\n");
             prv_SetState(PM_STATE_ON);
             break;
