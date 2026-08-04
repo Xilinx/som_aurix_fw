@@ -81,6 +81,47 @@ static boolean prv_PwrokValid(void)
 }
 
 
+static boolean prv_VerifyUpstreamPg(PM_State_t stage)
+{
+    uint8 failIdx = 0u;
+    typedef struct {
+        const PwrRail_Cfg_t *rails;
+        uint8                count;
+        PM_State_t           minStage;   /* check when stage >= this */
+        const char          *name;
+    } PgCheckEntry_t;
+
+    static const PgCheckEntry_t checks[] = {
+        { PM_RAILS_EFUSE,  PM_RAIL_EFUSE_COUNT,  PM_STATE_RAMP_ALW,   "EFUSE"   },
+        { PM_RAILS_VR3V3,  PM_RAIL_VR3V3_COUNT,  PM_STATE_RAMP_VR3V3, "VR3V3"   },
+        { PM_RAILS_GRP_B,  PM_RAIL_GRP_B_COUNT,  PM_STATE_RAMP_S5,    "Group B" },
+        { PM_RAILS_GRP_C,  PM_RAIL_GRP_C_COUNT,  PM_STATE_RAMP_S3,    "Group C" },
+        { PM_RAILS_GRP_D,  PM_RAIL_GRP_D_COUNT,  PM_STATE_RAMP_S0,    "Group D" },
+    };
+
+    uint8 numChecks = (uint8)(sizeof(checks) / sizeof(checks[0]));
+    uint8 i;
+
+    for (i = 0u; i < numChecks; i++) {
+        if (stage < checks[i].minStage) {
+            break;   /* only check groups that should already be up */
+        }
+        failIdx = 0u;
+        if (!PwrGood_WaitAllPg(checks[i].rails, checks[i].count,
+                               0u,               /* no ramp delay — already up */
+                               PM_PG_TIMEOUT_MS,
+                               &failIdx)) {
+            Debug_Printf("[PM] PG lost: %s rail %u during %d\r\n",
+                         checks[i].name, (unsigned)failIdx, (int)stage);
+            s_pendingCause = PM_RESET_CAUSE_PG_LOSS;
+            prv_OnPgFault(&checks[i].rails[failIdx], failIdx);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+
 static void prv_UpdateFusaStatus(PM_State_t state)
 {
     switch (state)
@@ -147,6 +188,18 @@ static void prv_EnableRail(const PwrRail_Cfg_t *rail)
 static void prv_DisableRail(const PwrRail_Cfg_t *rail)
 {
     IfxPort_setPinLow(AppPin_GetPort(rail->enablePin.portIdx), rail->enablePin.pinIdx);
+}
+
+static void prv_DeassertKbrst(void)
+{
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
+                       PIN_WARM_RST.pinIdx);
+}
+
+static void prv_AssertKbrst(void)
+{
+    IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
+                      PIN_WARM_RST.pinIdx);
 }
 
 static void prv_DisableAllRails(void)
@@ -320,6 +373,7 @@ static void prv_GoToS5(void)
 
     /* Secure APU and deassert PWRGD before touching rails. */
     prv_AssertApuReset();
+    prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
     PwrGood_MonDisarm();
@@ -362,6 +416,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
 
     /* Secure the platform */
     prv_AssertApuReset();
+    prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
     PwrGood_MonDisarm();
@@ -519,6 +574,9 @@ static void prv_PulsePwrBtnWarm(void)
 }
 
 
+
+
+
 /* ---- Public API ---------------------------------------------------------- */
 
 void PowerManager_Init(void)
@@ -527,6 +585,7 @@ void PowerManager_Init(void)
     PowerManager_CfgInit();
     prv_DeassertPwrgd();
     prv_AssertApuReset();
+    prv_AssertKbrst();
     prv_AssertRsmrst();     /* hold RSMRST_L until S5 rails stable + 10ms */
     PwrGood_MonDisarm();
     s_state             = PM_STATE_OFF;
@@ -662,6 +721,9 @@ void PowerManager_Run(void)
                 prv_OnPgFault(&PM_RAILS_GRP_B[0], 0u);
                 break;
             }
+
+            if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S5)) break;
+
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
             prv_DeassertRsmrst();
             s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
@@ -696,6 +758,8 @@ void PowerManager_Run(void)
                 prv_OnPgFault(&PM_RAILS_GRP_C[0], 0u);
                 break;
             }
+
+            if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S3)) break;
             prv_SetState(PM_STATE_RAMP_S0);
             break;
 
@@ -726,7 +790,11 @@ void PowerManager_Run(void)
                 prv_OnPgFault(NULL_PTR, 0u);
                 break;
             }
-            prv_DeassertApuReset();
+
+
+            if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0)) break;
+            prv_DeassertApuReset();  /* SYS_RESET_L released */
+            prv_DeassertKbrst();  /* KBRST_L released    */
             Stm_DelayMs(PM_T6_WAIT_MS);
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
@@ -770,6 +838,7 @@ void PowerManager_Run(void)
                 s_shutdownToOff = TRUE;
                 s_thermtripDebounce = 0u;
                 prv_AssertApuReset();
+                prv_AssertKbrst();
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
@@ -934,8 +1003,7 @@ void PowerManager_Run(void)
 
             /* Release KBRST_L, hand UART back to SoC */
             prv_UartReleaseToSoc();
-            IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
-                            PIN_WARM_RST.pinIdx);
+            prv_AssertKbrst();
 
             Debug_Print("[PM] Warm reset complete.\r\n");
             prv_SetState(PM_STATE_ON);
