@@ -33,6 +33,9 @@ static PM_ResetCause_t s_pendingCause  = PM_RESET_CAUSE_NONE;
 
 static uint32   s_rsmrstDeassertTimeMs = 0u;
 static boolean  s_coldBoot             = FALSE;
+static uint32  s_pwrBtnPressStartMs = 0u;
+static boolean s_pwrBtnWasPressed   = FALSE;
+
 
 #define PM_SLP_S5_TIMEOUT_MS            250u
 #define PM_SLP_S3_TIMEOUT_MS            500u
@@ -201,6 +204,77 @@ static void prv_AssertKbrst(void)
     IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
                       PIN_WARM_RST.pinIdx);
 }
+
+/* ---- SoC reset signal read (AURIX input from SoC) -------------------- */
+static boolean prv_ReadSocResetL(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_APU_RESET_IN_L.portIdx),
+        PIN_APU_RESET_IN_L.pinIdx);
+}
+
+/* ---- COM-HPC PLTRST# output ----------------------------------------- */
+static void prv_AssertPltrst(void)
+{
+    IfxPort_setPinLow(AppPin_GetPort(PIN_PLTRST_L.portIdx),
+                      PIN_PLTRST_L.pinIdx);
+}
+
+static void prv_DeassertPltrst(void)
+{
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_PLTRST_L.portIdx),
+                       PIN_PLTRST_L.pinIdx);
+}
+
+/* ---- COM-HPC RSMRST_OUT# output ------------------------------------- */
+static void prv_AssertRsmrstOut(void)
+{
+    IfxPort_setPinLow(AppPin_GetPort(PIN_RSMRST_OUT_L.portIdx),
+                      PIN_RSMRST_OUT_L.pinIdx);
+}
+
+static void prv_DeassertRsmrstOut(void)
+{
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_RSMRST_OUT_L.portIdx),
+                       PIN_RSMRST_OUT_L.pinIdx);
+}
+
+/* ---- Read back AURIX's own RSMRST_L output state --------------------- */
+static boolean prv_ReadRsmrstState(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_MMC_RSMRST_L.portIdx),
+        PIN_MMC_RSMRST_L.pinIdx);
+}
+
+/* ---- Signal mirrors (COM-HPC spec) -----------------------------------
+ * PLTRST#:      SoC RESET_L (PIN_APU_RESET_IN_L) → COM-HPC PLTRST# (PIN_PLTRST_L)
+ * RSMRST_OUT#:  AURIX RSMRST_L (PIN_MMC_RSMRST_L read-back) → COM-HPC RSMRST_OUT# (PIN_RSMRST_OUT_L)
+ * ---------------------------------------------------------------------- */
+static void prv_MirrorResetSignals(void)
+{
+    if ((s_state == PM_STATE_OFF) || (s_state == PM_STATE_FAULT))
+    {
+        prv_AssertPltrst();
+        prv_AssertRsmrstOut();
+        return;
+    }
+
+    /* Mirror SoC RESET_L → COM-HPC PLTRST# */
+    if (prv_ReadSocResetL())
+        prv_DeassertPltrst();
+    else
+        prv_AssertPltrst();
+
+    /* Mirror RSMRST_L → COM-HPC RSMRST_OUT# */
+    if (prv_ReadRsmrstState())
+        prv_DeassertRsmrstOut();
+    else
+        prv_AssertRsmrstOut();
+}
+
+
+
 
 static void prv_DisableAllRails(void)
 {
@@ -574,7 +648,19 @@ static void prv_PulsePwrBtnWarm(void)
 }
 
 
-
+static void prv_EmergencyShutdown(PM_ResetCause_t cause)
+{
+    s_resetCause = cause;
+    prv_AssertApuReset();
+    prv_AssertKbrst();
+    prv_AssertRsmrst();
+    prv_DeassertPwrgd();
+    PwrGood_MonDisarm();
+    VoltMon_Disable();
+    ComHpcWdt_Disable();
+    prv_DisableAllRails();
+    prv_SetState(PM_STATE_OFF);
+}
 
 
 /* ---- Public API ---------------------------------------------------------- */
@@ -617,6 +703,7 @@ void PowerManager_RequestPowerOff(void)
 
 void PowerManager_Run(void)
 {
+    prv_MirrorResetSignals();
     if (s_thermtripIsrFlag)
     {
         s_thermtripIsrFlag = FALSE;
@@ -658,13 +745,42 @@ void PowerManager_Run(void)
         s_thermtripDebounce = 0u;   /* clear debounce counter on deassert */
     }
 
+    if (!prv_VinPwrOk() &&
+        (s_state != PM_STATE_OFF) &&
+        (s_state != PM_STATE_FAULT))
+    {
+        Debug_Print("[PM] VIN_PWR_OK lost — emergency shutdown\r\n");
+        prv_EmergencyShutdown(PM_RESET_CAUSE_PG_LOSS);
+        return;
+    }
+
     /* Run the PG monitor on every call (only active when armed). */
     PwrGood_MonRun();
 
     /* Check for PWR_BTN press (edge detection for ON request). */
-    if (prv_PwrBtnPressed() && (s_state == PM_STATE_OFF))
+    if (prv_PwrBtnPressed())
     {
-        s_powerOnReq = TRUE;
+        if (!s_pwrBtnWasPressed)
+        {
+            s_pwrBtnWasPressed   = TRUE;
+            s_pwrBtnPressStartMs = Stm_GetTimeMs();
+        }
+        else if ((s_state != PM_STATE_OFF) &&
+                 (s_state != PM_STATE_FAULT) &&
+                 (Stm_GetTimeMs() - s_pwrBtnPressStartMs >= PM_PWRBTN_HOLD_MS))
+        {
+            Debug_Print("[PM] PWRBTN# held >=4s — forced shutdown\r\n");
+            s_pwrBtnWasPressed = FALSE;
+            prv_EmergencyShutdown(PM_RESET_CAUSE_HOST_REQUEST);
+            return;
+        }
+    } else {
+        if (s_pwrBtnWasPressed &&
+            (Stm_GetTimeMs() - s_pwrBtnPressStartMs < PM_PWRBTN_HOLD_MS))
+        {
+            s_powerOnReq = TRUE;
+        }
+        s_pwrBtnWasPressed = FALSE;
     }
 
     switch (s_state)
