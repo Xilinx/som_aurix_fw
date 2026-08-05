@@ -58,4 +58,16 @@ void SysMonitor_DeassertCaterr(void);
 typedef void (*SysMonitor_ShutdownCb_t)(void);
 void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
 
+#define SYSMON_CARRIER_HOT_ENABLE   0u
+
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+#define SYSMON_CARRIER_DWELL_MS     1000u
+#endif
+
+/**
+ * @brief Returns TRUE if PROCHOT is currently asserted
+ *        (thermal throttle or carrier hot).
+ */
+boolean SysMonitor_IsThrottling(void);
+
 #endif /* SYS_MONITOR_H */

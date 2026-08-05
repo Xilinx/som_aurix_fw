@@ -30,15 +30,20 @@
 #define SYSMON_THERMAL_POLL_MS      100u
 
 /* Temperature thresholds in degrees C — update from AMD thermal spec */
-#define SYSMON_WARNING_TEMP_C       95
+#define SYSMON_WARNING_TEMP_C       85      /* assert PROCHOT above this     */
+#define SYSMON_WARNING_HYST_C       75      /* release PROCHOT below this    */
 #define SYSMON_SHUTDOWN_TEMP_C      105
-#define SYSMON_TEMP_HYSTERESIS_C    5
 #define SYSMON_TEMP_INVALID         (-128)
 
 #define SBTSI_I2C_ADDR_7BIT     0x4Cu
 #define SBTSI_REG_CPU_TEMP_INT  0x01u
 #define SBTSI_REG_CPU_TEMP_DEC  0x10u
 
+
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+static boolean s_carrierHotState   = FALSE;
+static uint32  s_carrierClearMs    = 0u;
+#endif
 
 static SysMonitor_ShutdownCb_t s_shutdownCb = NULL_PTR;
 
@@ -120,6 +125,11 @@ void SysMonitor_Init(void)
     s_prochotActive = FALSE;
 
     Debug_Print("[SYS] SysMonitor: APU_PROCHOT_L=H, PROCHOT#=H, CATERR#=H\r\n");
+
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+    s_carrierHotState = FALSE;
+    s_carrierClearMs  = 0u;
+#endif
 }
 
 void SysMonitor_Run(void)
@@ -172,13 +182,17 @@ void SysMonitor_Run(void)
                 SysMonitor_AssertApuProchot();
             }
             else if (s_thermalThrottle &&
-                     tempC < (SYSMON_WARNING_TEMP_C - SYSMON_TEMP_HYSTERESIS_C))
+                    tempC < SYSMON_WARNING_HYST_C)
             {
-                /* Clear throttle with hysteresis */
                 s_thermalThrottle = FALSE;
-                SysMonitor_DeassertApuProchot();
                 Debug_Printf("[SYS] THERMAL CLEAR: APU die %dC, releasing PROCHOT\r\n",
                              (int)tempC);
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+                if (!s_carrierHotState)
+#endif
+                {
+                    SysMonitor_DeassertApuProchot();
+                }
             }
         }
     }
@@ -209,6 +223,63 @@ void SysMonitor_Run(void)
             Debug_Print("[SYS] PROCHOT# deasserted - APU_PROCHOT_L returned HIGH\r\n");
         }
     }
+
+        /* ---- CARRIER_HOT# monitoring ---------------------------------------- */
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+    {
+        boolean carrierHot = !prv_ReadPin(&PIN_CARRIER_HOT);
+
+        if (carrierHot)
+        {
+            if (!s_carrierHotState)
+            {
+                s_carrierHotState = TRUE;
+                SysMonitor_AssertApuProchot();
+                prv_SetPin(&PIN_PROCHOT_L, FALSE);
+                Debug_Print("[SYS] CARRIER_HOT# asserted — PROCHOT asserted\r\n");
+            }
+            s_carrierClearMs = 0u;
+        }
+        else if (s_carrierHotState)
+        {
+            if (s_carrierClearMs == 0u)
+            {
+                s_carrierClearMs = Stm_GetTimeMs();
+            }
+            else if (Stm_GetTimeMs() - s_carrierClearMs >= SYSMON_CARRIER_DWELL_MS)
+            {
+                s_carrierHotState = FALSE;
+                Debug_Print("[SYS] CARRIER_HOT# dwell complete\r\n");
+
+                if (!s_thermalThrottle)
+                {
+                    SysMonitor_DeassertApuProchot();
+                    Debug_Print("[SYS] PROCHOT released (carrier + thermal clear)\r\n");
+                }
+                else
+                {
+                    Debug_Print("[SYS] PROCHOT held — thermal throttle still active\r\n");
+                }
+            }
+        }
+    }
+#else
+    /* CARRIER_HOT# disabled — debug-only edge logging */
+    {
+        static boolean s_lastCarrierHot = FALSE;
+        boolean hot = !prv_ReadPin(&PIN_CARRIER_HOT);
+
+        if (hot && !s_lastCarrierHot)
+        {
+            Debug_Print("[SYS] CARRIER_HOT# asserted (debug only — not acting)\r\n");
+        }
+        else if (!hot && s_lastCarrierHot)
+        {
+            Debug_Print("[SYS] CARRIER_HOT# deasserted (debug only)\r\n");
+        }
+        s_lastCarrierHot = hot;
+    }
+#endif
 }
 
 void SysMonitor_AssertApuProchot(void)
@@ -237,4 +308,13 @@ void SysMonitor_DeassertCaterr(void)
 {
     prv_SetPin(&PIN_CATERR_L, TRUE);
     Debug_Print("[SYS] CATERR# deasserted HIGH\r\n");
+}
+
+boolean SysMonitor_IsThrottling(void)
+{
+    return s_thermalThrottle
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+        || s_carrierHotState
+#endif
+    ;
 }
