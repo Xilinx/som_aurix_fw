@@ -35,6 +35,7 @@ static uint32   s_rsmrstDeassertTimeMs = 0u;
 static boolean  s_coldBoot             = FALSE;
 static uint32  s_pwrBtnPressStartMs = 0u;
 static boolean s_pwrBtnWasPressed   = FALSE;
+static boolean s_waitForBtnRelease     = FALSE;
 
 
 #define PM_SLP_S5_TIMEOUT_MS            250u
@@ -195,13 +196,13 @@ static void prv_DisableRail(const PwrRail_Cfg_t *rail)
 
 static void prv_DeassertKbrst(void)
 {
-    IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
+    IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
                        PIN_WARM_RST.pinIdx);
 }
 
 static void prv_AssertKbrst(void)
 {
-    IfxPort_setPinLow(AppPin_GetPort(PIN_WARM_RST.portIdx),
+    IfxPort_setPinHigh(AppPin_GetPort(PIN_WARM_RST.portIdx),
                       PIN_WARM_RST.pinIdx);
 }
 
@@ -353,13 +354,10 @@ static void prv_UartReleaseToSoc(void)
 
 static void prv_AssertApuReset(void)
 {
-//  IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
-//                    PIN_APU_RESET_OUT_L.pinIdx);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
                       PIN_APU_RESET_OUT_L.pinIdx);
     /* Reclaim UART immediately after asserting reset — SoC is now in
      * reset so the shared line is free for AURIX diagnostic use. */
-    prv_UartClaimByAurix();
     Debug_Print("[PM] COLD_RST asserted. UART MUX -> AURIX (UART_MUX_SEL=1)\r\n");
 }
 
@@ -367,11 +365,9 @@ static void prv_DeassertApuReset(void)
 {
     /* Hand UART to x86 SoC before releasing reset so it owns the line
      * from its first boot cycle.  This is the last AURIX UART message. */
-    prv_UartReleaseToSoc();
-//  IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
-//                     PIN_APU_RESET_OUT_L.pinIdx);
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
-                       PIN_APU_RESET_OUT_L.pinIdx);
+                    PIN_APU_RESET_OUT_L.pinIdx);
+    Debug_Print("[PM] SYS_RESET_L released\r\n");
 }
 
 /* ---- BIOS ROM validation stub -------------------------------------------
@@ -447,6 +443,7 @@ static void prv_GoToS5(void)
 
     /* Secure APU and deassert PWRGD before touching rails. */
     prv_AssertApuReset();
+    prv_UartClaimByAurix();
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
@@ -490,6 +487,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
 
     /* Secure the platform */
     prv_AssertApuReset();
+    prv_UartClaimByAurix();
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
@@ -630,10 +628,10 @@ static void prv_PulsePwrBtnCold(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                       PIN_APU_PWRBTN.pinIdx);
-    Stm_DelayUs(360u);
+    Stm_DelayMs(16u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
-    Debug_Print("[PM] APU_PWRBTN pulsed 360us (T3 cold)\r\n");
+    Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T3 cold)\r\n");
 }
 
 /* S0i3 resume (S0 -> S3 -> S0): 16ms minimum per AMD T2 Table 30. */
@@ -652,6 +650,7 @@ static void prv_EmergencyShutdown(PM_ResetCause_t cause)
 {
     s_resetCause = cause;
     prv_AssertApuReset();
+    prv_UartClaimByAurix();
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
@@ -678,6 +677,7 @@ void PowerManager_Init(void)
     s_powerOnReq        = FALSE;
     s_powerOffReq       = FALSE;
     s_shutdownToOff     = FALSE;
+    s_waitForBtnRelease = FALSE;
     s_thermtripDebounce = 0u;
     s_retryCount        = 0u;
     s_resetCause        = PM_RESET_CAUSE_NONE;
@@ -760,7 +760,7 @@ void PowerManager_Run(void)
     /* Check for PWR_BTN press (edge detection for ON request). */
     if (prv_PwrBtnPressed())
     {
-        if (!s_pwrBtnWasPressed)
+        if (!s_pwrBtnWasPressed && !s_waitForBtnRelease)
         {
             s_pwrBtnWasPressed   = TRUE;
             s_pwrBtnPressStartMs = Stm_GetTimeMs();
@@ -771,6 +771,7 @@ void PowerManager_Run(void)
         {
             Debug_Print("[PM] PWRBTN# held >=4s — forced shutdown\r\n");
             s_pwrBtnWasPressed = FALSE;
+            s_waitForBtnRelease = TRUE;
             prv_EmergencyShutdown(PM_RESET_CAUSE_HOST_REQUEST);
             return;
         }
@@ -781,6 +782,7 @@ void PowerManager_Run(void)
             s_powerOnReq = TRUE;
         }
         s_pwrBtnWasPressed = FALSE;
+        s_waitForBtnRelease = FALSE;
     }
 
     switch (s_state)
@@ -840,7 +842,10 @@ void PowerManager_Run(void)
 
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S5)) break;
 
+            prv_DeassertApuReset();
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                        /* Hand UART to APU just before RSMRST_L release */
+            prv_UartReleaseToSoc();
             prv_DeassertRsmrst();
             s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
             Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
@@ -909,7 +914,6 @@ void PowerManager_Run(void)
 
 
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0)) break;
-            prv_DeassertApuReset();  /* SYS_RESET_L released */
             prv_DeassertKbrst();  /* KBRST_L released    */
             Stm_DelayMs(PM_T6_WAIT_MS);
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
@@ -954,6 +958,7 @@ void PowerManager_Run(void)
                 s_shutdownToOff = TRUE;
                 s_thermtripDebounce = 0u;
                 prv_AssertApuReset();
+                prv_UartClaimByAurix();
                 prv_AssertKbrst();
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
@@ -967,6 +972,7 @@ void PowerManager_Run(void)
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
                 prv_AssertApuReset();
+                prv_UartClaimByAurix();
                 prv_AssertKbrst();
                 prv_AssertRsmrst();
                 prv_DeassertPwrgd();
@@ -1008,7 +1014,9 @@ void PowerManager_Run(void)
                     s_powerOnReq = FALSE;
                     s_coldBoot = TRUE;
                     Debug_Print("[PM] Wake from S5\r\n");
+                    prv_DeassertApuReset();
                     Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                    prv_UartReleaseToSoc();
                     prv_DeassertRsmrst();
                     s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                     Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
