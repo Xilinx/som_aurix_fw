@@ -37,7 +37,7 @@
 /* Register addresses (6-bit) — subset needed for PMC operation */
 #define TLF_REG_DEVCFG0         0x00u   /* Device configuration 0 */
 #define TLF_REG_DEVCFG2         0x02u   /* Device configuration 2 */
-#define TLF_REG_DEVSTAT          0x06u   /* Device status */
+#define TLF_REG_DEVSTAT         0x06u   /* Device status */
 #define TLF_REG_PROTREG         0x09u   /* Protection register (unlock writes) */
 #define TLF_REG_SYSPCFG0        0x04u   /* System power config 0 */
 #define TLF_REG_WDCFG0          0x0Cu   /* Watchdog configuration 0 */
@@ -50,14 +50,36 @@
 #define TLF_REG_DEVCTRL         0x35u   /* Device control (state transitions) */
 #define TLF_REG_DEVCFG_RB       0x34u   /* Device config read-back */
 
+/* ---- Additional Register Addresses -------------------------------------- */
+#define TLF_REG_SYSPCFG1        0x05u   /* System power config 1 */
+#define TLF_REG_WWDCFG0         0x0Eu   /* Window WD closed window config */
+#define TLF_REG_WWDCFG1         0x0Fu   /* Window WD open window config */
+#define TLF_REG_WWDSTAT         0x13u   /* Window WD status (error counter) */
+#define TLF_REG_DEVCTRLN        0x36u   /* Device control inverted */
+#define TLF_REG_SYSSF           0x1Cu   /* System safety flags */
+#define TLF_REG_MONSF1          0x1Du   /* Monitor safety flags 1 */
+#define TLF_REG_MONSF2          0x1Eu   /* Monitor safety flags 2 */
+#define TLF_REG_INITERR         0x1Fu   /* Init error flags */
+
+/* ---- WDCFG0 Bit Definitions (addr 0x0C) -------------------------------- */
+#define TLF_WDCFG0_WWDEN       (1u << 3u)
+#define TLF_WDCFG0_FWDEN       (1u << 2u)
+#define TLF_WDCFG0_WWDTSEL     (1u << 1u)  /* 1=SPI trigger */
+#define TLF_WDCFG0_WDCYC       (1u << 0u)  /* 0=0.1ms, 1=1ms base */
+
 /* Protection register unlock keys */
 #define TLF_UNLOCK_KEY0         0xABCDu
 #define TLF_UNLOCK_KEY1         0xDCBAu
+#define TLF_UNLOCK_KEY2         0xCDA9u
+#define TLF_UNLOCK_KEY3         0x9AC5u
+
 
 /* DEVCTRL state transition commands */
 #define TLF_GOTO_NORMAL         0x0001u
 #define TLF_GOTO_STANDBY        0x0009u
 #define TLF_GOTO_SLEEP          0x000Du
+
+#define TLF_SYSPCFG1_ERREN     (1u << 3u)  /* Enable ERR input monitor */
 
 /* Watchdog service response seeds (see datasheet Ch 14.4)
  * The TLF35585 expects a specific response based on the question

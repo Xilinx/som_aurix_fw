@@ -36,7 +36,7 @@ static boolean  s_coldBoot             = FALSE;
 static uint32  s_pwrBtnPressStartMs = 0u;
 static boolean s_pwrBtnWasPressed   = FALSE;
 static boolean s_waitForBtnRelease     = FALSE;
-
+static uint32 s_coldRstDwellStartMs = 0u;
 
 #define PM_SLP_S5_TIMEOUT_MS            250u
 #define PM_SLP_S3_TIMEOUT_MS            500u
@@ -951,6 +951,11 @@ void PowerManager_Run(void)
         /* ------------------------------------------------------------------ */
         case PM_STATE_ON:
             /* Check APU-initiated sleep state transitions. */
+            if (!prv_ReadSocResetL()) 
+            {
+                Debug_Print("[PM] APU_RESET_L asserted — cold reset detected\r\n");
+                s_resetCause = PM_RESET_CAUSE_COLD_RST;
+            }
             if (s_powerOffReq || prv_SlpS5Active())
             {
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
@@ -1007,6 +1012,26 @@ void PowerManager_Run(void)
              *     by the time spent in S5 — far exceeds 10ms minimum).
              *   - Jump directly to PM_STATE_RAMP_S3 to re-enable Group C/D.
              */
+            if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
+            {
+                if (s_coldRstDwellStartMs == 0u)
+                {
+                    s_coldRstDwellStartMs = Stm_GetTimeMs();
+                    Debug_Print("[PM] Cold reset: dwelling at S5 for 3s\r\n");
+                }
+                else if ((Stm_GetTimeMs() - s_coldRstDwellStartMs) >= 3000u)
+                {
+                    Debug_Print("[PM] Cold reset: dwell complete, re-powering\r\n");
+                    s_coldRstDwellStartMs = 0u;
+                    s_resetCause = PM_RESET_CAUSE_NONE;
+                    s_powerOnReq = TRUE;
+                    /* falls through to existing wake logic below */
+                }
+                else
+                {
+                    break;  /* still dwelling, don't process wake events */
+                }
+            }
             //if (!prv_ThermTripActive())
             //{
                 if (s_powerOnReq || prv_PwrBtnPressed())

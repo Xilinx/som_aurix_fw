@@ -29,6 +29,13 @@
 #define VOLTMON_VREF_MV         5000u
 #define VOLTMON_ADC_MAX         4095u    /* 12-bit resolution */
 
+#define VOLTMON_SMA_ENABLE      0u
+
+#if (VOLTMON_SMA_ENABLE == 1u)
+#define VOLTMON_SMA_SHIFT       2u
+#define VOLTMON_SMA_TAPS        (1u << VOLTMON_SMA_SHIFT)
+#endif
+
 /* Fault severity levels — matches FuSa requirement escalation chain */
 typedef enum
 {
@@ -105,7 +112,10 @@ void VoltMon_Enable(void);
  */
 void VoltMon_Disable(void);
 
-
+/**
+ * @brief Sets SMA taps at runtime
+ */
+void VoltMon_SetSmaTaps(uint8 taps);
 
 #if defined(TARGET_EVAL_BOARD)
 void VoltMon_PrintReport(void);

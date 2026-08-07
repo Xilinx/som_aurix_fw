@@ -73,7 +73,9 @@ int core0_main(void)
 
     Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
 #if !defined(TARGET_EVAL_BOARD)
+#if (SYSMON_CARRIER_WD_ENABLE == 1u)
     Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
+#endif
 #endif
     Eru_FaultIsr_Init();
     Debug_Print("[SYS] Init: ERU fault ISRs OK\r\n");
@@ -115,11 +117,13 @@ int core0_main(void)
 
 #if !defined(TARGET_EVAL_BOARD)
         Tlf35585_ServiceWdt();
-        SysMonitor_Run();
+#if (SYSMON_CARRIER_WD_ENABLE == 1u)
         ComHpcWdt_Run();
+#endif
 
         if (PowerManager_GetState() == PM_STATE_ON)
         {
+            SysMonitor_Run();
             static uint32 s_usbPdLastMs = 0u;
             uint32 nowMs = Stm_GetTimeMs();
             if ((nowMs - s_usbPdLastMs) >= 5u)
@@ -130,6 +134,5 @@ int core0_main(void)
         }
 #endif
     }
-
     return 0;
 }
