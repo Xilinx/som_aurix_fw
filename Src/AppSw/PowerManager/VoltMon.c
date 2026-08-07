@@ -31,8 +31,44 @@
 #define OV_WARN(nom)    ((uint16)((nom) * 108u / 100u))
 #define OV_FAULT(nom)   ((uint16)((nom) * 110u / 100u))
 
+
+
 #ifndef IFXEVADC_QUEUE_REFILL
 #define IFXEVADC_QUEUE_REFILL  (1u)
+#endif
+
+#if (VOLTMON_SMA_ENABLE == 1u)
+typedef struct
+{
+    uint16  buf[VOLTMON_SMA_TAPS];
+    uint8   idx;
+    uint8   count;
+} VoltMon_SmaFilter_t;
+
+static VoltMon_SmaFilter_t s_smaFilter[VOLTMON_CH_COUNT];
+
+static uint16 prv_SmaFilter(VoltMon_SmaFilter_t *f, uint16 rawMv)
+{
+    uint32 sum;
+    uint8  i;
+
+    f->buf[f->idx] = rawMv;
+    f->idx = (f->idx + 1u) % VOLTMON_SMA_TAPS;
+
+    if (f->count < VOLTMON_SMA_TAPS)
+    {
+        f->count++;
+        return rawMv;
+    }
+
+    sum = 0u;
+    for (i = 0u; i < VOLTMON_SMA_TAPS; i++)
+    {
+        sum += f->buf[i];
+    }
+
+    return (uint16)(sum >> VOLTMON_SMA_SHIFT);
+}
 #endif
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
@@ -130,6 +166,40 @@ static uint16                s_lastMv[VOLTMON_CH_COUNT];
 static VoltMon_FaultCb_t     s_faultCb = NULL_PTR;
 static boolean               s_initialised = FALSE;
 
+#if (VOLTMON_SMA_ENABLE == 1u)
+typedef struct
+{
+    uint16  buf[VOLTMON_SMA_TAPS];
+    uint8   idx;
+    uint8   count;
+} VoltMon_SmaFilter_t;
+
+static VoltMon_SmaFilter_t s_smaFilter[VOLTMON_CH_COUNT];
+
+static uint16 prv_SmaFilter(VoltMon_SmaFilter_t *f, uint16 rawMv)
+{
+    uint32 sum;
+    uint8  i;
+
+    f->buf[f->idx] = rawMv;
+    f->idx = (f->idx + 1u) % VOLTMON_SMA_TAPS;
+
+    if (f->count < VOLTMON_SMA_TAPS)
+    {
+        f->count++;
+        return rawMv;
+    }
+
+    sum = 0u;
+    for (i = 0u; i < VOLTMON_SMA_TAPS; i++)
+    {
+        sum += f->buf[i];
+    }
+
+    return (uint16)(sum >> VOLTMON_SMA_SHIFT);
+}
+#endif
+
 /* ---- ADC to mV conversion ----------------------------------------------- */
 
 static uint16 prv_CountsToRailMv(uint16 counts, uint16 dividerScale)
@@ -146,6 +216,7 @@ static uint16 prv_CountsToRailMv(uint16 counts, uint16 dividerScale)
 
     return (uint16)num;
 }
+
 
 /* ---- Threshold check ---------------------------------------------------- */
 
@@ -235,7 +306,13 @@ void VoltMon_Init(void)
 
         s_lastMv[i] = 0u;
     }
-
+#if (VOLTMON_SMA_ENABLE == 1u)
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        s_smaFilter[i].idx   = 0u;
+        s_smaFilter[i].count = 0u;
+    }
+#endif
     s_initialised = TRUE;
     Debug_Printf("[VMON] Init complete: %u channels across %u groups.\r\n",
                  (unsigned)VOLTMON_CH_COUNT, (unsigned)VOLTMON_NUM_GROUPS);
@@ -303,12 +380,17 @@ void VoltMon_Scan(void)
         /* getResult returns valid flag in the result struct */
         convResult = IfxEvadc_Adc_getResult(&s_channels[i]);
 
-        if (convResult.B.VF == 1u)   /* Valid flag set */
+        if (convResult.B.VF == 1u)
         {
-            s_lastMv[i] = prv_CountsToRailMv(
+            uint16 rawMv = prv_CountsToRailMv(
                 (uint16)(convResult.B.RESULT),
                 s_chTable[i].dividerScale);
 
+#if (VOLTMON_SMA_ENABLE == 1u)
+            s_lastMv[i] = prv_SmaFilter(&s_smaFilter[i], rawMv);
+#else
+            s_lastMv[i] = rawMv;
+#endif
             prv_CheckThresholds(i, s_lastMv[i]);
 
             /*
@@ -341,6 +423,7 @@ uint8 VoltMon_GetChannelCount(void)
 {
     return (uint8)VOLTMON_CH_COUNT;
 }
+
 
 #if defined(TARGET_EVAL_BOARD)
 void VoltMon_PrintReport(void)

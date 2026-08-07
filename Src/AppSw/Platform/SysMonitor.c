@@ -196,6 +196,7 @@ void SysMonitor_Run(void)
             }
         }
     }
+    
     apuProchotLow = !prv_ReadPin(&PIN_APU_PROCHOT_L);
 
     if (apuProchotLow)

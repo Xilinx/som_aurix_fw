@@ -39,7 +39,8 @@ typedef enum
     PM_RESET_CAUSE_WATCHDOG     = 4u,   /* COM-HPC host watchdog timeout */
     PM_RESET_CAUSE_HOST_REQUEST = 5u,   /* SLP_S5 or PWRBTN shutdown */
     PM_RESET_CAUSE_VOLTAGE      = 6u,   /* EVADC UV/OV fault */
-    PM_RESET_CAUSE_BIOS_FAIL    = 7u    /* BIOS ROM validation failure */
+    PM_RESET_CAUSE_BIOS_FAIL    = 7u,    /* BIOS ROM validation failure */
+    PM_RESET_CAUSE_COLD_RST     = 8u   /* CF9 cold reset — auto-restart after dwell */
 } PM_ResetCause_t;
 
 /**
