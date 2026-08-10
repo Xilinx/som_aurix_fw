@@ -306,6 +306,16 @@ static void prv_DisableAllRails(void)
             Stm_DelayMs(PM_INTER_RAIL_DELAY_MS);
         }
     }
+
+    for (i = (sint8)PM_RAIL_VR3V3_COUNT - 1; i >= 0; i--)
+    {
+        if (PM_RAILS_VR3V3[i].assertEnable)
+        {
+            prv_DisableRail(&PM_RAILS_VR3V3[i]);
+            Stm_DelayMs(PM_INTER_RAIL_DELAY_MS);
+        }
+    }
+    
     for (i = (sint8)PM_RAIL_EFUSE_COUNT - 1; i >= 0; i--)
     {
         if (PM_RAILS_EFUSE[i].assertEnable)
@@ -1021,10 +1031,6 @@ void PowerManager_Run(void)
                     s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
                     prv_SetState(PM_STATE_WARM_RESET);
                 } 
-                else 
-                {
-                    s_rstBtnDebounce = 0u;
-                }
             }
             break;
 
@@ -1177,6 +1183,12 @@ void PowerManager_Run(void)
             prv_UartClaimByAurix();
 
             Stm_DelayMs(10u);   /* KBRST_L minimum assertion time */
+            if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0))
+            {
+                Debug_Print("[PM] PG lost during warm reset — fault\r\n");
+                /* prv_VerifyUpstreamPg already called prv_OnPgFault */
+                break;
+            }
 
             if (!prv_BiosRomValidate())
             {
