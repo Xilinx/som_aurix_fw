@@ -38,6 +38,7 @@ static uint32  s_pwrBtnPressStartMs = 0u;
 static boolean s_pwrBtnWasPressed   = FALSE;
 static boolean s_waitForBtnRelease     = FALSE;
 static uint32 s_coldRstDwellStartMs = 0u;
+static uint32  s_forcedOffMs        = 0u;
 
 
 
@@ -770,6 +771,7 @@ void PowerManager_Run(void)
             Debug_Print("[PM] PWRBTN# held >=4s — forced shutdown\r\n");
             s_pwrBtnWasPressed = FALSE;
             s_waitForBtnRelease = TRUE;
+            s_forcedOffMs = Stm_GetTimeMs();    // timestamp for forceOff
             prv_EmergencyShutdown(PM_RESET_CAUSE_HOST_REQUEST);
             return;
         }
@@ -797,6 +799,15 @@ void PowerManager_Run(void)
         case PM_STATE_OFF:
             if (s_powerOnReq && prv_VinPwrOk())
             {
+                /* After forced shutdown, ignore power-on requests for
+                 * 2 seconds to reject button bounce on release. */
+                if ((s_forcedOffMs != 0u) &&
+                    (Stm_GetTimeMs() - s_forcedOffMs < PM_FORCED_OFF_COOLDOWN_MS))
+                {
+                    s_powerOnReq = FALSE;
+                    break;
+                }
+                s_forcedOffMs = 0u;
                 s_powerOnReq = FALSE;
                 VoltMon_Disable(); /* suppresses faults in sequencing */
                 prv_SetState(PM_STATE_POWER_UP);
