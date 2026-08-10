@@ -1120,7 +1120,9 @@ void PowerManager_Run(void)
             {
                 /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert */
                 s_coldBoot = FALSE;
-                prv_DeassertRsmrst();
+                //prv_DeassertRsmrst();
+                prv_UartReleaseToSoc();
+                prv_DeassertKbrst();
                 prv_PulsePwrBtnWarm();
 
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
