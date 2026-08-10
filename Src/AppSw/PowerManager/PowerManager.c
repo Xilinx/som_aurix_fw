@@ -27,6 +27,7 @@ static boolean    s_powerOffReq        = FALSE;
 static boolean    s_shutdownToOff      = FALSE;
 static volatile boolean s_thermtripIsrFlag = FALSE;
 static uint8      s_thermtripDebounce  = 0u;  /* consecutive LOW-read counter */
+static uint8      s_rstBtnDebounce     = 0u;
 static uint8           s_retryCount    = 0u;
 static PM_ResetCause_t s_resetCause    = PM_RESET_CAUSE_NONE;
 static PM_ResetCause_t s_pendingCause  = PM_RESET_CAUSE_NONE;
@@ -38,9 +39,6 @@ static boolean s_pwrBtnWasPressed   = FALSE;
 static boolean s_waitForBtnRelease     = FALSE;
 static uint32 s_coldRstDwellStartMs = 0u;
 
-#define PM_SLP_S5_TIMEOUT_MS            250u
-#define PM_SLP_S3_TIMEOUT_MS            500u
-#define PM_T6_WAIT_MS               22u
 
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
@@ -779,7 +777,15 @@ void PowerManager_Run(void)
         if (s_pwrBtnWasPressed &&
             (Stm_GetTimeMs() - s_pwrBtnPressStartMs < PM_PWRBTN_HOLD_MS))
         {
-            s_powerOnReq = TRUE;
+            if (s_state == PM_STATE_ON)
+            {
+                Debug_Print("[PM] PWRBTN short press — forwarding to APU\r\n");
+                prv_PulsePwrBtnCold();
+            }
+            else
+            {
+                s_powerOnReq = TRUE;
+            }
         }
         s_pwrBtnWasPressed = FALSE;
         s_waitForBtnRelease = FALSE;
@@ -958,14 +964,23 @@ void PowerManager_Run(void)
             }
             if (s_powerOffReq || prv_SlpS5Active())
             {
+                /* SLP_S5 means the OS requested shutdown, NOT a
+                 * cold reset even if APU_RESET_L was asserted moments earlier
+                 * (the APU always asserts RESET_L during ACPI shutdown).
+                 * Clear the cold-reset cause so S5 state parks and stays. */
+                if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
+                {
+                    Debug_Print("[PM] SLP_S5 with APU_RESET_L — normal shutdown, not cold reset\r\n");
+                    s_resetCause = PM_RESET_CAUSE_NONE;
+                }
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE;
                 s_thermtripDebounce = 0u;
-                prv_AssertApuReset();
+                //prv_AssertApuReset();
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
-                prv_AssertRsmrst();
+                //prv_AssertRsmrst(); 
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
@@ -976,10 +991,10 @@ void PowerManager_Run(void)
             {
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
-                prv_AssertApuReset();
+                // prv_AssertApuReset(); 
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
-                prv_AssertRsmrst();
+                // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
@@ -989,8 +1004,16 @@ void PowerManager_Run(void)
             if (IfxPort_getPinState(AppPin_GetPort(PIN_CB_RSTBTN_L.portIdx),
                                      PIN_CB_RSTBTN_L.pinIdx) == 0u)
             {
-                s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
-                prv_SetState(PM_STATE_WARM_RESET);
+                s_rstBtnDebounce++;
+                if (s_rstBtnDebounce >= PM_RSTBTN_DEBOUNCE_POLLS) {
+                    s_rstBtnDebounce = 0u;
+                    s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
+                    prv_SetState(PM_STATE_WARM_RESET);
+                } 
+                else 
+                {
+                    s_rstBtnDebounce = 0u;
+                }
             }
             break;
 
