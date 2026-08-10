@@ -260,8 +260,11 @@ static void prv_MirrorResetSignals(void)
         return;
     }
 
-    /* Mirror SoC RESET_L → COM-HPC PLTRST# */
-    if (prv_ReadSocResetL())
+    /* Mirror SoC RESET_L → COM-HPC PLTRST#
+     * Per COM-HPC spec: PLTRST# shall not be released while RSTBTN# is low */
+    if (prv_ReadSocResetL() &&
+        (IfxPort_getPinState(AppPin_GetPort(PIN_CB_RSTBTN_L.portIdx),
+                             PIN_CB_RSTBTN_L.pinIdx) != 0u))
         prv_DeassertPltrst();
     else
         prv_AssertPltrst();
@@ -456,6 +459,7 @@ static void prv_GoToS5(void)
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
+    prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
 
@@ -500,6 +504,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
+    prv_AssertPltrst();
     PwrGood_MonDisarm();
     prv_DisableAllRails();
 
@@ -663,6 +668,7 @@ static void prv_EmergencyShutdown(PM_ResetCause_t cause)
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
+    prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
     ComHpcWdt_Disable();
@@ -681,6 +687,7 @@ void PowerManager_Init(void)
     prv_AssertApuReset();
     prv_AssertKbrst();
     prv_AssertRsmrst();     /* hold RSMRST_L until S5 rails stable + 10ms */
+    prv_AssertPltrst();
     PwrGood_MonDisarm();
     s_state             = PM_STATE_OFF;
     s_powerOnReq        = FALSE;
@@ -971,6 +978,7 @@ void PowerManager_Run(void)
 
             s_retryCount = 0u;
             VoltMon_Enable();
+            prv_DeassertPltrst();
             prv_SetState(PM_STATE_ON);
             Debug_Print("[PM] System ON.\r\n");
             break;
@@ -1003,6 +1011,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 //prv_AssertRsmrst(); 
                 prv_DeassertPwrgd();
+                prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1017,6 +1026,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
+                prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1178,6 +1188,7 @@ void PowerManager_Run(void)
             * Re-validate BIOS ROM, then release KBRST_L. */
             Debug_Print("[PM] Warm reset: asserting KBRST_L...\r\n");
             prv_AssertKbrst();
+            prv_AssertPltrst();
 
             /* UART MUX to AURIX during reset for debug visibility */
             prv_UartClaimByAurix();
