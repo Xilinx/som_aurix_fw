@@ -978,7 +978,7 @@ void PowerManager_Run(void)
 
             s_retryCount = 0u;
             VoltMon_Enable();
-            prv_DeassertPltrst();
+            //prv_DeassertPltrst();
             prv_SetState(PM_STATE_ON);
             Debug_Print("[PM] System ON.\r\n");
             break;
@@ -1011,7 +1011,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 //prv_AssertRsmrst(); 
                 prv_DeassertPwrgd();
-                prv_AssertPltrst();
+                //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1026,7 +1026,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
-                prv_AssertPltrst();
+                //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1218,6 +1218,7 @@ void PowerManager_Run(void)
         default:
             break;
     }
+    
 }
 
 PM_ResetCause_t PowerManager_GetResetCause(void)
