@@ -8,6 +8,13 @@
 
 #include "Ifx_Types.h"
 #include "VoltMon.h"
+
+#define PM_SLP_S5_TIMEOUT_MS            250u
+#define PM_SLP_S3_TIMEOUT_MS            500u
+#define PM_T6_WAIT_MS                   22u
+#define PM_RSTBTN_DEBOUNCE_POLLS        3u
+#define PM_FORCED_OFF_COOLDOWN_MS   2000u
+
 /**
  * @brief ACPI-aligned power manager states.
  */

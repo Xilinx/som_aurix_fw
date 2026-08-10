@@ -37,39 +37,6 @@
 #define IFXEVADC_QUEUE_REFILL  (1u)
 #endif
 
-#if (VOLTMON_SMA_ENABLE == 1u)
-typedef struct
-{
-    uint16  buf[VOLTMON_SMA_TAPS];
-    uint8   idx;
-    uint8   count;
-} VoltMon_SmaFilter_t;
-
-static VoltMon_SmaFilter_t s_smaFilter[VOLTMON_CH_COUNT];
-
-static uint16 prv_SmaFilter(VoltMon_SmaFilter_t *f, uint16 rawMv)
-{
-    uint32 sum;
-    uint8  i;
-
-    f->buf[f->idx] = rawMv;
-    f->idx = (f->idx + 1u) % VOLTMON_SMA_TAPS;
-
-    if (f->count < VOLTMON_SMA_TAPS)
-    {
-        f->count++;
-        return rawMv;
-    }
-
-    sum = 0u;
-    for (i = 0u; i < VOLTMON_SMA_TAPS; i++)
-    {
-        sum += f->buf[i];
-    }
-
-    return (uint16)(sum >> VOLTMON_SMA_SHIFT);
-}
-#endif
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
 
@@ -116,8 +83,8 @@ static const VoltMon_ChCfg_t s_chTable[] =
 //  { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1570u), OV_FAULT(1590u), 1000u },
-    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1570u), OV_FAULT(1590u), 1000u },
+    { "VDDCR",       0u, 0u, 0u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
+    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
     { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1220u), OV_FAULT(1240u), 1000u },
     { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(600u),  UV_FAULT(550u),  OV_WARN(1020u), OV_FAULT(1090u), 1000u },
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
