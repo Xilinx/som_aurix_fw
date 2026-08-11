@@ -112,7 +112,7 @@ void SysMonitor_Init(void)
     /* APU_PROCHOT_L (P11.9): open-drain output, default HIGH (released).
      * The pin direction is open-drain as configured in Port_Init.c.
      * Driving HIGH releases the open-drain line; APU can still pull it LOW. */
-    prv_SetPin(&PIN_APU_PROCHOT_L, TRUE);
+    prv_SetPin(&PIN_APU_PROCHOT_L, FALSE);
 
     /* PROCHOT# (P2.10): COM-HPC carrier output, active low.
      * Default HIGH = deasserted (no thermal event). */
@@ -134,7 +134,6 @@ void SysMonitor_Init(void)
 
 void SysMonitor_Run(void)
 {
-    boolean apuProchotLow;
     static uint32 s_lastPoll    = 0u;
     static uint32 s_lastLog     = 0u;
     static uint32 s_lastThermal = 0u;
@@ -196,34 +195,52 @@ void SysMonitor_Run(void)
             }
         }
     }
-    
-    apuProchotLow = !prv_ReadPin(&PIN_APU_PROCHOT_L);
+        /* ---- APU-side PROCHOT detection via SB-TSI status register -----------
+        * P11.9 drives the gate of Q53 (BSS138), so reading the GPIO only
+        * returns what the Aurix wrote.  Poll SB-TSI status register 0x02
+        * bit[4] over the existing APML I2C bus to detect APU-initiated
+        * PROCHOT instead.
+        * ------------------------------------------------------------------ */
+        uint8 sbtsiStatus = 0u;
+        I2c_Status_t st;
+        boolean apuProchot = FALSE;
 
-    if (apuProchotLow)
-    {
-        prv_SetPin(&PIN_PROCHOT_L, FALSE);
-
-        if (!s_prochotActive)
+        st = I2cMaster_ApmlReadByte(SBTSI_I2C_ADDR_7BIT, 0x02u, &sbtsiStatus);
+        if (st == I2C_OK)
         {
-            s_prochotActive = TRUE;
-            s_lastLog = 0u;
+            apuProchot = (boolean)((sbtsiStatus & 0x10u) != 0u);
         }
 
-        if (Stm_IsElapsedMs(&s_lastLog, SYSMON_LOG_INTERVAL_MS))
+        if (apuProchot)
         {
-            Debug_Print("[SYS] PROCHOT# asserted - APU_PROCHOT_L LOW\r\n");
-        }
-    }
-    else
-    {
-        prv_SetPin(&PIN_PROCHOT_L, TRUE);
+            prv_SetPin(&PIN_PROCHOT_L, FALSE);   /* mirror to carrier */
 
-        if (s_prochotActive)
-        {
-            s_prochotActive = FALSE;
-            Debug_Print("[SYS] PROCHOT# deasserted - APU_PROCHOT_L returned HIGH\r\n");
+            if (!s_prochotActive)
+            {
+                s_prochotActive = TRUE;
+                s_lastLog = 0u;
+            }
+
+            if (Stm_IsElapsedMs(&s_lastLog, SYSMON_LOG_INTERVAL_MS))
+            {
+                Debug_Print("[SYS] PROCHOT# asserted — APU SB-TSI status\r\n");
+            }
         }
-    }
+        else
+        {
+            /* Only release carrier PROCHOT if we're not throttling from
+             * the Aurix side (thermal or CARRIER_HOT) */
+            if (s_prochotActive && !s_thermalThrottle
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+                && !s_carrierHotState
+#endif
+            )
+            {
+                prv_SetPin(&PIN_PROCHOT_L, TRUE);
+                s_prochotActive = FALSE;
+                Debug_Print("[SYS] PROCHOT# deasserted — APU SB-TSI clear\r\n");
+            }
+        }
 
         /* ---- CARRIER_HOT# monitoring ---------------------------------------- */
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
@@ -288,14 +305,14 @@ void SysMonitor_AssertApuProchot(void)
     /* Drive APU_PROCHOT_L LOW via the open-drain output.
      * This throttles the APU from the TC387 side (e.g. platform-level
      * power limit enforcement via future APML control). */
-    prv_SetPin(&PIN_APU_PROCHOT_L, FALSE);
+    prv_SetPin(&PIN_APU_PROCHOT_L, TRUE);
     Debug_Print("[SYS] APU_PROCHOT_L asserted LOW by TC387\r\n");
 }
 
 void SysMonitor_DeassertApuProchot(void)
 {
     /* Release the open-drain drive — APU_PROCHOT_L floats HIGH via pull-up. */
-    prv_SetPin(&PIN_APU_PROCHOT_L, TRUE);
+    prv_SetPin(&PIN_APU_PROCHOT_L, FALSE);
     Debug_Print("[SYS] APU_PROCHOT_L released HIGH by TC387\r\n");
 }
 

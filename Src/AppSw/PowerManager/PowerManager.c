@@ -26,6 +26,8 @@ static boolean    s_powerOnReq         = FALSE;
 static boolean    s_powerOffReq        = FALSE;
 static boolean    s_shutdownToOff      = FALSE;
 static volatile boolean s_thermtripIsrFlag = FALSE;
+static boolean          s_rsmrstAsserted = FALSE;
+static boolean s_waitForRstRelease      = FALSE;
 static uint8      s_thermtripDebounce  = 0u;  /* consecutive LOW-read counter */
 static uint8      s_rstBtnDebounce     = 0u;
 static uint8           s_retryCount    = 0u;
@@ -429,12 +431,15 @@ static void prv_AssertRsmrst(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_MMC_RSMRST_L.portIdx),
                       PIN_MMC_RSMRST_L.pinIdx);
+    s_rsmrstAsserted = TRUE;
+
 }
 
 static void prv_DeassertRsmrst(void)
 {
     IfxPort_setPinHigh(AppPin_GetPort(PIN_MMC_RSMRST_L.portIdx),
                        PIN_MMC_RSMRST_L.pinIdx);
+    s_rsmrstAsserted = FALSE;
 }
 
 /* Forward declaration — prv_DisableGroup is defined after prv_GoToS5. */
@@ -880,11 +885,14 @@ void PowerManager_Run(void)
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                         /* Hand UART to APU just before RSMRST_L release */
             prv_UartReleaseToSoc();
-            prv_DeassertRsmrst();
-            s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
-            Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
+            if (s_rsmrstAsserted)
+            {
+                prv_DeassertRsmrst();
+                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
+                Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
+                prv_WaitSinceRsmrst(16u);   /* T1a: >=16ms RSMRST to PWR_BTN */
+            }
 
-            prv_WaitSinceRsmrst(16u);   /* T1a: >=16ms RSMRST to PWR_BTN */
             prv_PulsePwrBtnCold();
 
             if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
@@ -1005,13 +1013,14 @@ void PowerManager_Run(void)
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE;
+                s_waitForBtnRelease = TRUE;
                 s_thermtripDebounce = 0u;
-                //prv_AssertApuReset();
+                prv_AssertApuReset();
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
                 //prv_AssertRsmrst(); 
                 prv_DeassertPwrgd();
-                //prv_AssertPltrst();
+                prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1021,12 +1030,12 @@ void PowerManager_Run(void)
             {
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
-                // prv_AssertApuReset(); 
+                prv_AssertApuReset(); 
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
-                //prv_AssertPltrst();
+                prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1035,12 +1044,20 @@ void PowerManager_Run(void)
             if (IfxPort_getPinState(AppPin_GetPort(PIN_CB_RSTBTN_L.portIdx),
                                      PIN_CB_RSTBTN_L.pinIdx) == 0u)
             {
-                s_rstBtnDebounce++;
-                if (s_rstBtnDebounce >= PM_RSTBTN_DEBOUNCE_POLLS) {
-                    s_rstBtnDebounce = 0u;
-                    s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
-                    prv_SetState(PM_STATE_WARM_RESET);
-                } 
+                if (!s_waitForRstRelease)
+                {
+                    s_rstBtnDebounce++;
+                    if (s_rstBtnDebounce >= PM_RSTBTN_DEBOUNCE_POLLS) {
+                        s_rstBtnDebounce = 0u;
+                        s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
+                        prv_SetState(PM_STATE_WARM_RESET);
+                    } 
+                }
+                else
+                {
+                    s_rstBtnDebounce = 0u;        /* clear on release */
+                    s_waitForRstRelease = FALSE;  /* re-arm for next press */
+                }
             }
             break;
 
@@ -1084,27 +1101,36 @@ void PowerManager_Run(void)
             }
             //if (!prv_ThermTripActive())
             //{
-                if (s_powerOnReq || prv_PwrBtnPressed())
+            if (s_waitForBtnRelease)
+            {
+                if (!prv_PwrBtnPressed())
+                    s_waitForBtnRelease = FALSE;
+                break;   /* don't process wake events until released */
+            }
+
+            if (s_powerOnReq || prv_PwrBtnPressed())
+            {
+                s_powerOnReq = FALSE;
+                s_coldBoot = TRUE;
+                Debug_Print("[PM] Wake from S5\r\n");
+
+                prv_DeassertApuReset();
+                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                prv_UartReleaseToSoc();
+
+                prv_DeassertRsmrst();
+                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
+                Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
+                prv_WaitSinceRsmrst(16u);   /* T1a */
+                prv_PulsePwrBtnCold();
+                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
-                    s_powerOnReq = FALSE;
-                    s_coldBoot = TRUE;
-                    Debug_Print("[PM] Wake from S5\r\n");
-                    prv_DeassertApuReset();
-                    Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
-                    prv_UartReleaseToSoc();
-                    prv_DeassertRsmrst();
-                    s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
-                    Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
-                    prv_WaitSinceRsmrst(16u);   /* T1a */
-                    prv_PulsePwrBtnCold();
-                    if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
-                    {
-                        s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                        prv_OnPgFault(NULL_PTR, 0u);
-                        break;
-                    }
-                    prv_SetState(PM_STATE_RAMP_S3);
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
                 }
+                prv_SetState(PM_STATE_RAMP_S3);
+            }
            // }
     //        else
     //        {
