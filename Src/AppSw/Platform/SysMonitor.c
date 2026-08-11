@@ -34,6 +34,8 @@
 #define SYSMON_WARNING_HYST_C       75      /* release PROCHOT below this    */
 #define SYSMON_SHUTDOWN_TEMP_C      105
 #define SYSMON_TEMP_INVALID         (-128)
+#define SYSMON_APML_PROCHOT_ENABLE  0u
+
 
 #define SBTSI_I2C_ADDR_7BIT     0x4Cu
 #define SBTSI_REG_CPU_TEMP_INT  0x01u
@@ -201,6 +203,7 @@ void SysMonitor_Run(void)
         * bit[4] over the existing APML I2C bus to detect APU-initiated
         * PROCHOT instead.
         * ------------------------------------------------------------------ */
+#if (SYSMON_APML_PROCHOT_ENABLE == 1u)
         uint8 sbtsiStatus = 0u;
         I2c_Status_t st;
         boolean apuProchot = FALSE;
@@ -241,6 +244,8 @@ void SysMonitor_Run(void)
                 Debug_Print("[SYS] PROCHOT# deasserted — APU SB-TSI clear\r\n");
             }
         }
+
+#endif
 
         /* ---- CARRIER_HOT# monitoring ---------------------------------------- */
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
