@@ -206,7 +206,7 @@ som_aurix_fw/
 
 1. **Clone this repository**
    ```bash
-   git clone https://gitenterprise.xilinx.com/arch-ssa/som_aurix_fw
+   git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
    ```
 
 2. **Unpack iLLD** into the project root:
