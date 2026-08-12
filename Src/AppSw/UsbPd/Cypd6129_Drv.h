@@ -15,6 +15,8 @@
 #include "UsbPd_Cfg.h"
 #include "Ifx_Types.h"
 
+
+
 /* ---- HPI Register Map ---------------------------------------------------- */
 #define CYPD_REG_DEVICE_MODE        0x0000u  /* R  — device mode/fw status    */
 #define CYPD_REG_BOOT_MODE_REASON   0x0002u  /* R  — reason for boot mode     */
@@ -113,5 +115,11 @@ Cypd_Status_t Cypd_ReadPortEvent(uint8 devIdx, uint32 *pEvent);
  * @brief Check if INT_L is asserted (active low) for the given device.
  */
 boolean Cypd_IsIntAsserted(uint8 devIdx);
+
+/**
+ * @brief Reinitialise the I2C bus for the given device to recover
+ *        from a stuck bus condition.
+ */
+void Cypd_RecoverBus(uint8 devIdx);
 
 #endif /* CYPD6129_DRV_H */

@@ -18,6 +18,7 @@
 #include "Uart_Debug.h"
 #include "IfxPort.h"
 #include "ComHpcWdt.h"
+#include "IfxCpu.h"
 
 /* ---- Private state ------------------------------------------------------- */
 
@@ -33,6 +34,7 @@ static uint8      s_rstBtnDebounce     = 0u;
 static uint8           s_retryCount    = 0u;
 static PM_ResetCause_t s_resetCause    = PM_RESET_CAUSE_NONE;
 static PM_ResetCause_t s_pendingCause  = PM_RESET_CAUSE_NONE;
+static uint8 s_pwrBtnDebounce = 0u;
 
 static uint32   s_rsmrstDeassertTimeMs = 0u;
 static boolean  s_coldBoot             = FALSE;
@@ -41,8 +43,9 @@ static boolean s_pwrBtnWasPressed   = FALSE;
 static boolean s_waitForBtnRelease     = FALSE;
 static uint32 s_coldRstDwellStartMs = 0u;
 static uint32  s_forcedOffMs        = 0u;
-
-
+static uint32 s_s0i3EntryMs         = 0u;
+static boolean s_coldRstDwellActive = FALSE;
+static boolean s_suppressResetDetect = FALSE;
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -129,6 +132,7 @@ static boolean prv_VerifyUpstreamPg(PM_State_t stage)
 
 static void prv_UpdateFusaStatus(PM_State_t state)
 {
+#if (FUSA_FEATURE_ENABLE == 1u)
     switch (state)
     {
         case PM_STATE_OFF:
@@ -159,6 +163,9 @@ static void prv_UpdateFusaStatus(PM_State_t state)
             prv_SetFusaStatus(FUSA_RESET);
             break;
     }
+#else
+    (void) state;
+#endif
 }
 
 void PowerManager_OnThermtripIsr(void)
@@ -176,8 +183,8 @@ void PowerManager_OnVoltageFault(const VoltMon_ChCfg_t *ch,
      * This runs from main-loop context (VoltMon_Scan), not ISR. */
     if (severity >= VOLTMON_FAULT)
     {
-        Debug_Printf("[PM] Voltage fault on %s: %umV\r\n",
-                     ch->name, (unsigned)measuredMv);
+        if ((s_state == PM_STATE_OFF) || (s_state == PM_STATE_FAULT))
+            return;   /* already shut down, ignore */
         s_pendingCause = PM_RESET_CAUSE_VOLTAGE;
         prv_OnPgFault(NULL_PTR, 0u);
     }
@@ -255,7 +262,7 @@ static boolean prv_ReadRsmrstState(void)
  * ---------------------------------------------------------------------- */
 static void prv_MirrorResetSignals(void)
 {
-    if ((s_state == PM_STATE_OFF) || (s_state == PM_STATE_FAULT))
+    if (s_state != PM_STATE_ON)
     {
         prv_AssertPltrst();
         prv_AssertRsmrstOut();
@@ -467,7 +474,9 @@ static void prv_GoToS5(void)
     prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
-
+#if (FUSA_FEATURE_ENABLE == 1u)
+    ComHpcWdt_Disable();
+#endif
     /* Disable Group D (VDDCR core) then Group C (memory).
      * Group B (S5 rails) and EFUSE stay powered. */
     prv_DisableGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT);
@@ -511,6 +520,8 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
     prv_DeassertPwrgd();
     prv_AssertPltrst();
     PwrGood_MonDisarm();
+    VoltMon_Disable();
+    ComHpcWdt_Disable();     /* WDT could also fire during rail-down */
     prv_DisableAllRails();
 
     if (s_retryCount < PM_MAX_RETRIES)
@@ -642,7 +653,7 @@ static boolean prv_WaitSlpDeassert(uint16 timeoutMs)
     return TRUE;
 }
 
-/* Cold boot (S5->S0): 360us pulse per AMD T3. */
+/* Cold boot (S5->S0): 16ms pulse per AMD T3. */
 static void prv_PulsePwrBtnCold(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
@@ -668,6 +679,7 @@ static void prv_PulsePwrBtnWarm(void)
 static void prv_EmergencyShutdown(PM_ResetCause_t cause)
 {
     s_resetCause = cause;
+    s_coldBoot = FALSE;
     prv_AssertApuReset();
     prv_UartClaimByAurix();
     prv_AssertKbrst();
@@ -699,11 +711,22 @@ void PowerManager_Init(void)
     s_powerOffReq       = FALSE;
     s_shutdownToOff     = FALSE;
     s_waitForBtnRelease = FALSE;
+    s_waitForRstRelease = FALSE;
+    s_rstBtnDebounce    = 0u;
     s_thermtripDebounce = 0u;
     s_retryCount        = 0u;
+    s_pwrBtnWasPressed   = FALSE;
+    s_pwrBtnPressStartMs   = 0u;
+    s_pwrBtnDebounce = 0u;
+    s_forcedOffMs = 0u;
+    s_s0i3EntryMs = 0u;
+    s_coldBoot = FALSE;
+    s_suppressResetDetect = FALSE;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
-    prv_SetFusaStatus(FUSA_PWR_OFF);   /* 00 — EFUSE not yet enabled */
+#if (FUSA_FEATURE_ENABLE == 1u)
+    prv_SetFusaStatus(FUSA_PWR_OFF);
+#endif
     Debug_Print("[PM] Initialised. State: OFF\r\n");
 }
 
@@ -724,10 +747,18 @@ void PowerManager_RequestPowerOff(void)
 
 void PowerManager_Run(void)
 {
+    boolean thermtripLocal;
     prv_MirrorResetSignals();
-    if (s_thermtripIsrFlag)
+    /* --- Atomic capture of ISR flag ---
+     * Disable interrupts so that no ISR can set the flag between
+     * our read and our clear.  The critical section is two
+     * instructions (~2 cycles) — negligible interrupt latency. */
+    IfxCpu_disableInterrupts();
+    thermtripLocal = s_thermtripIsrFlag;
+    s_thermtripIsrFlag = FALSE;
+    IfxCpu_enableInterrupts();
+    if (thermtripLocal)
     {
-        s_thermtripIsrFlag = FALSE;
         if ((s_state != PM_STATE_OFF) &&
             (s_state != PM_STATE_S5)  &&
             (s_state != PM_STATE_FAULT))
@@ -783,21 +814,27 @@ void PowerManager_Run(void)
     {
         if (!s_pwrBtnWasPressed && !s_waitForBtnRelease)
         {
-            s_pwrBtnWasPressed   = TRUE;
-            s_pwrBtnPressStartMs = Stm_GetTimeMs();
+            s_pwrBtnDebounce++;
+            if (s_pwrBtnDebounce >= PM_PWRBTN_DEBOUNCE_POLLS)
+            {
+                s_pwrBtnDebounce     = 0u;
+                s_pwrBtnWasPressed   = TRUE;
+                s_pwrBtnPressStartMs = Stm_GetTimeMs();
+            }
         }
         else if ((s_state != PM_STATE_OFF) &&
-                 (s_state != PM_STATE_FAULT) &&
-                 (Stm_GetTimeMs() - s_pwrBtnPressStartMs >= PM_PWRBTN_HOLD_MS))
+                (s_state != PM_STATE_FAULT) &&
+                (Stm_GetTimeMs() - s_pwrBtnPressStartMs >= PM_PWRBTN_HOLD_MS))
         {
             Debug_Print("[PM] PWRBTN# held >=4s — forced shutdown\r\n");
             s_pwrBtnWasPressed = FALSE;
             s_waitForBtnRelease = TRUE;
-            s_forcedOffMs = Stm_GetTimeMs();    // timestamp for forceOff
+            s_forcedOffMs = Stm_GetTimeMs();
             prv_EmergencyShutdown(PM_RESET_CAUSE_HOST_REQUEST);
             return;
         }
     } else {
+        s_pwrBtnDebounce = 0u;   /* reset debounce on release */
         if (s_pwrBtnWasPressed &&
             (Stm_GetTimeMs() - s_pwrBtnPressStartMs < PM_PWRBTN_HOLD_MS))
         {
@@ -959,8 +996,10 @@ void PowerManager_Run(void)
             prv_DeassertKbrst();  /* KBRST_L released    */
             Stm_DelayMs(PM_T6_WAIT_MS);
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
+        #if (FUSA_FEATURE_ENABLE == 1u)
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                             COMHPC_WDT_DEFAULT_TIMEOUT_MS);
+        #endif
             /* Added  PWROK check with PIN_APU_PWROK */
             /* T6: wait for SoC PWROK assertion (21.4ms per AMD spec) */
             {
@@ -996,8 +1035,17 @@ void PowerManager_Run(void)
             /* Check APU-initiated sleep state transitions. */
             if (!prv_ReadSocResetL()) 
             {
-                Debug_Print("[PM] APU_RESET_L asserted — cold reset detected\r\n");
-                s_resetCause = PM_RESET_CAUSE_COLD_RST;
+                if (!s_suppressResetDetect)
+                {
+                    Debug_Print("[PM] APU_RESET_L asserted — cold reset detected\r\n");
+                    s_resetCause = PM_RESET_CAUSE_COLD_RST;
+                }
+            }
+            else
+            {
+                /* RESET_L is HIGH (deasserted) — APU has finished reinitializing.
+                * Safe to re-arm detection. */
+                s_suppressResetDetect = FALSE;
             }
             if (s_powerOffReq || prv_SlpS5Active())
             {
@@ -1025,11 +1073,13 @@ void PowerManager_Run(void)
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
+                break; 
             }
             else if (prv_SlpS3Active())
             {
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
+                s_s0i3EntryMs = Stm_GetTimeMs();
                 prv_AssertApuReset(); 
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
@@ -1040,6 +1090,7 @@ void PowerManager_Run(void)
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
+                break;
             }
             if (IfxPort_getPinState(AppPin_GetPort(PIN_CB_RSTBTN_L.portIdx),
                                      PIN_CB_RSTBTN_L.pinIdx) == 0u)
@@ -1047,17 +1098,34 @@ void PowerManager_Run(void)
                 if (!s_waitForRstRelease)
                 {
                     s_rstBtnDebounce++;
-                    if (s_rstBtnDebounce >= PM_RSTBTN_DEBOUNCE_POLLS) {
+                    if (s_rstBtnDebounce >= PM_RSTBTN_DEBOUNCE_POLLS)
+                    {
                         s_rstBtnDebounce = 0u;
-                        s_resetCause = PM_RESET_CAUSE_HOST_REQUEST;
-                        prv_SetState(PM_STATE_WARM_RESET);
-                    } 
+                        s_waitForRstRelease = TRUE;
+                        Debug_Print("[PM] RSTBTN# pressed — cold reset via S5\r\n");
+
+                        /* Use the existing shutdown path but set cold reset cause
+                        * so PM_STATE_S5 auto-wakes after 3s dwell */
+                        s_resetCause = PM_RESET_CAUSE_COLD_RST;
+                        s_shutdownToOff = TRUE;   /* disable Group C too */
+                        s_thermtripDebounce = 0u;
+                        prv_AssertApuReset();
+                        prv_UartClaimByAurix();
+                        prv_AssertKbrst();
+                        prv_DeassertPwrgd();
+                        prv_AssertPltrst();
+                        PwrGood_MonDisarm();
+                        VoltMon_Disable();
+                        ComHpcWdt_Disable();
+                        prv_SetState(PM_STATE_DN_S0_S3);
+                        break;
+                    }
                 }
-                else
-                {
-                    s_rstBtnDebounce = 0u;        /* clear on release */
-                    s_waitForRstRelease = FALSE;  /* re-arm for next press */
-                }
+            }
+            else
+            {
+                s_rstBtnDebounce = 0u;        /* clear on release */
+                s_waitForRstRelease = FALSE;  /* re-arm for next press */
             }
             break;
 
@@ -1081,13 +1149,15 @@ void PowerManager_Run(void)
              */
             if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
             {
-                if (s_coldRstDwellStartMs == 0u)
+                if (!s_coldRstDwellActive)
                 {
+                    s_coldRstDwellActive = TRUE;
                     s_coldRstDwellStartMs = Stm_GetTimeMs();
                     Debug_Print("[PM] Cold reset: dwelling at S5 for 3s\r\n");
                 }
                 else if ((Stm_GetTimeMs() - s_coldRstDwellStartMs) >= 3000u)
                 {
+                    s_coldRstDwellActive = FALSE;
                     Debug_Print("[PM] Cold reset: dwell complete, re-powering\r\n");
                     s_coldRstDwellStartMs = 0u;
                     s_resetCause = PM_RESET_CAUSE_NONE;
@@ -1108,10 +1178,12 @@ void PowerManager_Run(void)
                 break;   /* don't process wake events until released */
             }
 
+
             if (s_powerOnReq || prv_PwrBtnPressed())
             {
                 s_powerOnReq = FALSE;
                 s_coldBoot = TRUE;
+                s_waitForBtnRelease = TRUE;
                 Debug_Print("[PM] Wake from S5\r\n");
 
                 prv_DeassertApuReset();
@@ -1122,6 +1194,28 @@ void PowerManager_Run(void)
                 s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                 Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
                 prv_WaitSinceRsmrst(16u);   /* T1a */
+                prv_PulsePwrBtnCold();
+                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
+                {
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+                prv_SetState(PM_STATE_RAMP_S3);
+            }
+            else if (!prv_SlpS5Active() && !prv_SlpS3Active())
+            {
+                /* WoL wake from S5 — chipset deasserted SLP signals.
+                * Treat as a cold boot since Group C+D are off. */
+                Debug_Print("[PM] SLP signals deasserted — WoL wake from S5\r\n");
+                s_coldBoot = TRUE;
+                s_waitForBtnRelease = TRUE;
+                prv_DeassertApuReset();
+                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                prv_UartReleaseToSoc();
+                prv_DeassertRsmrst();
+                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
+                prv_WaitSinceRsmrst(16u);
                 prv_PulsePwrBtnCold();
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
@@ -1163,6 +1257,7 @@ void PowerManager_Run(void)
                 /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert */
                 s_coldBoot = FALSE;
                 //prv_DeassertRsmrst();
+                prv_DeassertApuReset();
                 prv_UartReleaseToSoc();
                 prv_DeassertKbrst();
                 prv_PulsePwrBtnWarm();
@@ -1173,7 +1268,21 @@ void PowerManager_Run(void)
                     prv_OnPgFault(NULL_PTR, 0u);
                     break;
                 }
-
+                s_s0i3EntryMs = 0u;
+                prv_SetState(PM_STATE_RAMP_S3);
+            }
+            else if (!s_shutdownToOff && !prv_SlpS3Active())
+            {
+                /* PCIe/WoL wake — SLP_S3 deasserted by chipset.
+                * x86 is waking itself, no PWRBTN pulse needed.
+                * Just release resets and let it resume. */
+                Debug_Print("[PM] SLP_S3 deasserted — PCIe/WoL wake\r\n");
+                s_coldBoot = FALSE;
+                prv_DeassertApuReset();
+                prv_UartReleaseToSoc();
+                prv_DeassertKbrst();
+                /* No PWRBTN pulse — x86 chipset initiated the wake */
+                s_s0i3EntryMs = 0u;
                 prv_SetState(PM_STATE_RAMP_S3);
             }
             else if (s_shutdownToOff)
@@ -1184,7 +1293,30 @@ void PowerManager_Run(void)
                 Debug_Print("[PM] Soft shutdown — parking at S5 "
                             "(Group B + EFUSE remain on)\r\n");
                 s_thermtripDebounce = 0u;
+                s_s0i3EntryMs = 0u;
                 prv_SetState(PM_STATE_S5);
+            }
+            else if (!s_shutdownToOff)
+            {
+                /* ---- S0i3 safety checks while waiting for wake ---- */
+                /* 1. Verify rails that should still be up (EFUSE + B + C) */
+                if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S3))
+                {
+                    Debug_Print("[PM] PG lost during S0i3 suspend\r\n");
+                    /* prv_VerifyUpstreamPg already called prv_OnPgFault */
+                    s_s0i3EntryMs = 0u;
+                    break;
+                }
+                /* 2. Timeout: if no wake event within limit, fault out */
+                if ((s_s0i3EntryMs != 0u) &&
+                    (Stm_GetTimeMs() - s_s0i3EntryMs >= PM_S0I3_TIMEOUT_MS))
+                {
+                    Debug_Print("[PM] S0i3 timeout — no wake event, shutting down\r\n");
+                    s_s0i3EntryMs = 0u;
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
             }
             break;
 
@@ -1202,12 +1334,12 @@ void PowerManager_Run(void)
             /* Stay in fault until a manual reset. Future: add recovery logic. */
             if (s_retryCount > 0u && s_retryCount <= PM_MAX_RETRIES)
             {
-                /* Retry: delay then attempt full re-sequence */
                 Stm_DelayMs(PM_RETRY_DELAY_MS);
                 Debug_Printf("[PM] Retrying power-on (attempt %u)...\r\n",
-                             (unsigned)s_retryCount);
+                            (unsigned)s_retryCount);
                 prv_SetState(PM_STATE_POWER_UP);
             }
+            /* Latch-off: power cycle required. No retries remaining. */
             break;
         case PM_STATE_WARM_RESET:
             /* Warm reset: KBRST_L asserted without dropping MAIN rails.
@@ -1237,8 +1369,13 @@ void PowerManager_Run(void)
 
             /* Release KBRST_L, hand UART back to SoC */
             prv_UartReleaseToSoc();
-            prv_DeassertKbrst(); 
+            prv_DeassertKbrst();
+            PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
+            VoltMon_Enable();
+            ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
+                 COMHPC_WDT_DEFAULT_TIMEOUT_MS);
             Debug_Print("[PM] Warm reset complete.\r\n");
+            s_suppressResetDetect = TRUE;
             prv_SetState(PM_STATE_ON);
             break;
         default:

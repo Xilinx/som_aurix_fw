@@ -13,7 +13,16 @@
 #define PM_SLP_S3_TIMEOUT_MS            500u
 #define PM_T6_WAIT_MS                   22u
 #define PM_RSTBTN_DEBOUNCE_POLLS        3u
-#define PM_FORCED_OFF_COOLDOWN_MS   2000u
+#define PM_FORCED_OFF_COOLDOWN_MS       2000u
+#define PM_PWRBTN_DEBOUNCE_POLLS        3u
+#define PM_S0I3_TIMEOUT_MS              30000u
+
+#if (PM_PWRBTN_DEBOUNCE_POLLS < 1u)
+#error "PM_PWRBTN_DEBOUNCE_POLLS must be >= 1"
+#endif
+#if (PM_RSTBTN_DEBOUNCE_POLLS < 1u)
+#error "PM_RSTBTN_DEBOUNCE_POLLS must be >= 1"
+#endif
 
 /**
  * @brief ACPI-aligned power manager states.

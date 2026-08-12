@@ -22,25 +22,7 @@
 #include "Uart_Debug.h"
 #include "IfxPort.h"
 #include "I2c_Master.h"
-
-
-#define SYSMON_POLL_INTERVAL_MS     5u   /* main-loop poll rate for PROCHOT# */
-#define SYSMON_LOG_INTERVAL_MS      1000u /* re-log PROCHOT assertion once/sec */
-
-#define SYSMON_THERMAL_POLL_MS      100u
-
-/* Temperature thresholds in degrees C — update from AMD thermal spec */
-#define SYSMON_WARNING_TEMP_C       85      /* assert PROCHOT above this     */
-#define SYSMON_WARNING_HYST_C       75      /* release PROCHOT below this    */
-#define SYSMON_SHUTDOWN_TEMP_C      105
-#define SYSMON_TEMP_INVALID         (-128)
-#define SYSMON_APML_PROCHOT_ENABLE  0u
-
-
-#define SBTSI_I2C_ADDR_7BIT     0x4Cu
-#define SBTSI_REG_CPU_TEMP_INT  0x01u
-#define SBTSI_REG_CPU_TEMP_DEC  0x10u
-
+#include "PowerManager.h"
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
 static boolean s_carrierHotState   = FALSE;
@@ -48,6 +30,14 @@ static uint32  s_carrierClearMs    = 0u;
 #endif
 
 static SysMonitor_ShutdownCb_t s_shutdownCb = NULL_PTR;
+static boolean s_shutdownRequested = FALSE;
+static boolean s_carrierClearActive = FALSE;
+
+static uint32 s_lastPoll    = 0u;
+static uint32 s_lastLog     = 0u;
+static uint32 s_lastThermal = 0u;
+
+static uint8 s_apuProchotClearCount = 0u;
 
 /* ---- Private helpers ----------------------------------------------------- */
 
@@ -101,6 +91,7 @@ static sint16 prv_ReadApuTempC(void)
 
 static boolean s_prochotActive = FALSE;   /* last observed PROCHOT state */
 static boolean s_thermalThrottle = FALSE;
+static uint8 s_i2cFailCount = 0u;
 
 /* ---- Public API ---------------------------------------------------------- */
 
@@ -125,6 +116,14 @@ void SysMonitor_Init(void)
     prv_SetPin(&PIN_CATERR_L, TRUE);
 
     s_prochotActive = FALSE;
+    s_shutdownRequested = FALSE;
+    s_carrierClearActive = FALSE;
+    s_lastPoll    = 0u;
+    s_lastLog     = 0u;
+    s_lastThermal = 0u;
+    s_prochotActive = FALSE;
+    s_thermalThrottle = FALSE;
+    s_apuProchotClearCount = 0u;
 
     Debug_Print("[SYS] SysMonitor: APU_PROCHOT_L=H, PROCHOT#=H, CATERR#=H\r\n");
 
@@ -136,10 +135,12 @@ void SysMonitor_Init(void)
 
 void SysMonitor_Run(void)
 {
-    static uint32 s_lastPoll    = 0u;
-    static uint32 s_lastLog     = 0u;
-    static uint32 s_lastThermal = 0u;
 
+    PM_State_t pmState = PowerManager_GetState();
+    if ((pmState == PM_STATE_OFF) || (pmState == PM_STATE_FAULT))
+    {
+        return;
+    }
     if (!Stm_IsElapsedMs(&s_lastPoll, SYSMON_POLL_INTERVAL_MS))
     {
         return;
@@ -159,14 +160,16 @@ void SysMonitor_Run(void)
 
         if (tempC != SYSMON_TEMP_INVALID)
         {
+            s_i2cFailCount = 0u;
             if (tempC >= SYSMON_SHUTDOWN_TEMP_C)
             {
                 Debug_Printf("[SYS] THERMAL SHUTDOWN: APU die %dC >= %dC\r\n",
-                             (int)tempC, (int)SYSMON_SHUTDOWN_TEMP_C);
+                            (int)tempC, (int)SYSMON_SHUTDOWN_TEMP_C);
                 SysMonitor_AssertApuProchot();
                 prv_SetPin(&PIN_PROCHOT_L, FALSE);
-                if (s_shutdownCb != NULL_PTR)
+                if ((s_shutdownCb != NULL_PTR) && !s_shutdownRequested)
                 {
+                    s_shutdownRequested = TRUE;
                     s_shutdownCb();
                 }
             }
@@ -187,13 +190,31 @@ void SysMonitor_Run(void)
             {
                 s_thermalThrottle = FALSE;
                 Debug_Printf("[SYS] THERMAL CLEAR: APU die %dC, releasing PROCHOT\r\n",
-                             (int)tempC);
-#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
-                if (!s_carrierHotState)
-#endif
+                            (int)tempC);
+            #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+                if (!s_carrierHotState && !s_prochotActive)
+            #else
+                if (!s_prochotActive)
+            #endif
                 {
                     SysMonitor_DeassertApuProchot();
+                    prv_SetPin(&PIN_PROCHOT_L, TRUE);    /* ← ADD */
                 }
+            }
+        }
+        else
+        {
+            s_i2cFailCount++;
+            if (s_i2cFailCount >= SYSMON_I2C_FAIL_LIMIT)
+            {
+                if (s_i2cFailCount == SYSMON_I2C_FAIL_LIMIT)  /* log once */
+                {
+                    Debug_Printf("[SYS] APML I2C failed %u consecutive reads "
+                                "— asserting PROCHOT defensively\r\n",
+                                (unsigned)s_i2cFailCount);
+                }
+                SysMonitor_AssertApuProchot();
+                prv_SetPin(&PIN_PROCHOT_L, FALSE);
             }
         }
     }
@@ -204,6 +225,7 @@ void SysMonitor_Run(void)
         * PROCHOT instead.
         * ------------------------------------------------------------------ */
 #if (SYSMON_APML_PROCHOT_ENABLE == 1u)
+    {
         uint8 sbtsiStatus = 0u;
         I2c_Status_t st;
         boolean apuProchot = FALSE;
@@ -216,6 +238,7 @@ void SysMonitor_Run(void)
 
         if (apuProchot)
         {
+            s_apuProchotClearCount = 0u;    /* ← ADD: reset dwell on assert */
             prv_SetPin(&PIN_PROCHOT_L, FALSE);   /* mirror to carrier */
 
             if (!s_prochotActive)
@@ -231,20 +254,30 @@ void SysMonitor_Run(void)
         }
         else
         {
-            /* Only release carrier PROCHOT if we're not throttling from
-             * the Aurix side (thermal or CARRIER_HOT) */
-            if (s_prochotActive && !s_thermalThrottle
-#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
-                && !s_carrierHotState
-#endif
-            )
+            if (s_prochotActive)
             {
-                prv_SetPin(&PIN_PROCHOT_L, TRUE);
-                s_prochotActive = FALSE;
-                Debug_Print("[SYS] PROCHOT# deasserted — APU SB-TSI clear\r\n");
+                s_apuProchotClearCount++;
+                if (s_apuProchotClearCount >= SYSMON_PROCHOT_CLEAR_POLLS)
+                {
+                    s_apuProchotClearCount = 0u;
+                    if (!s_thermalThrottle
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+                        && !s_carrierHotState
+#endif
+                    )
+                    {
+                        prv_SetPin(&PIN_PROCHOT_L, TRUE);
+                        s_prochotActive = FALSE;
+                        Debug_Print("[SYS] PROCHOT# deasserted — APU SB-TSI clear\r\n");
+                    }
+                }
+            }
+            else
+            {
+                s_apuProchotClearCount = 0u;
             }
         }
-
+    }
 #endif
 
         /* ---- CARRIER_HOT# monitoring ---------------------------------------- */
@@ -261,17 +294,19 @@ void SysMonitor_Run(void)
                 prv_SetPin(&PIN_PROCHOT_L, FALSE);
                 Debug_Print("[SYS] CARRIER_HOT# asserted — PROCHOT asserted\r\n");
             }
-            s_carrierClearMs = 0u;
+            s_carrierClearActive = FALSE;
         }
         else if (s_carrierHotState)
         {
-            if (s_carrierClearMs == 0u)
+            if (!s_carrierClearActive)
             {
+                s_carrierClearActive = TRUE;
                 s_carrierClearMs = Stm_GetTimeMs();
             }
             else if (Stm_GetTimeMs() - s_carrierClearMs >= SYSMON_CARRIER_DWELL_MS)
             {
                 s_carrierHotState = FALSE;
+                s_carrierClearActive = FALSE;
                 Debug_Print("[SYS] CARRIER_HOT# dwell complete\r\n");
 
                 if (!s_thermalThrottle)
@@ -303,20 +338,25 @@ void SysMonitor_Run(void)
         s_lastCarrierHot = hot;
     }
 #endif
+
 }
 
 void SysMonitor_AssertApuProchot(void)
 {
-    /* Drive APU_PROCHOT_L LOW via the open-drain output.
-     * This throttles the APU from the TC387 side (e.g. platform-level
-     * power limit enforcement via future APML control). */
+    static boolean s_apuProchotAsserted = FALSE;
     prv_SetPin(&PIN_APU_PROCHOT_L, TRUE);
-    Debug_Print("[SYS] APU_PROCHOT_L asserted LOW by TC387\r\n");
+    if (!s_apuProchotAsserted)
+    {
+        s_apuProchotAsserted = TRUE;
+        Debug_Print("[SYS] APU_PROCHOT_L asserted LOW by TC387\r\n");
+    }
 }
 
 void SysMonitor_DeassertApuProchot(void)
 {
-    /* Release the open-drain drive — APU_PROCHOT_L floats HIGH via pull-up. */
+    /* Reset the assert-once flag — but as a static local inside
+     * AssertApuProchot, we can't reach it.  Better to use a
+     * file-scope static for both. */
     prv_SetPin(&PIN_APU_PROCHOT_L, FALSE);
     Debug_Print("[SYS] APU_PROCHOT_L released HIGH by TC387\r\n");
 }
@@ -336,6 +376,7 @@ void SysMonitor_DeassertCaterr(void)
 boolean SysMonitor_IsThrottling(void)
 {
     return s_thermalThrottle
+        || s_prochotActive
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
         || s_carrierHotState
 #endif

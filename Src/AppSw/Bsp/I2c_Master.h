@@ -46,14 +46,15 @@ I2c_Status_t I2cMaster_Write(uint8 addr7bit, const uint8 *pData, uint16 len);
  *        regAddr is sent as a 2-byte little-endian value to match the
  *        CYPD6129 HPI addressing scheme.
  */
-I2c_Status_t I2cMaster_ReadReg16(uint8 addr7bit, uint16 regAddr,
-                                  uint8 *pBuf,    uint16 len);
-
+I2c_Status_t I2cMaster_ReadReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                      uint16 regAddr, uint8 *pBuf,
+                                      uint16 len);
 /**
  * @brief Write len bytes to a 16-bit register address.
  */
-I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
-                                   const uint8 *pData, uint16 len);
+I2c_Status_t I2cMaster_WriteReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                       uint16 regAddr, const uint8 *pData,
+                                       uint16 len);
 
 
 /**
@@ -61,5 +62,11 @@ I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
  */
 I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData);
 
+
+/**
+ * @brief Reinitialise an I2C peripheral to recover from a stuck bus.
+ * @param busIdx  0 = I2C0 (CYPD/HPI), 1 = I2C1 (APML/SB-TSI)
+ */
+void I2cMaster_ReinitBus(uint8 busIdx);
 
 #endif /* I2C_MASTER_H */

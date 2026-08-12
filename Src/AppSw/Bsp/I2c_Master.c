@@ -83,50 +83,75 @@ I2c_Status_t I2cMaster_Write(uint8 addr7bit, const uint8 *pData, uint16 len)
     return prv_MapStatus(st);
 }
 
-I2c_Status_t I2cMaster_ReadReg16(uint8 addr7bit, uint16 regAddr,
-                                   uint8 *pBuf,    uint16 len)
+/* In I2c_Master.c */
+I2c_Status_t I2cMaster_ReadReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                      uint16 regAddr, uint8 *pBuf,
+                                      uint16 len)
 {
     uint8 addrBytes[2];
     IfxI2c_I2c_Status st;
+    IfxI2c_I2c *busHandle;
 
-    addrBytes[0] = (uint8)(regAddr & 0x00FFu);   /* little-endian HPI address */
+    if (busIdx == 0u)
+        busHandle = &s_i2cHandle;
+    else if (busIdx == 1u)
+        busHandle = &s_i2c1Handle;
+    else
+        return I2C_ERR_BUS_BUSY;
+
+    IfxI2c_I2c_deviceConfig devCfg;
+    IfxI2c_I2c_initDeviceConfig(&devCfg, busHandle);
+    devCfg.deviceAddress       = (uint16)((uint16)addr7bit << 1u);
+    devCfg.enableRepeatedStart = TRUE;
+
+    /* Use a local device handle to avoid clobbering shared ones */
+    IfxI2c_I2c_Device localDev;
+    IfxI2c_I2c_initDevice(&localDev, &devCfg);
+
+    addrBytes[0] = (uint8)(regAddr & 0x00FFu);
     addrBytes[1] = (uint8)(regAddr >> 8u);
 
-    /* Write phase: send register address with repeated-start (no STOP). */
-    prv_SetDevice(addr7bit, TRUE);
-    st = IfxI2c_I2c_write2(&s_deviceHandle, (volatile uint8 *)addrBytes, (Ifx_SizeT)2);
+    st = IfxI2c_I2c_write2(&localDev, (volatile uint8 *)addrBytes, (Ifx_SizeT)2);
     if (st != IfxI2c_I2c_Status_ok)
-    {
         return prv_MapStatus(st);
-    }
 
-    /* Read phase: repeated-START then read. */
-    st = IfxI2c_I2c_read2(&s_deviceHandle, (volatile uint8 *)pBuf, (Ifx_SizeT)len);
+    st = IfxI2c_I2c_read2(&localDev, (volatile uint8 *)pBuf, (Ifx_SizeT)len);
     return prv_MapStatus(st);
 }
 
-I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
-                                    const uint8 *pData, uint16 len)
+I2c_Status_t I2cMaster_WriteReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                       uint16 regAddr, const uint8 *pData,
+                                       uint16 len)
 {
-    /* Build [reg_addr_lo][reg_addr_hi][data...] in one buffer. */
-    uint8  buf[2u + 32u];
+    uint8 buf[2u + 32u];
     uint16 i;
     IfxI2c_I2c_Status st;
+    IfxI2c_I2c *busHandle;
 
     if (len > 32u)
-    {
-        return I2C_ERR_BUS_BUSY;   /* reuse as invalid-arg */
-    }
+        return I2C_ERR_BUS_BUSY;
+
+    if (busIdx == 0u)
+        busHandle = &s_i2cHandle;
+    else if (busIdx == 1u)
+        busHandle = &s_i2c1Handle;
+    else
+        return I2C_ERR_BUS_BUSY;
+
+    IfxI2c_I2c_deviceConfig devCfg;
+    IfxI2c_I2c_initDeviceConfig(&devCfg, busHandle);
+    devCfg.deviceAddress       = (uint16)((uint16)addr7bit << 1u);
+    devCfg.enableRepeatedStart = FALSE;
+
+    IfxI2c_I2c_Device localDev;
+    IfxI2c_I2c_initDevice(&localDev, &devCfg);
 
     buf[0] = (uint8)(regAddr & 0x00FFu);
     buf[1] = (uint8)(regAddr >> 8u);
     for (i = 0u; i < len; i++)
-    {
         buf[2u + i] = pData[i];
-    }
 
-    prv_SetDevice(addr7bit, FALSE);
-    st = IfxI2c_I2c_write2(&s_deviceHandle, (volatile uint8 *)buf, (Ifx_SizeT)(2u + len));
+    st = IfxI2c_I2c_write2(&localDev, (volatile uint8 *)buf, (Ifx_SizeT)(2u + len));
     return prv_MapStatus(st);
 }
 
@@ -152,4 +177,36 @@ I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData)
     st = IfxI2c_I2c_read2(&s_apmlDevHandle,
                            (volatile uint8 *)pData, (Ifx_SizeT)1);
     return prv_MapStatus(st);
+}
+
+void I2cMaster_ReinitBus(uint8 busIdx)
+{
+    IfxI2c_I2c_Config cfg;
+
+    if (busIdx == 0u)
+    {
+        const IfxI2c_Pins pins = {
+            &IfxI2c0_SCL_P13_1_INOUT,
+            &IfxI2c0_SDA_P13_2_INOUT,
+            IfxPort_PadDriver_cmosAutomotiveSpeed1
+        };
+        IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C0);
+        cfg.baudrate = (float32)I2C_MASTER_FREQ_HZ;
+        cfg.mode     = IfxI2c_Mode_StandardAndFast;
+        cfg.pins     = &pins;
+        IfxI2c_I2c_initModule(&s_i2cHandle, &cfg);
+    }
+    else if (busIdx == 1u)
+    {
+        const IfxI2c_Pins pins = {
+            &IfxI2c1_SCL_P11_14_INOUT,
+            &IfxI2c1_SDA_P11_13_INOUT,
+            IfxPort_PadDriver_cmosAutomotiveSpeed1
+        };
+        IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C1);
+        cfg.baudrate = 400000.0f;
+        cfg.mode     = IfxI2c_Mode_StandardAndFast;
+        cfg.pins     = &pins;
+        IfxI2c_I2c_initModule(&s_i2c1Handle, &cfg);
+    }
 }

@@ -21,6 +21,28 @@
 
 #include "Ifx_Types.h"
 
+
+#define SYSMON_POLL_INTERVAL_MS     5u   /* main-loop poll rate for PROCHOT# */
+#define SYSMON_LOG_INTERVAL_MS      1000u /* re-log PROCHOT assertion once/sec */
+
+#define SYSMON_THERMAL_POLL_MS      100u
+
+/* Temperature thresholds in degrees C — update from AMD thermal spec */
+#define SYSMON_WARNING_TEMP_C       85      /* assert PROCHOT above this     */
+#define SYSMON_WARNING_HYST_C       75      /* release PROCHOT below this    */
+#define SYSMON_SHUTDOWN_TEMP_C      105
+#define SYSMON_TEMP_INVALID         (-128)
+#define SYSMON_APML_PROCHOT_ENABLE  0u
+
+
+#define SBTSI_I2C_ADDR_7BIT     0x4Cu
+#define SBTSI_REG_CPU_TEMP_INT  0x01u
+#define SBTSI_REG_CPU_TEMP_DEC  0x10u
+
+#define SYSMON_I2C_FAIL_LIMIT   5u
+
+#define SYSMON_PROCHOT_CLEAR_POLLS   3u
+
 /**
  * @brief Initialise SysMonitor.
  *        Sets APU_PROCHOT_L, PROCHOT#, and CATERR# to their default
