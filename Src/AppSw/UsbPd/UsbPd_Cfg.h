@@ -15,6 +15,7 @@
 
 /** Total number of CYPD6129 devices on the board. */
 #define CYPD_DEVICE_COUNT       2u
+#define USBPD_FEATURE_ENABLE   1u
 
 /**
  * @brief Static configuration for each CYPD6129 instance.
@@ -22,6 +23,7 @@
 typedef struct
 {
     uint8        i2cAddr;   /* 7-bit I2C address */
+    uint8        i2cBus;    /* 0 = I2C0, 1 = I2C1 */
     AppPin_t     intPin;    /* INT_L — active low input  */
     AppPin_t     resetPin;  /* RESET_L — active low output */
     const char  *name;      /* for debug logging */

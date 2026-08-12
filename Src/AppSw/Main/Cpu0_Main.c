@@ -31,12 +31,17 @@
 #include "Eru_FaultIsr.h"
 #include "VoltMon.h"
 #include "Tlf35585.h"
+#include "UsbPd_Cfg.h"
 
 #if !defined(TARGET_EVAL_BOARD)
 #include "UsbPd_Manager.h"
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
 #endif
+
+
+static uint32 nextTickMs;
+
 
 /* Banner printed on UART at startup */
 #if defined(TARGET_EVAL_BOARD)
@@ -90,14 +95,25 @@ int core0_main(void)
 #endif
 
 #if !defined(TARGET_EVAL_BOARD)
+#if (USBPD_FEATURE_ENABLE == 1u)
     UsbPdManager_Init();
     Debug_Print("[SYS] Init: UsbPdManager OK\r\n");
 #endif
+#endif
 
+    nextTickMs = Stm_GetTimeMs();
     Debug_Print("[SYS] Entering main loop\r\n");
+
 
     for (;;)
     {
+        while (Stm_GetTimeMs() - nextTickMs < MAIN_LOOP_TICK_MS){}
+        nextTickMs += MAIN_LOOP_TICK_MS;
+
+        if (Stm_GetTimeMs() - nextTickMs >= MAIN_LOOP_TICK_MS)
+        {
+            nextTickMs = Stm_GetTimeMs();   /* resync after overrun */
+        }
         //IfxPort_togglePin(&MODULE_P34,4);
 
         PowerManager_Run();
@@ -124,13 +140,9 @@ int core0_main(void)
         if (PowerManager_GetState() == PM_STATE_ON)
         {
             SysMonitor_Run();
-            static uint32 s_usbPdLastMs = 0u;
-            uint32 nowMs = Stm_GetTimeMs();
-            if ((nowMs - s_usbPdLastMs) >= 5u)
-            {
-                s_usbPdLastMs = nowMs;
-                UsbPdManager_Run();
-            }
+#if (USBPD_FEATURE_ENABLE == 1u)
+            UsbPdManager_Run();
+#endif
         }
 #endif
     }

@@ -46,14 +46,15 @@ I2c_Status_t I2cMaster_Write(uint8 addr7bit, const uint8 *pData, uint16 len);
  *        regAddr is sent as a 2-byte little-endian value to match the
  *        CYPD6129 HPI addressing scheme.
  */
-I2c_Status_t I2cMaster_ReadReg16(uint8 addr7bit, uint16 regAddr,
-                                  uint8 *pBuf,    uint16 len);
-
+I2c_Status_t I2cMaster_ReadReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                      uint16 regAddr, uint8 *pBuf,
+                                      uint16 len);
 /**
  * @brief Write len bytes to a 16-bit register address.
  */
-I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
-                                   const uint8 *pData, uint16 len);
+I2c_Status_t I2cMaster_WriteReg16_Bus(uint8 busIdx, uint8 addr7bit,
+                                       uint16 regAddr, const uint8 *pData,
+                                       uint16 len);
 
 
 /**

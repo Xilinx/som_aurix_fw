@@ -28,29 +28,31 @@ static Cypd_Status_t prv_MapI2c(I2c_Status_t st)
 static Cypd_Status_t prv_Read16(uint8 devIdx, uint16 reg, uint16 *pOut)
 {
     uint8 buf[2];
-    I2c_Status_t st = I2cMaster_ReadReg16(prv_Addr(devIdx), reg, buf, 2u);
+    I2c_Status_t st = I2cMaster_ReadReg16_Bus(
+        CYPD_DEVICES[devIdx].i2cBus,
+        prv_Addr(devIdx), reg, buf, 2u);
     if (st != I2C_OK)
-    {
         return CYPD_ERR_I2C;
-    }
-    /* HPI is little-endian */
     *pOut = (uint16)(((uint16)buf[1] << 8u) | (uint16)buf[0]);
     return CYPD_OK;
 }
 
+
 static Cypd_Status_t prv_Read8(uint8 devIdx, uint16 reg, uint8 *pOut)
 {
-    return prv_MapI2c(I2cMaster_ReadReg16(prv_Addr(devIdx), reg, pOut, 1u));
+    return prv_MapI2c(I2cMaster_ReadReg16_Bus(
+        CYPD_DEVICES[devIdx].i2cBus,
+        prv_Addr(devIdx), reg, pOut, 1u));
 }
 
 static Cypd_Status_t prv_Read32(uint8 devIdx, uint16 reg, uint32 *pOut)
 {
     uint8 buf[4];
-    I2c_Status_t st = I2cMaster_ReadReg16(prv_Addr(devIdx), reg, buf, 4u);
+    I2c_Status_t st = I2cMaster_ReadReg16_Bus(
+        CYPD_DEVICES[devIdx].i2cBus,
+        prv_Addr(devIdx), reg, buf, 4u);
     if (st != I2C_OK)
-    {
         return CYPD_ERR_I2C;
-    }
     *pOut = ((uint32)buf[3] << 24u) | ((uint32)buf[2] << 16u) |
             ((uint32)buf[1] << 8u)  | (uint32)buf[0];
     return CYPD_OK;
@@ -58,9 +60,10 @@ static Cypd_Status_t prv_Read32(uint8 devIdx, uint16 reg, uint32 *pOut)
 
 static Cypd_Status_t prv_Write8(uint8 devIdx, uint16 reg, uint8 val)
 {
-    return prv_MapI2c(I2cMaster_WriteReg16(prv_Addr(devIdx), reg, &val, 1u));
+    return prv_MapI2c(I2cMaster_WriteReg16_Bus(
+        CYPD_DEVICES[devIdx].i2cBus,
+        prv_Addr(devIdx), reg, &val, 1u));
 }
-
 /* ---- Public API ---------------------------------------------------------- */
 
 Cypd_Status_t Cypd_HardReset(uint8 devIdx)
@@ -88,11 +91,11 @@ Cypd_Status_t Cypd_HardReset(uint8 devIdx)
     st = Cypd_ReadDeviceMode(devIdx, &mode);
     if (st != CYPD_OK)
     {
-        Debug_Printf("[CYPD %s] Reset: I2C error reading DEVICE_MODE\r\n", dev->name);
-        I2cMaster_ReinitBus(0u);
+        Debug_Printf("[CYPD %s] Reset: I2C error reading DEVICE_MODE\r\n",
+                    dev->name);
+        I2cMaster_ReinitBus(dev->i2cBus);
         return CYPD_ERR_I2C;
     }
-
     /* Bit 0 of DEVICE_MODE: 0 = bootloader, 1 = firmware */
     if ((mode & 0x0001u) == 0u)
     {
@@ -204,4 +207,14 @@ boolean Cypd_IsIntAsserted(uint8 devIdx)
         AppPin_GetPort(CYPD_DEVICES[devIdx].intPin.portIdx),
         CYPD_DEVICES[devIdx].intPin.pinIdx) == 0u) ? TRUE : FALSE;
 }
+
+void Cypd_RecoverBus(uint8 devIdx)
+{
+    if (devIdx >= CYPD_DEVICE_COUNT)
+    {
+        return;
+    }
+    I2cMaster_ReinitBus(CYPD_DEVICES[devIdx].i2cBus);
+}
+
 #endif

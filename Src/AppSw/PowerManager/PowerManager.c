@@ -132,6 +132,7 @@ static boolean prv_VerifyUpstreamPg(PM_State_t stage)
 
 static void prv_UpdateFusaStatus(PM_State_t state)
 {
+#if (FUSA_FEATURE_ENABLE == 1u)
     switch (state)
     {
         case PM_STATE_OFF:
@@ -162,6 +163,9 @@ static void prv_UpdateFusaStatus(PM_State_t state)
             prv_SetFusaStatus(FUSA_RESET);
             break;
     }
+#else
+    (void) state;
+#endif
 }
 
 void PowerManager_OnThermtripIsr(void)
@@ -470,7 +474,9 @@ static void prv_GoToS5(void)
     prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
+#if (FUSA_FEATURE_ENABLE == 1u)
     ComHpcWdt_Disable();
+#endif
     /* Disable Group D (VDDCR core) then Group C (memory).
      * Group B (S5 rails) and EFUSE stay powered. */
     prv_DisableGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT);
@@ -718,7 +724,9 @@ void PowerManager_Init(void)
     s_suppressResetDetect = FALSE;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
-    prv_SetFusaStatus(FUSA_PWR_OFF);   /* 00 — EFUSE not yet enabled */
+#if (FUSA_FEATURE_ENABLE == 1u)
+    prv_SetFusaStatus(FUSA_PWR_OFF);
+#endif
     Debug_Print("[PM] Initialised. State: OFF\r\n");
 }
 
@@ -988,8 +996,10 @@ void PowerManager_Run(void)
             prv_DeassertKbrst();  /* KBRST_L released    */
             Stm_DelayMs(PM_T6_WAIT_MS);
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
+        #if (FUSA_FEATURE_ENABLE == 1u)
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                             COMHPC_WDT_DEFAULT_TIMEOUT_MS);
+        #endif
             /* Added  PWROK check with PIN_APU_PWROK */
             /* T6: wait for SoC PWROK assertion (21.4ms per AMD spec) */
             {
@@ -1168,6 +1178,7 @@ void PowerManager_Run(void)
                 break;   /* don't process wake events until released */
             }
 
+
             if (s_powerOnReq || prv_PwrBtnPressed())
             {
                 s_powerOnReq = FALSE;
@@ -1183,6 +1194,28 @@ void PowerManager_Run(void)
                 s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                 Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
                 prv_WaitSinceRsmrst(16u);   /* T1a */
+                prv_PulsePwrBtnCold();
+                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
+                {
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+                prv_SetState(PM_STATE_RAMP_S3);
+            }
+            else if (!prv_SlpS5Active() && !prv_SlpS3Active())
+            {
+                /* WoL wake from S5 — chipset deasserted SLP signals.
+                * Treat as a cold boot since Group C+D are off. */
+                Debug_Print("[PM] SLP signals deasserted — WoL wake from S5\r\n");
+                s_coldBoot = TRUE;
+                s_waitForBtnRelease = TRUE;
+                prv_DeassertApuReset();
+                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                prv_UartReleaseToSoc();
+                prv_DeassertRsmrst();
+                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
+                prv_WaitSinceRsmrst(16u);
                 prv_PulsePwrBtnCold();
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
@@ -1235,6 +1268,20 @@ void PowerManager_Run(void)
                     prv_OnPgFault(NULL_PTR, 0u);
                     break;
                 }
+                s_s0i3EntryMs = 0u;
+                prv_SetState(PM_STATE_RAMP_S3);
+            }
+            else if (!s_shutdownToOff && !prv_SlpS3Active())
+            {
+                /* PCIe/WoL wake — SLP_S3 deasserted by chipset.
+                * x86 is waking itself, no PWRBTN pulse needed.
+                * Just release resets and let it resume. */
+                Debug_Print("[PM] SLP_S3 deasserted — PCIe/WoL wake\r\n");
+                s_coldBoot = FALSE;
+                prv_DeassertApuReset();
+                prv_UartReleaseToSoc();
+                prv_DeassertKbrst();
+                /* No PWRBTN pulse — x86 chipset initiated the wake */
                 s_s0i3EntryMs = 0u;
                 prv_SetState(PM_STATE_RAMP_S3);
             }

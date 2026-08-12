@@ -15,7 +15,6 @@
 #include "UsbPd_Cfg.h"
 #include "Ifx_Types.h"
 
-#define USBPD_FEATURE_ENABLE   1u
 
 
 /* ---- HPI Register Map ---------------------------------------------------- */
@@ -116,5 +115,11 @@ Cypd_Status_t Cypd_ReadPortEvent(uint8 devIdx, uint32 *pEvent);
  * @brief Check if INT_L is asserted (active low) for the given device.
  */
 boolean Cypd_IsIntAsserted(uint8 devIdx);
+
+/**
+ * @brief Reinitialise the I2C bus for the given device to recover
+ *        from a stuck bus condition.
+ */
+void Cypd_RecoverBus(uint8 devIdx);
 
 #endif /* CYPD6129_DRV_H */

@@ -64,11 +64,11 @@ static void prv_HandleEvent(uint8 devIdx, uint32 events)
 /*
 
 Poll cycle:
-1. Cypd_IsIntAsserted(i)         → GPIO read 
-2. UsbPdManager_Run reads intr   → I2C read of INTR_REG 
-3. prv_ServiceDevice(i, intr)    → value passed as parameter 
-4.   Process events
-5.   Cypd_ClearIntr(i, intr)     → I2C write 
+1. Cypd_IsIntAsserted(i)          
+2. UsbPdManager_Run reads intr   
+3. prv_ServiceDevice(i, intr)    
+4. Process events
+5. Cypd_ClearIntr(i, intr)    
 */
 
 static void prv_ServiceDevice(uint8 devIdx, uint8 intr)
@@ -146,11 +146,10 @@ void UsbPdManager_Run(void)
                 if (s_devRuntimeFails[i] >= USBPD_RUNTIME_FAIL_LIMIT)
                 {
                     s_devPresent[i] = FALSE;
-                    Debug_Printf("[USBPD %s] I2C failed %u times "
-                                 "— disabling\r\n",
-                                 CYPD_DEVICES[i].name,
-                                 (unsigned)s_devRuntimeFails[i]);
-                    I2cMaster_ReinitBus(0u);
+                    Debug_Printf("[USBPD %s] I2C failed %u times — disabling\r\n",
+                                CYPD_DEVICES[i].name,
+                                (unsigned)s_devRuntimeFails[i]);
+                    Cypd_RecoverBus(i);
                 }
                 continue;
             }
