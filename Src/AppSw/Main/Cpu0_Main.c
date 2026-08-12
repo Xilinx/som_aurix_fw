@@ -142,6 +142,7 @@ int core0_main(void)
          * PowerManager/SysMonitor map to real elapsed time, and surfaces
          * WCET overruns instead of silently letting the loop free-run. */
         {
+            static uint32 s_lastOverrunLogMs = 0u;
             uint32 elapsedMs = Stm_GetTimeMs() - loopStartMs;
             if (elapsedMs < MAIN_LOOP_PERIOD_MS)
             {
@@ -149,9 +150,8 @@ int core0_main(void)
             }
             else
             {
-                static uint32 s_lastOverrunLogMs = 0u;
                 uint32 nowMs = Stm_GetTimeMs();
-                if ((nowMs - s_lastOverrunLogMs) >= 1000u)
+                if ((nowMs - s_lastOverrunLogMs) >= MAIN_LOOP_OVERRUN_LOG_INTERVAL_MS)
                 {
                     s_lastOverrunLogMs = nowMs;
                     Debug_Printf("[MAIN] loop overrun: %ums (budget %ums)\r\n",

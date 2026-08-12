@@ -49,6 +49,11 @@
  * so debounce-poll and dwell-poll counters map to a known real-time value. */
 #define MAIN_LOOP_PERIOD_MS             5u
 
+/* Minimum gap between repeated "loop overrun" log lines. Without this,
+ * an overrun that persists reprints every iteration, which costs UART
+ * time and makes the overrun worse. */
+#define MAIN_LOOP_OVERRUN_LOG_INTERVAL_MS 1000u
+
 /* ---- Debug UART --------------------------------------------------------- */
 /* Baud rate is defined in Uart_Debug.h */
 

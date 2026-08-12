@@ -724,6 +724,7 @@ void PowerManager_Init(void)
     s_s0i3EntryMs = 0u;
     s_coldBoot = FALSE;
     s_suppressResetDetect = FALSE;
+    s_slpS3WasActive = FALSE;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
 #if (FUSA_FEATURE_ENABLE == 1u)
@@ -1271,17 +1272,25 @@ void PowerManager_Run(void)
 
             if (!s_shutdownToOff && (prv_PwrBtnPressed() || slpS3WakeEdge))
             {
-                /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert */
-                if (slpS3WakeEdge)
-                {
-                    Debug_Print("[PM] SLP_S3_L rising edge — autonomous S0i3 wake\r\n");
-                }
+                /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert.
+                 * On an autonomous wake (SLP_S3 edge, e.g. WoL/RTC), the
+                 * chipset has already initiated its own wake by deasserting
+                 * SLP_S3 — pulsing PWR_BTN here would be an unrequested
+                 * input into a chipset that's already waking, so skip it. */
                 s_coldBoot = FALSE;
                 //prv_DeassertRsmrst();
                 prv_DeassertApuReset();
                 prv_UartReleaseToSoc();
                 prv_DeassertKbrst();
-                prv_PulsePwrBtnWarm();
+                if (slpS3WakeEdge)
+                {
+                    Debug_Print("[PM] SLP_S3_L rising edge — autonomous S0i3 wake, "
+                                "skipping PWR_BTN pulse\r\n");
+                }
+                else
+                {
+                    prv_PulsePwrBtnWarm();
+                }
 
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
