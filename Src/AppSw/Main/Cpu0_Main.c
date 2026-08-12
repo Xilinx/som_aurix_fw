@@ -149,8 +149,14 @@ int core0_main(void)
             }
             else
             {
-                Debug_Printf("[MAIN] loop overrun: %ums (budget %ums)\r\n",
-                             (unsigned)elapsedMs, (unsigned)MAIN_LOOP_PERIOD_MS);
+                static uint32 s_lastOverrunLogMs = 0u;
+                uint32 nowMs = Stm_GetTimeMs();
+                if ((nowMs - s_lastOverrunLogMs) >= 1000u)
+                {
+                    s_lastOverrunLogMs = nowMs;
+                    Debug_Printf("[MAIN] loop overrun: %ums (budget %ums)\r\n",
+                                 (unsigned)elapsedMs, (unsigned)MAIN_LOOP_PERIOD_MS);
+                }
             }
         }
     }
