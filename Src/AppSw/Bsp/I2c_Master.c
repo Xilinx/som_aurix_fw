@@ -153,3 +153,35 @@ I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData)
                            (volatile uint8 *)pData, (Ifx_SizeT)1);
     return prv_MapStatus(st);
 }
+
+void I2cMaster_ReinitBus(uint8 busIdx)
+{
+    IfxI2c_I2c_Config cfg;
+
+    if (busIdx == 0u)
+    {
+        const IfxI2c_Pins pins = {
+            &IfxI2c0_SCL_P13_1_INOUT,
+            &IfxI2c0_SDA_P13_2_INOUT,
+            IfxPort_PadDriver_cmosAutomotiveSpeed1
+        };
+        IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C0);
+        cfg.baudrate = (float32)I2C_MASTER_FREQ_HZ;
+        cfg.mode     = IfxI2c_Mode_StandardAndFast;
+        cfg.pins     = &pins;
+        IfxI2c_I2c_initModule(&s_i2cHandle, &cfg);
+    }
+    else if (busIdx == 1u)
+    {
+        const IfxI2c_Pins pins = {
+            &IfxI2c1_SCL_P11_14_INOUT,
+            &IfxI2c1_SDA_P11_13_INOUT,
+            IfxPort_PadDriver_cmosAutomotiveSpeed1
+        };
+        IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C1);
+        cfg.baudrate = 400000.0f;
+        cfg.mode     = IfxI2c_Mode_StandardAndFast;
+        cfg.pins     = &pins;
+        IfxI2c_I2c_initModule(&s_i2c1Handle, &cfg);
+    }
+}

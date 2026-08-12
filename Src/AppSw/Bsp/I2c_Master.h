@@ -62,4 +62,10 @@ I2c_Status_t I2cMaster_WriteReg16(uint8 addr7bit, uint16 regAddr,
 I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData);
 
 
+/**
+ * @brief Reinitialise an I2C peripheral to recover from a stuck bus.
+ * @param busIdx  0 = I2C0 (CYPD/HPI), 1 = I2C1 (APML/SB-TSI)
+ */
+void I2cMaster_ReinitBus(uint8 busIdx);
+
 #endif /* I2C_MASTER_H */

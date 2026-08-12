@@ -15,6 +15,9 @@
 #include "UsbPd_Cfg.h"
 #include "Ifx_Types.h"
 
+#define USBPD_FEATURE_ENABLE   1u
+
+
 /* ---- HPI Register Map ---------------------------------------------------- */
 #define CYPD_REG_DEVICE_MODE        0x0000u  /* R  — device mode/fw status    */
 #define CYPD_REG_BOOT_MODE_REASON   0x0002u  /* R  — reason for boot mode     */

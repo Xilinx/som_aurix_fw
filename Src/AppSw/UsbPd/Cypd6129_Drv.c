@@ -10,6 +10,9 @@
 #include "Uart_Debug.h"
 #include "IfxPort.h"
 
+
+#if (USBPD_FEATURE_ENABLE == 1u)
+static boolean s_devInitOk[CYPD_DEVICE_COUNT];
 /* ---- Private helpers ----------------------------------------------------- */
 
 static uint8 prv_Addr(uint8 devIdx)
@@ -31,7 +34,7 @@ static Cypd_Status_t prv_Read16(uint8 devIdx, uint16 reg, uint16 *pOut)
         return CYPD_ERR_I2C;
     }
     /* HPI is little-endian */
-    *pOut = (uint16)((uint16)buf[1] << 8u) | (uint16)buf[0];
+    *pOut = (uint16)(((uint16)buf[1] << 8u) | (uint16)buf[0]);
     return CYPD_OK;
 }
 
@@ -62,12 +65,15 @@ static Cypd_Status_t prv_Write8(uint8 devIdx, uint16 reg, uint8 val)
 
 Cypd_Status_t Cypd_HardReset(uint8 devIdx)
 {
+    const Cypd_DevCfg_t *dev;
+    uint16 mode = 0u;
+    Cypd_Status_t st;
+
     if (devIdx >= CYPD_DEVICE_COUNT)
     {
         return CYPD_ERR_INVALID;
     }
-
-    const Cypd_DevCfg_t *dev = &CYPD_DEVICES[devIdx];
+    dev = &CYPD_DEVICES[devIdx];
 
     /* Assert RESET_L (drive low) */
     IfxPort_setPinLow(AppPin_GetPort(dev->resetPin.portIdx), dev->resetPin.pinIdx);
@@ -79,24 +85,39 @@ Cypd_Status_t Cypd_HardReset(uint8 devIdx)
     /* Wait for device to boot */
     Stm_DelayMs(CYPD_BOOT_DELAY_MS);
 
-    /* Verify device mode register is accessible and device is not in boot mode */
-    uint16 mode = 0u;
-    Cypd_Status_t st = Cypd_ReadDeviceMode(devIdx, &mode);
+    st = Cypd_ReadDeviceMode(devIdx, &mode);
     if (st != CYPD_OK)
     {
         Debug_Printf("[CYPD %s] Reset: I2C error reading DEVICE_MODE\r\n", dev->name);
+        I2cMaster_ReinitBus(0u);
         return CYPD_ERR_I2C;
     }
 
     /* Bit 0 of DEVICE_MODE: 0 = bootloader, 1 = firmware */
     if ((mode & 0x0001u) == 0u)
     {
-        Debug_Printf("[CYPD %s] Reset: device in boot mode (MODE=0x%04X)\r\n",
-                     dev->name, mode);
-        return CYPD_ERR_BOOT_MODE;
+        Debug_Printf("[CYPD %s] Reset: device in boot mode — retrying\r\n",
+                     dev->name);
+
+        /* Second reset attempt */
+        IfxPort_setPinLow(AppPin_GetPort(dev->resetPin.portIdx),
+                          dev->resetPin.pinIdx);
+        Stm_DelayMs(CYPD_RESET_PULSE_MS);
+        IfxPort_setPinHigh(AppPin_GetPort(dev->resetPin.portIdx),
+                           dev->resetPin.pinIdx);
+        Stm_DelayMs(CYPD_BOOT_DELAY_MS);
+
+        st = Cypd_ReadDeviceMode(devIdx, &mode);
+        if ((st != CYPD_OK) || ((mode & 0x0001u) == 0u))
+        {
+            Debug_Printf("[CYPD %s] Reset: still in boot mode after retry "
+                         "(MODE=0x%04X)\r\n", dev->name, mode);
+            return CYPD_ERR_BOOT_MODE;
+        }
     }
 
     Debug_Printf("[CYPD %s] Reset OK. MODE=0x%04X\r\n", dev->name, mode);
+    s_devInitOk[devIdx] = TRUE;
     return CYPD_OK;
 }
 
@@ -121,6 +142,11 @@ Cypd_Status_t Cypd_ReadPortStatus(uint8 devIdx, Cypd_PortStatus_t *pStatus)
     uint32 events   = 0u;
 
     Cypd_Status_t st;
+
+    if ((devIdx >= CYPD_DEVICE_COUNT) || (pStatus == NULL_PTR))
+    {
+        return CYPD_ERR_INVALID;
+    }
 
     st = prv_Read16(devIdx, CYPD_REG_TYPE_C_STATUS, &tcStatus);
     if (st != CYPD_OK) return st;
@@ -170,12 +196,12 @@ Cypd_Status_t Cypd_ReadPortEvent(uint8 devIdx, uint32 *pEvent)
 
 boolean Cypd_IsIntAsserted(uint8 devIdx)
 {
-    if (devIdx >= CYPD_DEVICE_COUNT)
+    if ((devIdx >= CYPD_DEVICE_COUNT) || !s_devInitOk[devIdx])
     {
         return FALSE;
     }
-    /* INT_L is active low */
     return (IfxPort_getPinState(
         AppPin_GetPort(CYPD_DEVICES[devIdx].intPin.portIdx),
         CYPD_DEVICES[devIdx].intPin.pinIdx) == 0u) ? TRUE : FALSE;
 }
+#endif

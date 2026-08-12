@@ -8,6 +8,9 @@
 
 #include "Ifx_Types.h"
 
+#define USBPD_RUNTIME_FAIL_LIMIT   10u
+#define USBPD_SPURIOUS_INT_LIMIT   100u
+
 /** Per-port connection state tracked by the manager. */
 typedef enum
 {
