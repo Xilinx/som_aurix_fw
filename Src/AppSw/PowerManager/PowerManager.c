@@ -46,6 +46,8 @@ static uint32  s_forcedOffMs        = 0u;
 static uint32 s_s0i3EntryMs         = 0u;
 static boolean s_coldRstDwellActive = FALSE;
 static boolean s_suppressResetDetect = FALSE;
+static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
+                                                 * for S0i3 wake-edge detect */
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -1080,6 +1082,7 @@ void PowerManager_Run(void)
                 Debug_Print("[PM] SLP_S3 active — entering S0i3\r\n");
                 s_shutdownToOff = FALSE;
                 s_s0i3EntryMs = Stm_GetTimeMs();
+                s_slpS3WasActive = TRUE;   /* arm wake-edge detect for DN_S3_S5 */
                 prv_AssertApuReset(); 
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
@@ -1252,9 +1255,27 @@ void PowerManager_Run(void)
 
         */
         case PM_STATE_DN_S3_S5:
-            if (!s_shutdownToOff && prv_PwrBtnPressed())
+        {
+            /* SLP_S3_ACTIVE falling edge == physical SLP_S3_L rising edge
+             * (this pin is a buffered/inverted active-HIGH view of the raw
+             * active-low SLP_S3_L, see prv_SlpS3Active()). The APU can exit
+             * S3 on its own (WoL, RTC, etc.) without any physical PWR_BTN
+             * press, so that edge — not just the button — must trigger the
+             * S0i3 wake sequence below. */
+            boolean slpS3ActiveNow;
+            boolean slpS3WakeEdge;
+
+            slpS3ActiveNow   = prv_SlpS3Active();
+            slpS3WakeEdge    = (s_slpS3WasActive && !slpS3ActiveNow);
+            s_slpS3WasActive = slpS3ActiveNow;
+
+            if (!s_shutdownToOff && (prv_PwrBtnPressed() || slpS3WakeEdge))
             {
                 /* S0i3 wake: pulse PWR_BTN to SoC, then verify SLP deassert */
+                if (slpS3WakeEdge)
+                {
+                    Debug_Print("[PM] SLP_S3_L rising edge — autonomous S0i3 wake\r\n");
+                }
                 s_coldBoot = FALSE;
                 //prv_DeassertRsmrst();
                 prv_DeassertApuReset();
@@ -1268,20 +1289,6 @@ void PowerManager_Run(void)
                     prv_OnPgFault(NULL_PTR, 0u);
                     break;
                 }
-                s_s0i3EntryMs = 0u;
-                prv_SetState(PM_STATE_RAMP_S3);
-            }
-            else if (!s_shutdownToOff && !prv_SlpS3Active())
-            {
-                /* PCIe/WoL wake — SLP_S3 deasserted by chipset.
-                * x86 is waking itself, no PWRBTN pulse needed.
-                * Just release resets and let it resume. */
-                Debug_Print("[PM] SLP_S3 deasserted — PCIe/WoL wake\r\n");
-                s_coldBoot = FALSE;
-                prv_DeassertApuReset();
-                prv_UartReleaseToSoc();
-                prv_DeassertKbrst();
-                /* No PWRBTN pulse — x86 chipset initiated the wake */
                 s_s0i3EntryMs = 0u;
                 prv_SetState(PM_STATE_RAMP_S3);
             }
@@ -1319,6 +1326,7 @@ void PowerManager_Run(void)
                 }
             }
             break;
+        }
 
         /* ------------------------------------------------------------------ */
         case PM_STATE_DN_S5_OFF:
@@ -1372,8 +1380,10 @@ void PowerManager_Run(void)
             prv_DeassertKbrst();
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             VoltMon_Enable();
+#if (FUSA_FEATURE_ENABLE == 1u)
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                  COMHPC_WDT_DEFAULT_TIMEOUT_MS);
+#endif
             Debug_Print("[PM] Warm reset complete.\r\n");
             s_suppressResetDetect = TRUE;
             prv_SetState(PM_STATE_ON);

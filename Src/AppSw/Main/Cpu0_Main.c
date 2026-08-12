@@ -28,6 +28,7 @@
 #include "Uart_Debug.h"
 #include "I2c_Master.h"
 #include "PowerManager.h"
+#include "Platform_Cfg.h"
 #include "Eru_FaultIsr.h"
 #include "VoltMon.h"
 #include "Tlf35585.h"
@@ -38,9 +39,6 @@
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
 #endif
-
-
-static uint32 nextTickMs;
 
 
 /* Banner printed on UART at startup */
@@ -101,19 +99,13 @@ int core0_main(void)
 #endif
 #endif
 
-    nextTickMs = Stm_GetTimeMs();
     Debug_Print("[SYS] Entering main loop\r\n");
 
 
     for (;;)
     {
-        while (Stm_GetTimeMs() - nextTickMs < MAIN_LOOP_TICK_MS){}
-        nextTickMs += MAIN_LOOP_TICK_MS;
+        uint32 loopStartMs = Stm_GetTimeMs();
 
-        if (Stm_GetTimeMs() - nextTickMs >= MAIN_LOOP_TICK_MS)
-        {
-            nextTickMs = Stm_GetTimeMs();   /* resync after overrun */
-        }
         //IfxPort_togglePin(&MODULE_P34,4);
 
         PowerManager_Run();
@@ -145,6 +137,22 @@ int core0_main(void)
 #endif
         }
 #endif
+
+        /* Fixed-period pacing: makes debounce/timeout constants throughout
+         * PowerManager/SysMonitor map to real elapsed time, and surfaces
+         * WCET overruns instead of silently letting the loop free-run. */
+        {
+            uint32 elapsedMs = Stm_GetTimeMs() - loopStartMs;
+            if (elapsedMs < MAIN_LOOP_PERIOD_MS)
+            {
+                Stm_DelayMs(MAIN_LOOP_PERIOD_MS - elapsedMs);
+            }
+            else
+            {
+                Debug_Printf("[MAIN] loop overrun: %ums (budget %ums)\r\n",
+                             (unsigned)elapsedMs, (unsigned)MAIN_LOOP_PERIOD_MS);
+            }
+        }
     }
     return 0;
 }
