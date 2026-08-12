@@ -67,6 +67,7 @@ typedef enum
     FUSA_RESET    = 3u
 } FusaStatus_t;
 
+#if (FUSA_FEATURE_ENABLE == 1u)
 static void prv_SetFusaStatus(FusaStatus_t status)
 {
     boolean bit0 = (boolean)(((uint8)status & 0x01u) != 0u);
@@ -82,6 +83,7 @@ static void prv_SetFusaStatus(FusaStatus_t status)
     else
         IfxPort_setPinLow(AppPin_GetPort(PIN_FUSA_STATUS1.portIdx),  PIN_FUSA_STATUS1.pinIdx);
 }
+#endif
 
 
 static boolean prv_PwrokValid(void)
