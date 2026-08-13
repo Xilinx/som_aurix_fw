@@ -1037,32 +1037,22 @@ void PowerManager_Run(void)
 
         /* ------------------------------------------------------------------ */
         case PM_STATE_ON:
-            /* Check APU-initiated sleep state transitions. */
-            if (!prv_ReadSocResetL()) 
+            /* Observe APU_RESET_L for visibility only — by design this must
+             * not change S0/S3/S5 power state. Log once per assertion. */
+            if (!prv_ReadSocResetL())
             {
                 if (!s_suppressResetDetect)
                 {
-                    Debug_Print("[PM] APU_RESET_L asserted — cold reset detected\r\n");
-                    s_resetCause = PM_RESET_CAUSE_COLD_RST;
+                    Debug_Print("[PM] APU_RESET_L asserted (observed only)\r\n");
+                    s_suppressResetDetect = TRUE;
                 }
             }
             else
             {
-                /* RESET_L is HIGH (deasserted) — APU has finished reinitializing.
-                * Safe to re-arm detection. */
                 s_suppressResetDetect = FALSE;
             }
             if (s_powerOffReq || prv_SlpS5Active())
             {
-                /* SLP_S5 means the OS requested shutdown, NOT a
-                 * cold reset even if APU_RESET_L was asserted moments earlier
-                 * (the APU always asserts RESET_L during ACPI shutdown).
-                 * Clear the cold-reset cause so S5 state parks and stays. */
-                if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
-                {
-                    Debug_Print("[PM] SLP_S5 with APU_RESET_L — normal shutdown, not cold reset\r\n");
-                    s_resetCause = PM_RESET_CAUSE_NONE;
-                }
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE;
@@ -1086,7 +1076,6 @@ void PowerManager_Run(void)
                 s_shutdownToOff = FALSE;
                 s_s0i3EntryMs = Stm_GetTimeMs();
                 s_slpS3WasActive = TRUE;   /* arm wake-edge detect for DN_S3_S5 */
-                prv_AssertApuReset(); 
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
                 // prv_AssertRsmrst();
@@ -1160,6 +1149,7 @@ void PowerManager_Run(void)
                     s_coldRstDwellActive = TRUE;
                     s_coldRstDwellStartMs = Stm_GetTimeMs();
                     Debug_Print("[PM] Cold reset: dwelling at S5 for 3s\r\n");
+                    break;  /* just armed — don't process wake events yet */
                 }
                 else if ((Stm_GetTimeMs() - s_coldRstDwellStartMs) >= 3000u)
                 {
@@ -1200,28 +1190,6 @@ void PowerManager_Run(void)
                 s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                 Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
                 prv_WaitSinceRsmrst(16u);   /* T1a */
-                prv_PulsePwrBtnCold();
-                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
-                {
-                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                    prv_OnPgFault(NULL_PTR, 0u);
-                    break;
-                }
-                prv_SetState(PM_STATE_RAMP_S3);
-            }
-            else if (!prv_SlpS5Active() && !prv_SlpS3Active())
-            {
-                /* WoL wake from S5 — chipset deasserted SLP signals.
-                * Treat as a cold boot since Group C+D are off. */
-                Debug_Print("[PM] SLP signals deasserted — WoL wake from S5\r\n");
-                s_coldBoot = TRUE;
-                s_waitForBtnRelease = TRUE;
-                prv_DeassertApuReset();
-                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
-                prv_UartReleaseToSoc();
-                prv_DeassertRsmrst();
-                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
-                prv_WaitSinceRsmrst(16u);
                 prv_PulsePwrBtnCold();
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
@@ -1292,7 +1260,6 @@ void PowerManager_Run(void)
                  * input into a chipset that's already waking, so skip it. */
                 s_coldBoot = FALSE;
                 //prv_DeassertRsmrst();
-                prv_DeassertApuReset();
                 prv_UartReleaseToSoc();
                 prv_DeassertKbrst();
                 if (slpS3WakeEdge)
