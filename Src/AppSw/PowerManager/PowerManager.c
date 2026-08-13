@@ -1268,9 +1268,20 @@ void PowerManager_Run(void)
             boolean slpS3ActiveNow;
             boolean slpS3WakeEdge;
 
-            slpS3ActiveNow   = prv_SlpS3Active();
-            slpS3WakeEdge    = (s_slpS3WasActive && !slpS3ActiveNow);
-            s_slpS3WasActive = slpS3ActiveNow;
+            slpS3ActiveNow = prv_SlpS3Active();
+
+            /* AMD datasheet defines T1' as the minimum entry time to S0i3.
+             * Hold off evaluating the wake edge until PM_T1_PRIME_MS has
+             * elapsed since S0i3 entry (s_s0i3EntryMs). */
+            if ((Stm_GetTimeMs() - s_s0i3EntryMs) >= PM_T1_PRIME_MS)
+            {
+                slpS3WakeEdge    = (s_slpS3WasActive && !slpS3ActiveNow);
+                s_slpS3WasActive = slpS3ActiveNow;
+            }
+            else
+            {
+                slpS3WakeEdge = FALSE;
+            }
 
             if (!s_shutdownToOff && (prv_PwrBtnPressed() || slpS3WakeEdge))
             {
