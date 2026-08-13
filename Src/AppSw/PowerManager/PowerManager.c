@@ -469,11 +469,12 @@ static void prv_GoToS5(void)
     Debug_Print("[PM] THERMTRIP asserted — suspending to S5 "
                 "(Group B + EFUSE remain on)\r\n");
 
-    /* Secure APU and deassert PWRGD before touching rails. */
+    /* Secure APU and deassert PWRGD before touching rails. RSMRST_L is
+     * NOT asserted here — Group B (S5 rails) stays powered throughout
+     * this transition, so resume power never goes unstable. */
     prv_AssertApuReset();
     prv_UartClaimByAurix();
     prv_AssertKbrst();
-    prv_AssertRsmrst();
     prv_DeassertPwrgd();
     prv_AssertPltrst();
     PwrGood_MonDisarm();
