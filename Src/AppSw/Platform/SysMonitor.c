@@ -136,8 +136,10 @@ void SysMonitor_Init(void)
 void SysMonitor_Run(void)
 {
 
-    PM_State_t pmState = PowerManager_GetState();
-    if ((pmState == PM_STATE_OFF) || (pmState == PM_STATE_FAULT))
+    /* APML/SB-TSI access is only valid while the APU is fully up in S0 —
+     * make that explicit here rather than relying solely on the
+     * PM_STATE_ON check at the Cpu0_Main.c call site. */
+    if (PowerManager_GetState() != PM_STATE_ON)
     {
         return;
     }
