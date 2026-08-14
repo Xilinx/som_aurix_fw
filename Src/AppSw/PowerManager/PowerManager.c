@@ -1187,10 +1187,10 @@ void PowerManager_Run(void)
                 Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                 prv_UartReleaseToSoc();
 
-                prv_DeassertRsmrst();
-                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
-                Debug_Print("[PM] RSMRST_L deasserted (S5 recovery)\r\n");
-                prv_WaitSinceRsmrst(16u);   /* T1a */
+                /* RSMRST_L is not re-asserted anywhere on the way into
+                 * S5, so it's already been deasserted (and T1a already
+                 * satisfied) since the original S5 power-on ramp —
+                 * nothing to redo here. */
                 prv_PulsePwrBtnCold();
                 if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
                 {
