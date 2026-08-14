@@ -48,6 +48,8 @@ static boolean s_coldRstDwellActive = FALSE;
 static boolean s_suppressResetDetect = FALSE;
 static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
                                                  * for S0i3 wake-edge detect */
+static boolean s_retryDelayActive   = FALSE;
+static uint32  s_retryDelayStartMs  = 0u;
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -728,6 +730,8 @@ void PowerManager_Init(void)
     s_coldBoot = FALSE;
     s_suppressResetDetect = FALSE;
     s_slpS3WasActive = FALSE;
+    s_retryDelayActive = FALSE;
+    s_retryDelayStartMs = 0u;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
 #if (FUSA_FEATURE_ENABLE == 1u)
@@ -1098,23 +1102,18 @@ void PowerManager_Run(void)
                     {
                         s_rstBtnDebounce = 0u;
                         s_waitForRstRelease = TRUE;
-                        Debug_Print("[PM] RSTBTN# pressed — cold reset via S5\r\n");
+                        Debug_Print("[PM] RSTBTN# pressed — pulsing COLD_RST\r\n");
 
-                        /* Use the existing shutdown path but set cold reset cause
-                        * so PM_STATE_S5 auto-wakes after 3s dwell */
-                        s_resetCause = PM_RESET_CAUSE_COLD_RST;
-                        s_shutdownToOff = TRUE;   /* disable Group C too */
-                        s_thermtripDebounce = 0u;
+                        /* COLD_RST pulse only — no rail or state changes.
+                         * The APU performs its own full reset and reboot
+                         * autonomously. PG-Loss monitoring stays armed
+                         * throughout; any suppression needed while the APU
+                         * is mid-reset is already driven by its own
+                         * APU_RESET_L assertion (e.g. PLTRST# mirroring in
+                         * prv_MirrorResetSignals()), not by this handler. */
                         prv_AssertApuReset();
-                        prv_UartClaimByAurix();
-                        prv_AssertKbrst();
-                        prv_DeassertPwrgd();
-                        prv_AssertPltrst();
-                        PwrGood_MonDisarm();
-                        VoltMon_Disable();
-                        ComHpcWdt_Disable();
-                        prv_SetState(PM_STATE_DN_S0_S3);
-                        break;
+                        Stm_DelayMs(PM_COLD_RST_PULSE_MS);
+                        prv_DeassertApuReset();
                     }
                 }
             }
@@ -1332,10 +1331,22 @@ void PowerManager_Run(void)
             /* Stay in fault until a manual reset. Future: add recovery logic. */
             if (s_retryCount > 0u && s_retryCount <= PM_MAX_RETRIES)
             {
-                Stm_DelayMs(PM_RETRY_DELAY_MS);
-                Debug_Printf("[PM] Retrying power-on (attempt %u)...\r\n",
-                            (unsigned)s_retryCount);
-                prv_SetState(PM_STATE_POWER_UP);
+                /* Non-blocking retry delay — a blocking Stm_DelayMs() here
+                 * would stall SysMonitor/VoltMon/UsbPdManager servicing
+                 * (including THERMTRIP handling) for the full delay on
+                 * every retry. */
+                if (!s_retryDelayActive)
+                {
+                    s_retryDelayActive  = TRUE;
+                    s_retryDelayStartMs = Stm_GetTimeMs();
+                }
+                else if ((Stm_GetTimeMs() - s_retryDelayStartMs) >= PM_RETRY_DELAY_MS)
+                {
+                    s_retryDelayActive = FALSE;
+                    Debug_Printf("[PM] Retrying power-on (attempt %u)...\r\n",
+                                (unsigned)s_retryCount);
+                    prv_SetState(PM_STATE_POWER_UP);
+                }
             }
             /* Latch-off: power cycle required. No retries remaining. */
             break;
