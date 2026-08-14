@@ -270,19 +270,14 @@ static boolean prv_ReadRsmrstState(void)
  * ---------------------------------------------------------------------- */
 static void prv_MirrorResetSignals(void)
 {
-    /* PLTRST# is a pure passthrough of SoC RESET_L — never actively
-     * driven by state machine (confirmed w/ platform arch).
-     * COM-HPC gate: PLTRST# not released while RSTBTN# is low. */
-    
-    /*
-    if (s_state != PM_STATE_ON)
+    /* RESET_L is undetermined before Group B is up or after a fault
+     * drops it again — don't pass it through as PLTRST# in that window. */
+    if ((s_state < PM_STATE_RAMP_S3) || (s_state == PM_STATE_FAULT))
     {
         prv_AssertPltrst();
-        prv_AssertRsmrstOut();
         return;
     }
-    
-    */
+
     /* Mirror SoC RESET_L → COM-HPC PLTRST#
      * Per COM-HPC spec: PLTRST# shall not be released while RSTBTN# is low */
     if (prv_ReadSocResetL() &&
@@ -675,7 +670,7 @@ static void prv_PulsePwrBtnCold(void)
     Stm_DelayMs(18u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
-    Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T3 cold)\r\n");
+    Debug_Print("[PM] APU_PWRBTN pulsed 18ms (T3 cold)\r\n");
 }
 
 /* S0i3 resume (S0 -> S3 -> S0): 16ms minimum per AMD T2 Table 30. */
@@ -686,7 +681,7 @@ static void prv_PulsePwrBtnWarm(void)
     Stm_DelayMs(18u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
-    Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T2 warm)\r\n");
+    Debug_Print("[PM] APU_PWRBTN pulsed 18ms (T2 warm)\r\n");
 }
 
 
