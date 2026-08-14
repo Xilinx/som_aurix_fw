@@ -1318,6 +1318,13 @@ void PowerManager_Run(void)
                  * SLP_S3 — pulsing PWR_BTN here would be an unrequested
                  * input into a chipset that's already waking, so skip it. */
                 s_coldBoot = FALSE;
+                /* This handler consumes the press directly — clear the
+                 * top-level edge detector's tracking so it doesn't later
+                 * re-evaluate a stale s_pwrBtnPressStartMs against a
+                 * different state and misfire a forced shutdown. */
+                s_pwrBtnWasPressed   = FALSE;
+                s_pwrBtnPressStartMs = 0u;
+                s_pwrBtnDebounce     = 0u;
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
                 prv_DeassertKbrst();
