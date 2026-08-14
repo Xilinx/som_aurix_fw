@@ -463,18 +463,17 @@ static void prv_DisableGroup(const PwrRail_Cfg_t *rails, uint8 count);
  *
  * Keeps Group B (S5 rails) and the 12V EFUSE powered so the platform
  * can recover when the thermal condition clears.  Group C (memory) and
- * Group D (VDDCR) are powered down in reverse order.  Both APU resets
- * (COLD_RST and RSMRST_L) remain asserted until wake from S5.
+ * Group D (VDDCR) are powered down in reverse order.  Neither COLD_RST
+ * (SYS_RESET_L) nor RSMRST_L is asserted here — Group B stays powered
+ * throughout this S0->S5 transition, so neither signal is toggled;
+ * they're only released during the S5-and-above power-on ramp.
  */
 static void prv_GoToS5(void)
 {
     Debug_Print("[PM] THERMTRIP asserted — suspending to S5 "
                 "(Group B + EFUSE remain on)\r\n");
 
-    /* Secure APU and deassert PWRGD before touching rails. RSMRST_L is
-     * NOT asserted here — Group B (S5 rails) stays powered throughout
-     * this transition, so resume power never goes unstable. */
-    prv_AssertApuReset();
+    /* Secure APU and deassert PWRGD before touching rails. */
     prv_UartClaimByAurix();
     prv_AssertKbrst();
     prv_DeassertPwrgd();
@@ -1063,10 +1062,12 @@ void PowerManager_Run(void)
                 s_shutdownToOff = TRUE;
                 s_waitForBtnRelease = TRUE;
                 s_thermtripDebounce = 0u;
-                prv_AssertApuReset();
+                /* Neither SYS_RESET_L nor RSMRST_L is asserted here —
+                 * Group B stays powered throughout this S0->S5
+                 * transition, so neither signal is toggled. */
                 prv_UartClaimByAurix();
                 prv_AssertKbrst();
-                //prv_AssertRsmrst(); 
+                //prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 prv_AssertPltrst();
                 PwrGood_MonDisarm();
