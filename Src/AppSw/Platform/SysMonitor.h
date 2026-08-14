@@ -92,4 +92,6 @@ void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
  */
 boolean SysMonitor_IsThrottling(void);
 
+void SysMonitor_ClearShutdownLatch(void);
+
 #endif /* SYS_MONITOR_H */

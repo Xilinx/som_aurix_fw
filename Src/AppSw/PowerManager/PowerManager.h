@@ -29,6 +29,11 @@
  * standalone build-time value. */
 #define PM_COLD_RST_PULSE_MS            10u
 
+#define PM_RTCCLK_STABLE_MS             16u
+#define PM_GRP_D_OFF_DWELL_MS           2u    /* flowchart: after Group D ENs removed */
+#define PM_GRP_C_OFF_DWELL_MS           16u   /* flowchart: after Group C ENs removed (T2) */
+
+
 #if (PM_PWRBTN_DEBOUNCE_POLLS < 1u)
 #error "PM_PWRBTN_DEBOUNCE_POLLS must be >= 1"
 #endif

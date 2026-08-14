@@ -50,6 +50,8 @@ static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
                                                  * for S0i3 wake-edge detect */
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
+static uint32 s_coldRstDetectMs = 0u;
+static uint8 s_pwrokLossDebounce = 0u;
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -268,13 +270,19 @@ static boolean prv_ReadRsmrstState(void)
  * ---------------------------------------------------------------------- */
 static void prv_MirrorResetSignals(void)
 {
+    /* PLTRST# is a pure passthrough of SoC RESET_L — never actively
+     * driven by state machine (confirmed w/ platform arch).
+     * COM-HPC gate: PLTRST# not released while RSTBTN# is low. */
+    
+    /*
     if (s_state != PM_STATE_ON)
     {
         prv_AssertPltrst();
         prv_AssertRsmrstOut();
         return;
     }
-
+    
+    */
     /* Mirror SoC RESET_L → COM-HPC PLTRST#
      * Per COM-HPC spec: PLTRST# shall not be released while RSTBTN# is low */
     if (prv_ReadSocResetL() &&
@@ -477,7 +485,7 @@ static void prv_GoToS5(void)
     prv_UartClaimByAurix();
     prv_AssertKbrst();
     prv_DeassertPwrgd();
-    prv_AssertPltrst();
+    //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
 #if (FUSA_FEATURE_ENABLE == 1u)
@@ -486,7 +494,9 @@ static void prv_GoToS5(void)
     /* Disable Group D (VDDCR core) then Group C (memory).
      * Group B (S5 rails) and EFUSE stay powered. */
     prv_DisableGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT);
+    Stm_DelayMs(PM_GRP_D_OFF_DWELL_MS);
     prv_DisableGroup(PM_RAILS_GRP_C, PM_RAIL_GRP_C_COUNT);
+    Stm_DelayMs(PM_GRP_C_OFF_DWELL_MS);
 
     s_thermtripDebounce = 0u;
     prv_SetState(PM_STATE_S5);
@@ -524,7 +534,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
-    prv_AssertPltrst();
+    //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
     ComHpcWdt_Disable();     /* WDT could also fire during rail-down */
@@ -617,8 +627,6 @@ static boolean prv_PwrBtnPressed(void)
 
 static boolean prv_ThermTripActive(void)
 {
-//  return (IfxPort_getPinState(
-//      AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx) == 0u);
     return (boolean)IfxPort_getPinState(
         AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx);
 }
@@ -659,12 +667,12 @@ static boolean prv_WaitSlpDeassert(uint16 timeoutMs)
     return TRUE;
 }
 
-/* Cold boot (S5->S0): 16ms pulse per AMD T3. */
+/* Cold boot: PWR_BTN assertion, min 16ms per Table 30 T2 (+margin). */
 static void prv_PulsePwrBtnCold(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                       PIN_APU_PWRBTN.pinIdx);
-    Stm_DelayMs(16u);
+    Stm_DelayMs(18u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
     Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T3 cold)\r\n");
@@ -675,7 +683,7 @@ static void prv_PulsePwrBtnWarm(void)
 {
     IfxPort_setPinLow(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                       PIN_APU_PWRBTN.pinIdx);
-    Stm_DelayMs(16u);
+    Stm_DelayMs(18u);
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_PWRBTN.portIdx),
                        PIN_APU_PWRBTN.pinIdx);
     Debug_Print("[PM] APU_PWRBTN pulsed 16ms (T2 warm)\r\n");
@@ -691,7 +699,7 @@ static void prv_EmergencyShutdown(PM_ResetCause_t cause)
     prv_AssertKbrst();
     prv_AssertRsmrst();
     prv_DeassertPwrgd();
-    prv_AssertPltrst();
+    //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_Disable();
     ComHpcWdt_Disable();
@@ -710,7 +718,7 @@ void PowerManager_Init(void)
     prv_AssertApuReset();
     prv_AssertKbrst();
     prv_AssertRsmrst();     /* hold RSMRST_L until S5 rails stable + 10ms */
-    prv_AssertPltrst();
+    //prv_AssertPltrst();
     PwrGood_MonDisarm();
     s_state             = PM_STATE_OFF;
     s_powerOnReq        = FALSE;
@@ -731,6 +739,8 @@ void PowerManager_Init(void)
     s_slpS3WasActive = FALSE;
     s_retryDelayActive = FALSE;
     s_retryDelayStartMs = 0u;
+    s_coldRstDetectMs = 0u;
+    s_pwrokLossDebounce = 0u;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
 #if (FUSA_FEATURE_ENABLE == 1u)
@@ -936,16 +946,23 @@ void PowerManager_Run(void)
                 prv_DeassertRsmrst();
                 s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
                 Debug_Print("[PM] RSMRST_L deasserted (S5 rails stable + 10ms).\r\n");
-                prv_WaitSinceRsmrst(16u);   /* T1a: >=16ms RSMRST to PWR_BTN */
+                prv_WaitSinceRsmrst(PM_RTCCLK_STABLE_MS);   /* T1a: >=16ms RSMRST to PWR_BTN */
             }
 
             prv_PulsePwrBtnCold();
 
             if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
             {
-                s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
+                /* RTCCLK may not have been stable yet (Table 28 T2: up to 400ms) —
+                * one re-pulse before declaring fault */
+                Debug_Print("[PM] SLP timeout — re-pulsing PWR_BTN (RTCCLK late?)\r\n");
+                prv_PulsePwrBtnCold();
+                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
+                {
+                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
             }
 
             prv_SetState(PM_STATE_RAMP_S3);
@@ -988,50 +1005,52 @@ void PowerManager_Run(void)
                 prv_OnPgFault(&PM_RAILS_GRP_D[0], 0u);
                 break;
             }
-
+            if (s_coldBoot)
+            {
+                if (!prv_BiosRomValidate())
+                {
+                    Debug_Print("[PM] BIOS ROM validation FAILED — blocking boot\r\n");
+                    s_pendingCause = PM_RESET_CAUSE_BIOS_FAIL;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+            }
+            /* was: prv_AssertPwrgd(); delay; prv_BiosRomValidate(); */
             prv_AssertPwrgd();
             Stm_DelayMs(PM_RESET_HOLD_AFTER_PWRGD_MS);
 
-            if (!prv_BiosRomValidate())
-            {
-                Debug_Print("[PM] BIOS ROM validation FAILED — blocking boot\r\n");
-                s_pendingCause = PM_RESET_CAUSE_BIOS_FAIL;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
-            }
-
-
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0)) break;
             prv_DeassertKbrst();  /* KBRST_L released    */
-            Stm_DelayMs(PM_T6_WAIT_MS);
-            PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
-        #if (FUSA_FEATURE_ENABLE == 1u)
-            ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
-                            COMHPC_WDT_DEFAULT_TIMEOUT_MS);
-        #endif
+
             /* Added  PWROK check with PIN_APU_PWROK */
             /* T6: wait for SoC PWROK assertion (21.4ms per AMD spec) */
             {
                 uint16 pwrokWaitMs = 0u;
                 while (!IfxPort_getPinState(AppPin_GetPort(PIN_APU_PWROK.portIdx),
                                             PIN_APU_PWROK.pinIdx) &&
-                       (pwrokWaitMs < 100u))  /* T5 ceiling: 100ms */
+                        (pwrokWaitMs < 100u))  /* T5 ceiling: 100ms */
                 {
                     Stm_DelayMs(1u);
                     pwrokWaitMs++;
                 }
                 if (!IfxPort_getPinState(AppPin_GetPort(PIN_APU_PWROK.portIdx),
-                                         PIN_APU_PWROK.pinIdx))
+                                            PIN_APU_PWROK.pinIdx))
                 {
                     Debug_Print("[PM] SoC PWROK not asserted — startup fault\r\n");
                     s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
                     prv_OnPgFault(NULL_PTR, 0u);
                     break;
                 }
-                Debug_Printf("[PM] SoC PWROK asserted after %ums\r\n",
-                             (unsigned)pwrokWaitMs);
-            }
 
+                Debug_Printf("[PM] SoC PWROK asserted after %ums\r\n",
+                                (unsigned)pwrokWaitMs);
+            }
+            Stm_DelayMs(8u);   /* T7-T6 = 7.1ms per flowchart before enabling monitors */
+            PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
+#if (FUSA_FEATURE_ENABLE == 1u)
+            ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
+                            COMHPC_WDT_DEFAULT_TIMEOUT_MS);
+#endif
             s_retryCount = 0u;
             VoltMon_Enable();
             //prv_DeassertPltrst();
@@ -1043,11 +1062,28 @@ void PowerManager_Run(void)
         case PM_STATE_ON:
             /* Observe APU_RESET_L for visibility only — by design this must
              * not change S0/S3/S5 power state. Log once per assertion. */
+            if (prv_ReadSocResetL() && !prv_PwrokValid())
+            {
+                s_pwrokLossDebounce++;
+                if (s_pwrokLossDebounce >= PM_PG_DEBOUNCE_POLLS)
+                {
+                    Debug_Print("[PM] SoC PWROK lost in S0\r\n");
+                    s_pendingCause = PM_RESET_CAUSE_PG_LOSS;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+            }
+            else 
+            {
+                s_pwrokLossDebounce = 0u;
+            }
+
             if (!prv_ReadSocResetL())
             {
                 if (!s_suppressResetDetect)
                 {
                     Debug_Print("[PM] APU_RESET_L asserted (observed only)\r\n");
+                    s_coldRstDetectMs = Stm_GetTimeMs();
                     s_suppressResetDetect = TRUE;
                 }
             }
@@ -1055,8 +1091,17 @@ void PowerManager_Run(void)
             {
                 s_suppressResetDetect = FALSE;
             }
+
             if (s_powerOffReq || prv_SlpS5Active())
             {
+                
+                if (!s_powerOffReq &&
+                    (s_coldRstDetectMs != 0u) &&
+                    ((Stm_GetTimeMs() - s_coldRstDetectMs) <= 500u))
+                {
+                    s_resetCause = PM_RESET_CAUSE_COLD_RST;   /* CF9-style cold reset */
+                }
+                s_coldRstDetectMs = 0u;
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE;
@@ -1069,7 +1114,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 //prv_AssertRsmrst();
                 prv_DeassertPwrgd();
-                prv_AssertPltrst();
+                //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1086,7 +1131,7 @@ void PowerManager_Run(void)
                 prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
-                prv_AssertPltrst();
+                //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
                 ComHpcWdt_Disable();
@@ -1112,8 +1157,16 @@ void PowerManager_Run(void)
                          * is mid-reset is already driven by its own
                          * APU_RESET_L assertion (e.g. PLTRST# mirroring in
                          * prv_MirrorResetSignals()), not by this handler. */
+                        s_suppressResetDetect = TRUE; //Prevents APU
                         prv_AssertApuReset();
                         Stm_DelayMs(PM_COLD_RST_PULSE_MS);
+                        /* COM-HPC: module shall stay in reset while RSTBTN# is held low */
+                        while (IfxPort_getPinState(AppPin_GetPort(PIN_CB_RSTBTN_L.portIdx),
+                           PIN_CB_RSTBTN_L.pinIdx) == 0u)
+                        {
+                            Stm_DelayMs(1u);
+                        }                        
+                        s_coldRstDetectMs = Stm_GetTimeMs(); 
                         prv_DeassertApuReset();
                     }
                 }
@@ -1166,7 +1219,7 @@ void PowerManager_Run(void)
                     break;  /* still dwelling, don't process wake events */
                 }
             }
-            //if (!prv_ThermTripActive())
+            //if ((s_powerOnReq || prv_PwrBtnPressed()) && !prv_ThermTripActive())
             //{
             if (s_waitForBtnRelease)
             {
@@ -1181,6 +1234,9 @@ void PowerManager_Run(void)
                 s_powerOnReq = FALSE;
                 s_coldBoot = TRUE;
                 s_waitForBtnRelease = TRUE;
+                s_pwrBtnWasPressed   = FALSE;   /* consume the press — prevent hold-timer */
+                s_pwrBtnPressStartMs = 0u;
+                s_pwrBtnDebounce     = 0u;
                 Debug_Print("[PM] Wake from S5\r\n");
 
                 prv_DeassertApuReset();
@@ -1212,8 +1268,10 @@ void PowerManager_Run(void)
         case PM_STATE_DN_S0_S3:
             /* Disable Group D (VDDCR core) then Group C (memory) */
             prv_DisableGroup(PM_RAILS_GRP_D, PM_RAIL_GRP_D_COUNT);
+            Stm_DelayMs(PM_GRP_D_OFF_DWELL_MS);
             if (s_shutdownToOff) {
                 prv_DisableGroup(PM_RAILS_GRP_C, PM_RAIL_GRP_C_COUNT);
+                Stm_DelayMs(PM_GRP_C_OFF_DWELL_MS);
             }
             /* S0i3: Group C stays powered on */
             prv_SetState(PM_STATE_DN_S3_S5);
@@ -1356,7 +1414,7 @@ void PowerManager_Run(void)
             * Re-validate BIOS ROM, then release KBRST_L. */
             Debug_Print("[PM] Warm reset: asserting KBRST_L...\r\n");
             prv_AssertKbrst();
-            prv_AssertPltrst();
+            //prv_AssertPltrst();
 
             /* UART MUX to AURIX during reset for debug visibility */
             prv_UartClaimByAurix();
@@ -1371,7 +1429,7 @@ void PowerManager_Run(void)
 
             if (!prv_BiosRomValidate())
             {
-                Debug_Print("[PM] BIOS ROM validation FAILED during warm reset\r\n");
+                Debug_Print("[PM] BIOS ROM validation FAILED — blocking boot\r\n");
                 s_pendingCause = PM_RESET_CAUSE_BIOS_FAIL;
                 prv_OnPgFault(NULL_PTR, 0u);
                 break;
