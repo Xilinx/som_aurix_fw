@@ -41,16 +41,13 @@ static boolean  s_coldBoot             = FALSE;
 static uint32  s_pwrBtnPressStartMs = 0u;
 static boolean s_pwrBtnWasPressed   = FALSE;
 static boolean s_waitForBtnRelease     = FALSE;
-static uint32 s_coldRstDwellStartMs = 0u;
 static uint32  s_forcedOffMs        = 0u;
 static uint32 s_s0i3EntryMs         = 0u;
-static boolean s_coldRstDwellActive = FALSE;
 static boolean s_suppressResetDetect = FALSE;
 static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
                                                  * for S0i3 wake-edge detect */
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
-static uint32 s_coldRstDetectMs = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
@@ -734,7 +731,6 @@ void PowerManager_Init(void)
     s_slpS3WasActive = FALSE;
     s_retryDelayActive = FALSE;
     s_retryDelayStartMs = 0u;
-    s_coldRstDetectMs = 0u;
     s_pwrokLossDebounce = 0u;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
@@ -1078,7 +1074,6 @@ void PowerManager_Run(void)
                 if (!s_suppressResetDetect)
                 {
                     Debug_Print("[PM] APU_RESET_L asserted (observed only)\r\n");
-                    s_coldRstDetectMs = Stm_GetTimeMs();
                     s_suppressResetDetect = TRUE;
                 }
             }
@@ -1089,14 +1084,6 @@ void PowerManager_Run(void)
 
             if (s_powerOffReq || prv_SlpS5Active())
             {
-                
-                if (!s_powerOffReq &&
-                    (s_coldRstDetectMs != 0u) &&
-                    ((Stm_GetTimeMs() - s_coldRstDetectMs) <= 500u))
-                {
-                    s_resetCause = PM_RESET_CAUSE_COLD_RST;   /* CF9-style cold reset */
-                }
-                s_coldRstDetectMs = 0u;
                 Debug_Print("[PM] SLP_S5 active — soft shutdown to S5\r\n");
                 s_powerOffReq = FALSE;
                 s_shutdownToOff = TRUE;
@@ -1160,8 +1147,7 @@ void PowerManager_Run(void)
                            PIN_CB_RSTBTN_L.pinIdx) == 0u)
                         {
                             Stm_DelayMs(1u);
-                        }                        
-                        s_coldRstDetectMs = Stm_GetTimeMs(); 
+                        }
                         prv_DeassertApuReset();
                     }
                 }
@@ -1191,29 +1177,6 @@ void PowerManager_Run(void)
              *     by the time spent in S5 — far exceeds 10ms minimum).
              *   - Jump directly to PM_STATE_RAMP_S3 to re-enable Group C/D.
              */
-            if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
-            {
-                if (!s_coldRstDwellActive)
-                {
-                    s_coldRstDwellActive = TRUE;
-                    s_coldRstDwellStartMs = Stm_GetTimeMs();
-                    Debug_Print("[PM] Cold reset: dwelling at S5 for 3s\r\n");
-                    break;  /* just armed — don't process wake events yet */
-                }
-                else if ((Stm_GetTimeMs() - s_coldRstDwellStartMs) >= 3000u)
-                {
-                    s_coldRstDwellActive = FALSE;
-                    Debug_Print("[PM] Cold reset: dwell complete, re-powering\r\n");
-                    s_coldRstDwellStartMs = 0u;
-                    s_resetCause = PM_RESET_CAUSE_NONE;
-                    s_powerOnReq = TRUE;
-                    /* falls through to existing wake logic below */
-                }
-                else
-                {
-                    break;  /* still dwelling, don't process wake events */
-                }
-            }
             //if ((s_powerOnReq || prv_PwrBtnPressed()) && !prv_ThermTripActive())
             //{
             if (s_waitForBtnRelease)

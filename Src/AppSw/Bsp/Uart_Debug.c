@@ -1,8 +1,10 @@
 /**
  * @file    Uart_Debug.c
- * @brief   ASCLIN0 blocking-write debug UART — iLLD 1.20.0 API.
+ * @brief   ASCLIN0 interrupt-drained debug UART — iLLD 1.20.0 API.
  *
- * Uses IfxAsclin_Asc_blockingWrite() for TX — no ISR, no TIME_INFINITE needed.
+ * Debug_Print() queues via IfxAsclin_Asc_write() (TIME_INFINITE); only
+ * blocks if the ring buffer is full. Never call from ISR context at
+ * priority >= UART_TX_ISR_PRIO — the TX ISR couldn't preempt to drain.
  *
  * iLLD 1.20.0 ASCLIN key differences from earlier versions:
  *   - config.pins is IFX_CONST IfxAsclin_Asc_Pins* (pointer, not embedded struct)
@@ -19,12 +21,19 @@
 #include <string.h>
 #include "IfxCpu_Irq.h"
 
-#define TX_DATA_SIZE    64u
-#define FMT_BUF_SIZE    256u
+#define TX_DATA_SIZE        512u
+#define FMT_BUF_SIZE        256u
+#define UART_TX_ISR_PRIO    5u   /* below ERU_PRIO_THERMTRIP/CARRIER_HOT/
+                                  * WD_STROBE (20/21/22) */
 
 /* TX buffer must include Ifx_Fifo header + 8-byte alignment guard. */
 static IfxAsclin_Asc s_ascHandle;
 static uint8         s_txBuf[TX_DATA_SIZE + sizeof(Ifx_Fifo) + 8u];
+
+IFX_INTERRUPT(uartTxISR, 0, UART_TX_ISR_PRIO)
+{
+    IfxAsclin_Asc_isrTransmit(&s_ascHandle);
+}
 
 void Debug_Init(void)
 {
@@ -49,8 +58,8 @@ void Debug_Init(void)
     cfg.frame.stopBit    = IfxAsclin_StopBit_1;
     cfg.frame.parityBit  = FALSE;
 
-    /* Polling TX — all interrupt priorities zero, no ISR installation needed. */
-    cfg.interrupt.txPriority    = 0u;
+    /* TX interrupt drains the ring buffer in the background; RX/error unused. */
+    cfg.interrupt.txPriority    = UART_TX_ISR_PRIO;
     cfg.interrupt.rxPriority    = 0u;
     cfg.interrupt.erPriority    = 0u;
     cfg.interrupt.typeOfService = IfxSrc_Tos_cpu0;
@@ -70,17 +79,14 @@ void Debug_Init(void)
 
 void Debug_Print(const char *str)
 {
-    if (str == NULL_PTR)
+    Ifx_SizeT count;
+
+    if ((str == NULL_PTR) || (*str == '\0'))
     {
         return;
     }
-    while (*str != '\0')
-    {
-        while (IfxAsclin_getTxFifoFillLevel(s_ascHandle.asclin) != 0) {}
-        uint8 c = (uint8)*str;
-        IfxAsclin_write8(s_ascHandle.asclin, &c, 1u);
-        str++;
-    }
+    count = (Ifx_SizeT)strlen(str);
+    (void)IfxAsclin_Asc_write(&s_ascHandle, str, &count, TIME_INFINITE);
 }
 
 void Debug_Printf(const char *fmt, ...)
