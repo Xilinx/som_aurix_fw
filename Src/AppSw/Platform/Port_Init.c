@@ -105,7 +105,7 @@ void Port_Init(void)
     initInputPD(&PIN_SLP_S3);
     initInputPD(&PIN_SLP_S5);
     initInputPD(&PIN_APU_PWROK);
-    initInputPU(&PIN_APU_PCC_L);
+    initInputNP(&PIN_APU_PCC_L);
     initInputNP(&PIN_APU_RESET_IN_L);
 
     /* ---- COM-HPC Carrier Inputs ----------------------------------------- */
