@@ -23,6 +23,10 @@
  * reading is not yet a trustworthy wake indication. */
 #define PM_T1_PRIME_MS                  47u
 
+/* Minimum time in PM_STATE_S5 before a SLP_S5 deassertion is trusted as
+ * an autonomous wake. */
+#define PM_S5_WAKE_HOLDOFF_MS           2000u
+
 /* RSTBTN# response: width of the high pulse driven on COLD_RST
  * (PIN_APU_RESET_OUT_L / P33.15) when the physical reset button is
  * pressed. No datasheet-defined minimum for this pulse; captured as a

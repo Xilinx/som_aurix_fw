@@ -46,6 +46,9 @@ static uint32 s_s0i3EntryMs         = 0u;
 static boolean s_suppressResetDetect = FALSE;
 static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
                                                  * for S0i3 wake-edge detect */
+static uint32  s_s5EntryMs           = 0u;
+static boolean s_slpS5WasActive      = FALSE;  /* last-read SLP_S5_ACTIVE level,
+                                                 * for S5 wake-edge detect */
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
@@ -491,6 +494,8 @@ static void prv_GoToS5(void)
     Stm_DelayMs(PM_GRP_C_OFF_DWELL_MS);
 
     s_thermtripDebounce = 0u;
+    s_s5EntryMs      = Stm_GetTimeMs();
+    s_slpS5WasActive = prv_SlpS5Active();
     prv_SetState(PM_STATE_S5);
 }
 
@@ -1169,7 +1174,8 @@ void PowerManager_Run(void)
              *
              * Wake conditions (both must be true):
              *   1. THERMTRIP# is no longer asserted (thermal event cleared).
-             *   2. A power-on event has been requested (PWR_BTN or API call).
+             *   2. A power-on event has been requested (PWR_BTN, API call,
+             *      or a SLP_S5 rising edge — autonomous wake).
              *
              * Wake sequence:
              *   - S5 rails already stable, so skip EFUSE and Group B stages.
@@ -1187,32 +1193,59 @@ void PowerManager_Run(void)
             }
 
 
-            if (s_powerOnReq || prv_PwrBtnPressed())
             {
-                s_powerOnReq = FALSE;
-                s_coldBoot = TRUE;
-                s_waitForBtnRelease = TRUE;
-                s_pwrBtnWasPressed   = FALSE;   /* consume the press — prevent hold-timer */
-                s_pwrBtnPressStartMs = 0u;
-                s_pwrBtnDebounce     = 0u;
-                Debug_Print("[PM] Wake from S5\r\n");
+                /* Autonomous wake: SLP_S5 rising edge, held off
+                 * PM_S5_WAKE_HOLDOFF_MS after entry. prv_WaitSlpDeassert()
+                 * below still confirms SLP_S3. */
+                boolean slpS5ActiveNow = prv_SlpS5Active();
+                boolean slpS5WakeEdge;
 
-                prv_DeassertApuReset();
-                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
-                prv_UartReleaseToSoc();
-
-                /* RSMRST_L is not re-asserted anywhere on the way into
-                 * S5, so it's already been deasserted (and T1a already
-                 * satisfied) since the original S5 power-on ramp —
-                 * nothing to redo here. */
-                prv_PulsePwrBtnCold();
-                if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
+                if ((Stm_GetTimeMs() - s_s5EntryMs) >= PM_S5_WAKE_HOLDOFF_MS)
                 {
-                    s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
-                    prv_OnPgFault(NULL_PTR, 0u);
-                    break;
+                    slpS5WakeEdge    = (s_slpS5WasActive && !slpS5ActiveNow);
+                    s_slpS5WasActive = slpS5ActiveNow;
                 }
-                prv_SetState(PM_STATE_RAMP_S3);
+                else
+                {
+                    slpS5WakeEdge = FALSE;
+                }
+
+                if (s_powerOnReq || prv_PwrBtnPressed() || slpS5WakeEdge)
+                {
+                    s_powerOnReq = FALSE;
+                    s_coldBoot = TRUE;
+                    s_waitForBtnRelease = TRUE;
+                    s_pwrBtnWasPressed   = FALSE;   /* consume the press — prevent hold-timer */
+                    s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* not 0 — restart the hold window, don't compare against boot time */
+                    s_pwrBtnDebounce     = 0u;
+
+                    prv_DeassertApuReset();
+                    Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                    prv_UartReleaseToSoc();
+
+                    /* RSMRST_L is not re-asserted anywhere on the way into
+                     * S5, so it's already been deasserted (and T1a already
+                     * satisfied) since the original S5 power-on ramp —
+                     * nothing to redo here. */
+                    if (slpS5WakeEdge)
+                    {
+                        Debug_Print("[PM] SLP_S5_L rising edge — autonomous "
+                                    "wake from S5, skipping PWR_BTN pulse\r\n");
+                    }
+                    else
+                    {
+                        Debug_Print("[PM] Wake from S5\r\n");
+                        prv_PulsePwrBtnCold();
+                    }
+                    if (!prv_WaitSlpDeassert(PM_SLP_S3_TIMEOUT_MS))
+                    {
+                        s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                        prv_OnPgFault(NULL_PTR, 0u);
+                        break;
+                    }
+                    s_s5EntryMs = 0u;
+                    prv_SetState(PM_STATE_RAMP_S3);
+                }
             }
            // }
     //        else
@@ -1281,7 +1314,7 @@ void PowerManager_Run(void)
                  * re-evaluate a stale s_pwrBtnPressStartMs against a
                  * different state and misfire a forced shutdown. */
                 s_pwrBtnWasPressed   = FALSE;
-                s_pwrBtnPressStartMs = 0u;
+                s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* restart the hold window */
                 s_pwrBtnDebounce     = 0u;
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
@@ -1314,6 +1347,8 @@ void PowerManager_Run(void)
                             "(Group B + EFUSE remain on)\r\n");
                 s_thermtripDebounce = 0u;
                 s_s0i3EntryMs = 0u;
+                s_s5EntryMs      = Stm_GetTimeMs();
+                s_slpS5WasActive = prv_SlpS5Active();
                 prv_SetState(PM_STATE_S5);
             }
             else if (!s_shutdownToOff)
