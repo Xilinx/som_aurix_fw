@@ -16,7 +16,7 @@
 #define PM_FORCED_OFF_COOLDOWN_MS       2000u
 #define PM_PWRBTN_DEBOUNCE_POLLS        3u
 #define PM_S0I3_TIMEOUT_MS              30000u
-
+#define PM_CF9_SLP_TIMEOUT_MS           6000u
 /* AMD T1': processor-enforced minimum SLP_S3_L assertion time for
  * S0 -> S0i3 -> S0 transitions only (spec minimum 46.5ms, rounded up to
  * whole-ms timer resolution). Until this elapses, a SLP_S3 deassertion

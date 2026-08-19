@@ -832,7 +832,8 @@ void PowerManager_Run(void)
                 s_pwrBtnPressStartMs = Stm_GetTimeMs();
             }
         }
-        else if ((s_state != PM_STATE_OFF) &&
+        else if (s_pwrBtnWasPressed &&
+                (s_state != PM_STATE_OFF) &&
                 (s_state != PM_STATE_FAULT) &&
                 (Stm_GetTimeMs() - s_pwrBtnPressStartMs >= PM_PWRBTN_HOLD_MS))
         {
@@ -1179,6 +1180,52 @@ void PowerManager_Run(void)
              */
             //if ((s_powerOnReq || prv_PwrBtnPressed()) && !prv_ThermTripActive())
             //{
+            /* --- CF9 cold reset path --- */
+
+            if (s_resetCause == PM_RESET_CAUSE_COLD_RST)
+            {
+                if (!s_coldRstDwellActive)
+                {
+                    s_coldRstDwellActive  = TRUE;
+                    s_coldRstDwellStartMs = Stm_GetTimeMs();
+                    Debug_Print("[PM] Cold reset: waiting for SLP deassert\r\n");
+                    break;
+                }
+
+                /* Wait for SLP_S5 and SLP_S3 to deassert (SoC-driven, ~5s) */
+                if (prv_SlpS5Active() || prv_SlpS3Active())
+                {
+                    if ((Stm_GetTimeMs() - s_coldRstDwellStartMs) >= PM_CF9_SLP_TIMEOUT_MS)
+                    {
+                        Debug_Print("[PM] Cold reset: SLP deassert timeout\r\n");
+                        s_coldRstDwellActive = FALSE;
+                        s_pendingCause = PM_RESET_CAUSE_PG_TIMEOUT;
+                        prv_OnPgFault(NULL_PTR, 0u);
+                    }
+                    break;   /* still waiting */
+                }
+
+                /* SLP deasserted — SoC is ready for rails */
+                s_coldRstDwellActive  = FALSE;
+                s_coldRstDwellStartMs = 0u;
+                s_resetCause          = PM_RESET_CAUSE_NONE;
+                s_coldBoot            = TRUE;
+
+                Debug_Print("[PM] Cold reset: SLP deasserted, cycling RSMRST and re-powering\r\n");
+                prv_AssertApuReset();
+                prv_AssertRsmrst();
+                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                prv_DeassertApuReset();
+                Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
+                prv_DeassertRsmrst();
+                s_rsmrstDeassertTimeMs = Stm_GetTimeMs();
+                prv_WaitSinceRsmrst(PM_RTCCLK_STABLE_MS);
+                prv_UartReleaseToSoc();
+                /* No PWR_BTN pulse — SoC self-boots after CF9 */
+                prv_SetState(PM_STATE_RAMP_S3);
+                break;
+            }
+            
             if (s_waitForBtnRelease)
             {
                 if (!prv_PwrBtnPressed())
