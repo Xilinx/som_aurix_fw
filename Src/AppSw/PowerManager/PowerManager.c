@@ -1193,7 +1193,7 @@ void PowerManager_Run(void)
                 s_coldBoot = TRUE;
                 s_waitForBtnRelease = TRUE;
                 s_pwrBtnWasPressed   = FALSE;   /* consume the press — prevent hold-timer */
-                s_pwrBtnPressStartMs = 0u;
+                s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* not 0 — restart the hold window, don't compare against boot time */
                 s_pwrBtnDebounce     = 0u;
                 Debug_Print("[PM] Wake from S5\r\n");
 
@@ -1281,7 +1281,7 @@ void PowerManager_Run(void)
                  * re-evaluate a stale s_pwrBtnPressStartMs against a
                  * different state and misfire a forced shutdown. */
                 s_pwrBtnWasPressed   = FALSE;
-                s_pwrBtnPressStartMs = 0u;
+                s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* restart the hold window */
                 s_pwrBtnDebounce     = 0u;
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
