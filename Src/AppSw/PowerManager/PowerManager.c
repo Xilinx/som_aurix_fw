@@ -50,6 +50,10 @@ static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
 
+static boolean s_coldRstDwellActive = FALSE;
+static uint32 s_coldRstDwellStartMs = 0u;
+
+
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
 /* ---- FuSa status encoding ------------------------------------------------
@@ -734,6 +738,8 @@ void PowerManager_Init(void)
     s_pwrokLossDebounce = 0u;
     s_resetCause        = PM_RESET_CAUSE_NONE;
     s_pendingCause      = PM_RESET_CAUSE_NONE;
+    s_coldRstDwellActive = FALSE;
+    s_coldRstDwellStartMs = 0u;
 #if (FUSA_FEATURE_ENABLE == 1u)
     prv_SetFusaStatus(FUSA_PWR_OFF);
 #endif
