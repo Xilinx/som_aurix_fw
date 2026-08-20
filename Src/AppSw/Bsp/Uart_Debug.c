@@ -75,6 +75,7 @@ void Debug_Init(void)
     cfg.rxBufferSize = 0u;
 
     IfxAsclin_Asc_initModule(&s_ascHandle, &cfg);
+    IfxCpu_Irq_installInterruptHandler(&uartTxISR, UART_TX_ISR_PRIO);
 }
 
 void Debug_Print(const char *str)
