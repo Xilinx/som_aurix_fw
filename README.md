@@ -399,22 +399,6 @@ cmake --build --preset <preset> -j16
 
 The eval board preset automatically excludes UsbPd sources and selects the LFBGA292 pin map.
 
-## Flashing
-
-Flashing uses the bundled AURIXFlasher tool via the on-board miniWiggler.
-
-```bash
-cmake --build --preset som-debug --target flash
-```
-
-**Requirements:** Flashing currently requires WSL (Windows Subsystem for Linux) since AURIXFlasher is a Windows executable. The flash target handles the WSL path translation automatically. Native Linux flashing is not supported by Infineon's tooling at this time.
-
-The flasher is auto-detected in this order:
-
-1. `tools/flasher/AURIXFlasher.exe` (bundled in the repo)
-2. AURIX Development Studio install under `/mnt/c/Infineon/...`
-
-To override: `cmake --preset som-debug -DFLASHER=/path/to/AURIXFlasher.exe`
 
 ## Build Commands Reference
 
@@ -424,9 +408,6 @@ cmake --preset som-debug
 
 # Build
 cmake --build --preset som-debug -j16
-
-# Flash
-cmake --build --preset som-debug --target flash
 
 # Clean (keeps config, removes build artifacts)
 cmake --build --preset som-debug --target clean
@@ -463,7 +444,6 @@ som_aurix_fw/
 │   └── tc387.ld            # Linker script (TC387 memory map)
 ├── Image/                  # Board images / documentation assets
 └── tools/
-    ├── flasher/            # Bundled AURIXFlasher (Windows, ~20MB)
     └── aurix_update.py     # Update utility
 ```
 
