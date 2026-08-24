@@ -1,0 +1,66 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+
+    "configurePresets": [
+        {
+            "name":        "base",
+            "hidden":      true,
+            "generator":   "Ninja",
+            "toolchainFile": "${sourceDir}/cmake/tricore-gcc.cmake",
+            "cacheVariables": {
+                "CPU": "tc38xx"
+            }
+        },
+
+        {
+            "name":        "som-debug",
+            "displayName": "SoM — Debug",
+            "inherits":    "base",
+            "binaryDir":   "${sourceDir}/build/som-debug",
+            
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BOARD":            "som"
+            }
+        },
+        {
+            "name":        "som-release",
+            "displayName": "SoM — Release",
+            "inherits":    "base",
+            "binaryDir":   "${sourceDir}/build/som-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BOARD":            "som"
+            }
+        },
+
+        {
+            "name":        "eval-debug",
+            "displayName": "Eval Board — Debug",
+            "inherits":    "base",
+            "binaryDir":   "${sourceDir}/build/eval-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BOARD":            "eval"
+            }
+        },
+        {
+            "name":        "eval-release",
+            "displayName": "Eval Board — Release",
+            "inherits":    "base",
+            "binaryDir":   "${sourceDir}/build/eval-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BOARD":            "eval"
+            }
+        }
+    ],
+
+    "buildPresets": [
+        { "name": "som-debug",     "configurePreset": "som-debug" , "jobs": 16    },
+        { "name": "som-release",   "configurePreset": "som-release" , "jobs": 16  },
+        { "name": "eval-debug",    "configurePreset": "eval-debug" , "jobs": 16   },
+        { "name": "eval-release",  "configurePreset": "eval-release" , "jobs": 16  }
+    ]
+}
