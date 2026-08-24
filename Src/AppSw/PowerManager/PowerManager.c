@@ -49,6 +49,8 @@ static boolean s_slpS3WasActive      = FALSE;  /* last-read SLP_S3_ACTIVE level,
 static uint32  s_s5EntryMs           = 0u;
 static boolean s_slpS5WasActive      = FALSE;  /* last-read SLP_S5_ACTIVE level,
                                                  * for S5 wake-edge detect */
+static uint32  s_wakeStartMs         = 0u;     /* armed at each ON-bound trigger,
+                                                 * reported at System ON. */
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
@@ -883,6 +885,7 @@ void PowerManager_Run(void)
                 }
                 s_forcedOffMs = 0u;
                 s_powerOnReq = FALSE;
+                s_wakeStartMs = Stm_GetTimeMs();
                 VoltMon_Disable(); /* suppresses faults in sequencing */
                 prv_SetState(PM_STATE_POWER_UP);
             }
@@ -1051,7 +1054,8 @@ void PowerManager_Run(void)
             VoltMon_Enable();
             //prv_DeassertPltrst();
             prv_SetState(PM_STATE_ON);
-            Debug_Print("[PM] System ON.\r\n");
+            Debug_Printf("[PM] System ON. (%ums since wake)\r\n",
+                         (unsigned)(Stm_GetTimeMs() - s_wakeStartMs));
             break;
 
         /* ------------------------------------------------------------------ */
@@ -1218,6 +1222,7 @@ void PowerManager_Run(void)
                     s_pwrBtnWasPressed   = FALSE;   /* consume the press — prevent hold-timer */
                     s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* not 0 — restart the hold window, don't compare against boot time */
                     s_pwrBtnDebounce     = 0u;
+                    s_wakeStartMs        = Stm_GetTimeMs();
 
                     prv_DeassertApuReset();
                     Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
@@ -1316,6 +1321,7 @@ void PowerManager_Run(void)
                 s_pwrBtnWasPressed   = FALSE;
                 s_pwrBtnPressStartMs = Stm_GetTimeMs();   /* restart the hold window */
                 s_pwrBtnDebounce     = 0u;
+                s_wakeStartMs        = Stm_GetTimeMs();
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
                 prv_DeassertKbrst();
