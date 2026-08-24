@@ -358,37 +358,105 @@ som_aurix_fw/
 ```
 
 ---
+## Prerequisites
 
-## Quick Start 
+Install build tools (one-time):
 
 ```bash
-# Prerequisites (one-time)
 sudo apt install cmake ninja-build unzip
+```
 
-# Clone
+**CMake 3.20 or later is required.** Check with `cmake --version`. If your distro ships an older version, install a newer one from [cmake.org](https://cmake.org/download/) or via `pip install cmake`.
+
+## Dependencies
+
+The build requires two external dependencies that must be set up manually before configuring. These are **not** fetched automatically.
+
+### 1. TriCore GCC Toolchain (v4.9.4)
+
+Clone the prebuilt toolchain binaries, reassemble the split zip, and extract into `tools/toolchain/`:
+
+```bash
+# Clone the toolchain repo (split-zip distribution)
+git clone --depth 1 https://github.com/volumit/tricore_gcc494_linux_bins.git _tc_toolchain_tmp
+
+# Reassemble the split zip parts
+cd _tc_toolchain_tmp
+cat tricore_494_linux.zip.* > tricore_494_linux.zip
+
+# Extract into the project's tools/toolchain/ directory
+mkdir -p ../tools/toolchain
+unzip -qo tricore_494_linux.zip -d ../tools/toolchain
+
+# Make binaries executable
+chmod -R +x ../tools/toolchain
+
+# Clean up
+cd ..
+rm -rf _tc_toolchain_tmp
+```
+
+The CMake toolchain file automatically looks for `tricore-elf-gcc` inside `tools/toolchain/`. Verify the install:
+
+```bash
+find tools/toolchain -name "tricore-elf-gcc" -type f   # should find the compiler
+```
+
+Alternatively, if you install the toolchain elsewhere and put it on your `PATH`, the toolchain file will find it there too. You can also point to a custom location with:
+
+```bash
+cmake --preset som-debug -DTC_TOOLCHAIN_DIR=/your/custom/path
+```
+
+### 2. Infineon iLLD (v1.20.0)
+
+Clone the Infineon iLLD release and assemble it into the `iLLD/` directory at the repo root:
+
+```bash
+# Clone iLLD v1.20.0
+git clone --depth 1 -b V1.20.0 https://github.com/Infineon/illd_release_tc3x.git _illd_tmp
+
+# Assemble the flat iLLD/ directory structure the build expects
+mkdir -p iLLD
+cp -r _illd_tmp/src/BaseSw/Infra   iLLD/
+cp -r _illd_tmp/src/BaseSw/Service iLLD/
+
+# Flatten module sources from iLLD/TC3xx/Tricore/ up into iLLD/
+for dir in _illd_tmp/src/BaseSw/iLLD/TC3xx/Tricore/*/; do
+    cp -r "$dir" iLLD/
+done
+
+# Clean up the temp clone
+rm -rf _illd_tmp
+```
+
+After this, `iLLD/Cpu/Std/Ifx_Types.h` should exist. CMake will verify this at configure time and error out with instructions if it's missing.
+
+## Quick Start
+
+```bash
+# Clone the repo
 git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
 cd som_aurix_fw
 
-# Configure — automatically fetches compiler and iLLD
+# Set up iLLD (see Dependencies section above)
+# ...
+
+# Configure
 cmake --preset som-debug
 
 # Build
 cmake --build --preset som-debug -j16
-
-# Flash (WSL only)
-cmake --build --preset som-debug --target flash
 ```
-
-That's it. The first `cmake --preset` run downloads the TriCore GCC 4.9.4 toolchain and Infineon iLLD v1.20.0 automatically. Subsequent runs use the cached copies.
 
 ## Build Presets
 
-| Preset | Board | Optimisation | Define |
-|---|---|---|---|
-| `som-debug` | GP System-on-Module | `-O0 -g3` | `TARGET_GP_SOM=1` |
-| `som-release` | GP System-on-Module | `-O2` | `TARGET_GP_SOM=1` |
-| `eval-debug` | Eval Board | `-O0 -g3` | `TARGET_EVAL_BOARD=1` |
-| `eval-release` | Eval Board | `-O2` | `TARGET_EVAL_BOARD=1` |
+| Preset         | Board               | Optimisation | Define              |
+|----------------|----------------------|--------------|---------------------|
+| `som-debug`    | GP System-on-Module  | `-O0 -g3`   | `TARGET_GP_SOM=1`   |
+| `som-release`  | GP System-on-Module  | `-O2`        | `TARGET_GP_SOM=1`   |
+| `eval-debug`   | Eval Board           | `-O0 -g3`    | `TARGET_EVAL_BOARD=1`|
+| `eval-release` | Eval Board           | `-O2`        | `TARGET_EVAL_BOARD=1`|
 
 Usage:
 
@@ -398,7 +466,6 @@ cmake --build --preset <preset> -j16
 ```
 
 The eval board preset automatically excludes UsbPd sources and selects the LFBGA292 pin map.
-
 
 ## Build Commands Reference
 
@@ -421,69 +488,6 @@ cmake --build --preset som-debug --target size
 # Disassembly listing
 cmake --build --preset som-debug --target disasm
 ```
-
-## Project Structure
-
-```
-som_aurix_fw/
-├── CMakeLists.txt          # Build system (replaces Makefile)
-├── CMakePresets.json        # Named build configurations
-├── Makefile                 # Legacy build (kept as fallback)
-├── cmake/
-│   └── tricore-gcc.cmake   # Toolchain file — auto-downloads compiler
-├── Src/
-│   ├── AppSw/              # Application software
-│   │   ├── Main/           # Entry point, CPU idle
-│   │   ├── Bsp/            # Board support (UART, I2C, SPI, TLF, pins)
-│   │   ├── Platform/       # Clock, ERU, FuSa SPI, watchdog
-│   │   ├── PowerManager/   # Power sequencing state machine
-│   │   ├── UsbPd/          # USB-PD / CYPD6129 (SoM only)
-│   │   └── FwMgmt/         # Firmware update, PFlash, NvLog
-│   └── BaseSw/             # Base software config
-├── Linker/
-│   └── tc387.ld            # Linker script (TC387 memory map)
-├── Image/                  # Board images / documentation assets
-└── tools/
-    └── aurix_update.py     # Update utility
-```
-
-## Dependencies
-
-All dependencies are fetched automatically on first configure.
-
-**TriCore GCC 4.9.4** — Cross-compiler toolchain. Downloaded from [volumit/tricore_gcc494_linux_bins](https://github.com/volumit/tricore_gcc494_linux_bins) and extracted to `tools/toolchain/` (gitignored).
-
-**Infineon iLLD v1.20.0** — Low Level Driver library. Cloned from [Infineon/illd_release_tc3x](https://github.com/Infineon/illd_release_tc3x) (tag `V1.20.0`), restructured into `iLLD/` (gitignored).
-
-**AURIXFlasher** — Flash programming tool for miniWiggler. Bundled in `tools/flasher/`. This is a Windows-only tool from Infineon; native Linux flashing is not available at this time. On WSL, the flash target calls the .exe directly and handles path translation automatically.
-
-## Prerequisites
-
-- **CMake** ≥ 3.20
-- **Ninja** build system
-- **unzip** (for toolchain extraction)
-- **Git** (for dependency fetching)
-- **WSL** (for flashing only)
-
-Install on Ubuntu/Debian:
-
-```bash
-sudo apt install cmake ninja-build unzip git
-```
-
-Fedora / RHEL:
-
-```bash
-sudo dnf install cmake ninja-build unzip git
-```
-
-Arch Linux:
-
-```bash
-sudo pacman -S cmake ninja unzip git
-```
-
----
 
 ## Key Timing Parameters (AMD 58241 §16)
 
