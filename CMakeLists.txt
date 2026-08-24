@@ -14,6 +14,11 @@
 #         -DBOARD=som -DCMAKE_BUILD_TYPE=Debug -G Ninja
 #   cmake --build build
 #
+# Dependencies:
+#   iLLD_TC3xx v1.20.0 must be unpacked into ./iLLD/ before configuring.
+#   Download from Infineon MyICP / AURIX partner portal.
+#   See README.md for details.
+#
 # Custom targets:
 #   cmake --build build --target size     # print section sizes
 #   cmake --build build --target disasm   # generate disassembly listing
@@ -41,9 +46,63 @@ set(TARGET_NAME ${PROJECT_NAME})
 add_executable(${TARGET_NAME})
 
 # =============================================================================
-# iLLD paths
+# iLLD dependency — auto-fetched from Infineon GitHub if ./iLLD/ is missing
 # =============================================================================
-set(ILLD_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/iLLD)
+set(ILLD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/iLLD")
+set(ILLD_REPO "https://github.com/Infineon/illd_release_tc3x.git"
+    CACHE STRING "iLLD Git repository URL")
+set(ILLD_TAG "V1.20.0"
+    CACHE STRING "iLLD Git branch or tag to fetch")
+
+if(EXISTS "${ILLD_ROOT}/Cpu/Std/Ifx_Types.h")
+    message(STATUS "Using local iLLD: ${ILLD_ROOT}")
+else()
+    # Clone to a temp directory
+    set(_tmp "${CMAKE_CURRENT_SOURCE_DIR}/_illd_tmp")
+    if(NOT EXISTS "${_tmp}")
+        message(STATUS "Fetching iLLD from ${ILLD_REPO} (${ILLD_TAG})...")
+        execute_process(
+            COMMAND git clone --depth 1 --branch ${ILLD_TAG}
+                    -c http.sslVerify=false
+                    ${ILLD_REPO} ${_tmp}
+            RESULT_VARIABLE _rc
+        )
+        if(NOT _rc EQUAL 0)
+            file(REMOVE_RECURSE "${_tmp}")
+            message(FATAL_ERROR
+                "Failed to clone iLLD (exit ${_rc}).\n"
+                "Clone manually:\n"
+                "  git clone --depth 1 -b ${ILLD_TAG} ${ILLD_REPO} _illd_tmp\n"
+                "Then re-run cmake."
+            )
+        endif()
+    endif()
+
+    # Merge the Infineon repo layout into the flat iLLD/ structure:
+    #   src/BaseSw/Infra/                      → iLLD/Infra/
+    #   src/BaseSw/Service/                    → iLLD/Service/
+    #   src/BaseSw/iLLD/TC3xx/Tricore/*        → iLLD/  (Cpu/, Port/, _Impl/, etc.)
+    set(_bsw "${_tmp}/src/BaseSw")
+
+    message(STATUS "Assembling iLLD directory...")
+    file(MAKE_DIRECTORY "${ILLD_ROOT}")
+    file(COPY "${_bsw}/Infra"   DESTINATION "${ILLD_ROOT}")
+    file(COPY "${_bsw}/Service" DESTINATION "${ILLD_ROOT}")
+
+    # Flatten module sources from iLLD/TC3xx/Tricore/ up into iLLD/
+    file(GLOB _module_dirs "${_bsw}/iLLD/TC3xx/Tricore/*")
+    foreach(_dir IN LISTS _module_dirs)
+        file(COPY "${_dir}" DESTINATION "${ILLD_ROOT}")
+    endforeach()
+
+    # Clean up temp clone
+    file(REMOVE_RECURSE "${_tmp}")
+
+    if(NOT EXISTS "${ILLD_ROOT}/Cpu/Std/Ifx_Types.h")
+        message(FATAL_ERROR "iLLD assembly failed — Ifx_Types.h not found")
+    endif()
+    message(STATUS "iLLD ready: ${ILLD_ROOT}")
+endif()
 
 # =============================================================================
 # Application sources
@@ -128,9 +187,9 @@ endforeach()
 
 # Board-specific PinMap
 if(BOARD STREQUAL "eval")
-    file(GLOB _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
+    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
 else()
-    file(GLOB _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_516.c")
+    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_516.c")
 endif()
 target_sources(${TARGET_NAME} PRIVATE ${_pinmap})
 
@@ -155,6 +214,7 @@ target_include_directories(${TARGET_NAME} PRIVATE
     ${ILLD_ROOT}/_Impl
     ${ILLD_ROOT}/_Impl/TC38x
     ${ILLD_ROOT}/_PinMap
+    ${ILLD_ROOT}/_PinMap/TC38x
     ${ILLD_ROOT}/Cpu/Std
     ${ILLD_ROOT}/Scu/Std
     ${ILLD_ROOT}/Port/Std
@@ -279,14 +339,20 @@ add_custom_target(disasm
 set(FLASHER "" CACHE FILEPATH "Path to AURIXFlasher.exe (auto-detected if empty)")
 
 if(NOT FLASHER OR FLASHER STREQUAL "")
-    file(GLOB _flasher_candidates
-        "/mnt/c/Infineon/AURIX-Studio-*/tools/AurixFlasherSoftwareTool_*/AURIXFlasher.exe"
-        "/mnt/c/Program Files/Infineon/*/AURIXFlasher.exe"
-        "/opt/Infineon/*/AURIXFlasher.exe"
-        "/usr/local/bin/AURIXFlasher"
-    )
-    if(_flasher_candidates)
-        list(GET _flasher_candidates 0 FLASHER)
+    # Check repo-local flasher first
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/flasher/AURIXFlasher.exe")
+        set(FLASHER "${CMAKE_CURRENT_SOURCE_DIR}/tools/flasher/AURIXFlasher.exe")
+    else()
+        # Fall back to system-installed flasher
+        file(GLOB _flasher_candidates
+            "/mnt/c/Infineon/AURIX-Studio-*/tools/AurixFlasherSoftwareTool_*/AURIXFlasher.exe"
+            "/mnt/c/Program Files/Infineon/*/AURIXFlasher.exe"
+            "/opt/Infineon/*/AURIXFlasher.exe"
+            "/usr/local/bin/AURIXFlasher"
+        )
+        if(_flasher_candidates)
+            list(GET _flasher_candidates 0 FLASHER)
+        endif()
     endif()
 endif()
 

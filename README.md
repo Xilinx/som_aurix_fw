@@ -359,109 +359,148 @@ som_aurix_fw/
 
 ---
 
-## Dependencies
-
-### AURIX Development Studio (ADS)
-
-- **Version**: 1.10 or later
-- **Download**: [Infineon AURIX Development Studio](https://www.infineon.com/aurixdevelopmentstudio)
-- **Toolchain**: TASKING VX-toolset for TriCore (bundled with ADS)
-  - Compiler: `cctc` (C TriCore Compiler)
-  - Linker: `ltc`
-  - Builder: `amk`
-
-### iLLD — Infineon Low Level Drivers
-
-- **Version required**: `iLLD_TC3xx v1.20.0`
-- **Obtain from**: Infineon MyICP / AURIX partner portal
-- **Install path**: unpack into `iLLD/` at the project root
-  (excluded from this repository by `.gitignore`)
-
-### Target Device
-
-- **MCU**: Infineon AURIX TC387 (TC38xA family)
-- **Crystal**: 20 MHz (configured in `Src/BaseSw/Ifx_Cfg.h`)
-- **CPU clock**: 300 MHz (configured via PLL in `Src/AppSw/Platform/Clk_Cfg.c`)
-
----
-
-## How to Build
-
-### Option A — AURIX Development Studio (recommended)
-
-1. **Clone this repository**
-   ```bash
-   git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
-   ```
-
-2. **Unpack iLLD** into the project root:
-   ```
-   som_aurix_fw/
-   └── iLLD/        ← unpack iLLD_TC3xx_1_20_0 here
-   ```
-
-3. **Obtain the TC387 linker script** from the iLLD board package or HIGHTEC
-   examples and place it at `Linker/tc387.ld`.
-
-4. **Import into ADS**
-   ```
-   File -> Import -> General -> Existing Projects into Workspace
-   -> Browse to: som_aurix_fw/
-   -> Finish
-   ```
-
-5. **Configure source folders** (if not resolved automatically)
-   ```
-   Right-click project -> Properties -> C/C++ General -> Source Location
-   -> Confirm Src/AppSw/* folders are listed
-   ```
-
-6. **Fill in GPIO pin assignments** (if board schematic differs)
-   Open `Src/AppSw/Platform/Platform_PinCfg.c` and verify that all
-   `AppPin_t` definitions match the target board schematic. The current
-   values are populated from the `GP_AURIX_Subsystem_PinDefn.xlsx` pin map.
-
-7. **Build**
-   ```
-   Project -> Build Project  (Ctrl+B)
-   ```
-   Output: `TriCore Debug/TC387_COMHPC_PMC.elf`
-
-### Option B — Command Line (HIGHTEC GCC)
-
-Requires `tricore-gcc` on `PATH`:
+## Quick Start 
 
 ```bash
+# Prerequisites (one-time)
+sudo apt install cmake ninja-build unzip
+
+# Clone
+git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
 cd som_aurix_fw
-make                    # Debug build (default)
-make CONFIG=Release     # Release build (optimised)
-make clean
-```
-### Option C — CMake Method on Command Line (HIGHTEC GCC)
 
-```bash
-#Configure
+# Configure — automatically fetches compiler and iLLD
 cmake --preset som-debug
-cmake --preset som-release
-cmake --preset eval-debug
-cmake --preset eval-release
 
 # Build
-cmake --build --preset som-debug
+cmake --build --preset som-debug -j16
+
+# Flash (WSL only)
+cmake --build --preset som-debug --target flash
+```
+
+That's it. The first `cmake --preset` run downloads the TriCore GCC 4.9.4 toolchain and Infineon iLLD v1.20.0 automatically. Subsequent runs use the cached copies.
+
+## Build Presets
+
+| Preset | Board | Optimisation | Define |
+|---|---|---|---|
+| `som-debug` | GP System-on-Module | `-O0 -g3` | `TARGET_GP_SOM=1` |
+| `som-release` | GP System-on-Module | `-O2` | `TARGET_GP_SOM=1` |
+| `eval-debug` | Eval Board | `-O0 -g3` | `TARGET_EVAL_BOARD=1` |
+| `eval-release` | Eval Board | `-O2` | `TARGET_EVAL_BOARD=1` |
+
+Usage:
+
+```bash
+cmake --preset <preset>
+cmake --build --preset <preset> -j16
+```
+
+The eval board preset automatically excludes UsbPd sources and selects the LFBGA292 pin map.
+
+## Flashing
+
+Flashing uses the bundled AURIXFlasher tool via the on-board miniWiggler.
+
+```bash
+cmake --build --preset som-debug --target flash
+```
+
+**Requirements:** Flashing currently requires WSL (Windows Subsystem for Linux) since AURIXFlasher is a Windows executable. The flash target handles the WSL path translation automatically. Native Linux flashing is not supported by Infineon's tooling at this time.
+
+The flasher is auto-detected in this order:
+
+1. `tools/flasher/AURIXFlasher.exe` (bundled in the repo)
+2. AURIX Development Studio install under `/mnt/c/Infineon/...`
+
+To override: `cmake --preset som-debug -DFLASHER=/path/to/AURIXFlasher.exe`
+
+## Build Commands Reference
+
+```bash
+# Configure
+cmake --preset som-debug
+
+# Build
+cmake --build --preset som-debug -j16
 
 # Flash
 cmake --build --preset som-debug --target flash
 
-# Clean (keeps config, just removes build artifacts)
+# Clean (keeps config, removes build artifacts)
 cmake --build --preset som-debug --target clean
 
-# Nuke (wipes config too, requires re-configure)
-rm -rf build/som-debug
+# Full clean (requires re-configure)
 rm -rf build/
 
-# Utilities
+# Section sizes
 cmake --build --preset som-debug --target size
+
+# Disassembly listing
 cmake --build --preset som-debug --target disasm
+```
+
+## Project Structure
+
+```
+som_aurix_fw/
+├── CMakeLists.txt          # Build system (replaces Makefile)
+├── CMakePresets.json        # Named build configurations
+├── Makefile                 # Legacy build (kept as fallback)
+├── cmake/
+│   └── tricore-gcc.cmake   # Toolchain file — auto-downloads compiler
+├── Src/
+│   ├── AppSw/              # Application software
+│   │   ├── Main/           # Entry point, CPU idle
+│   │   ├── Bsp/            # Board support (UART, I2C, SPI, TLF, pins)
+│   │   ├── Platform/       # Clock, ERU, FuSa SPI, watchdog
+│   │   ├── PowerManager/   # Power sequencing state machine
+│   │   ├── UsbPd/          # USB-PD / CYPD6129 (SoM only)
+│   │   └── FwMgmt/         # Firmware update, PFlash, NvLog
+│   └── BaseSw/             # Base software config
+├── Linker/
+│   └── tc387.ld            # Linker script (TC387 memory map)
+├── Image/                  # Board images / documentation assets
+└── tools/
+    ├── flasher/            # Bundled AURIXFlasher (Windows, ~20MB)
+    └── aurix_update.py     # Update utility
+```
+
+## Dependencies
+
+All dependencies are fetched automatically on first configure.
+
+**TriCore GCC 4.9.4** — Cross-compiler toolchain. Downloaded from [volumit/tricore_gcc494_linux_bins](https://github.com/volumit/tricore_gcc494_linux_bins) and extracted to `tools/toolchain/` (gitignored).
+
+**Infineon iLLD v1.20.0** — Low Level Driver library. Cloned from [Infineon/illd_release_tc3x](https://github.com/Infineon/illd_release_tc3x) (tag `V1.20.0`), restructured into `iLLD/` (gitignored).
+
+**AURIXFlasher** — Flash programming tool for miniWiggler. Bundled in `tools/flasher/`. This is a Windows-only tool from Infineon; native Linux flashing is not available at this time. On WSL, the flash target calls the .exe directly and handles path translation automatically.
+
+## Prerequisites
+
+- **CMake** ≥ 3.20
+- **Ninja** build system
+- **unzip** (for toolchain extraction)
+- **Git** (for dependency fetching)
+- **WSL** (for flashing only)
+
+Install on Ubuntu/Debian:
+
+```bash
+sudo apt install cmake ninja-build unzip git
+```
+
+Fedora / RHEL:
+
+```bash
+sudo dnf install cmake ninja-build unzip git
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -S cmake ninja unzip git
 ```
 
 ---
