@@ -437,6 +437,32 @@ make                    # Debug build (default)
 make CONFIG=Release     # Release build (optimised)
 make clean
 ```
+### Option C — CMake Method on Command Line (HIGHTEC GCC)
+
+```bash
+#Configure
+cmake --preset som-debug
+cmake --preset som-release
+cmake --preset eval-debug
+cmake --preset eval-release
+
+# Build
+cmake --build --preset som-debug
+
+# Flash
+cmake --build --preset som-debug --target flash
+
+# Clean (keeps config, just removes build artifacts)
+cmake --build --preset som-debug --target clean
+
+# Nuke (wipes config too, requires re-configure)
+rm -rf build/som-debug
+rm -rf build/
+
+# Utilities
+cmake --build --preset som-debug --target size
+cmake --build --preset som-debug --target disasm
+```
 
 ---
 
