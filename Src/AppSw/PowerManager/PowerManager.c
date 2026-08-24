@@ -91,6 +91,38 @@ static void prv_SetFusaStatus(FusaStatus_t status)
 }
 #endif
 
+/* SLP_S3 / SLP_S5 are active HIGH per GP_AURIX_Subsystem_PinDefn.xlsx. */
+static boolean prv_SlpS3Active(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_SLP_S3_ACTIVE.portIdx), PIN_SLP_S3_ACTIVE.pinIdx);
+}
+
+static boolean prv_SlpS5Active(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_SLP_S5_ACTIVE.portIdx), PIN_SLP_S5_ACTIVE.pinIdx);
+}
+
+static boolean prv_PwrBtnPressed(void)
+{
+    return (IfxPort_getPinState(
+        AppPin_GetPort(PIN_PWRBTN_L.portIdx), PIN_PWRBTN_L.pinIdx) == 0u);
+}
+
+static boolean prv_ThermTripActive(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx);
+}
+
+static boolean prv_VinPwrOk(void)
+{
+    return (boolean)IfxPort_getPinState(
+        AppPin_GetPort(PIN_VIN_PWR_OK.portIdx), PIN_VIN_PWR_OK.pinIdx);
+}
+
+
 
 static boolean prv_PwrokValid(void)
 {
@@ -605,36 +637,6 @@ static void prv_DisableGroup(const PwrRail_Cfg_t *rails, uint8 count)
     }
 }
 
-/* SLP_S3 / SLP_S5 are active HIGH per GP_AURIX_Subsystem_PinDefn.xlsx. */
-static boolean prv_SlpS3Active(void)
-{
-    return (boolean)IfxPort_getPinState(
-        AppPin_GetPort(PIN_SLP_S3_ACTIVE.portIdx), PIN_SLP_S3_ACTIVE.pinIdx);
-}
-
-static boolean prv_SlpS5Active(void)
-{
-    return (boolean)IfxPort_getPinState(
-        AppPin_GetPort(PIN_SLP_S5_ACTIVE.portIdx), PIN_SLP_S5_ACTIVE.pinIdx);
-}
-
-static boolean prv_PwrBtnPressed(void)
-{
-    return (IfxPort_getPinState(
-        AppPin_GetPort(PIN_PWRBTN_L.portIdx), PIN_PWRBTN_L.pinIdx) == 0u);
-}
-
-static boolean prv_ThermTripActive(void)
-{
-    return (boolean)IfxPort_getPinState(
-        AppPin_GetPort(PIN_THERMTRIP_L.portIdx), PIN_THERMTRIP_L.pinIdx);
-}
-
-static boolean prv_VinPwrOk(void)
-{
-    return (boolean)IfxPort_getPinState(
-        AppPin_GetPort(PIN_VIN_PWR_OK.portIdx), PIN_VIN_PWR_OK.pinIdx);
-}
 
 
 static void prv_WaitSinceRsmrst(uint16 minMs)
