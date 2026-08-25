@@ -358,113 +358,136 @@ som_aurix_fw/
 ```
 
 ---
+## Prerequisites
+
+Install build tools (one-time):
+
+```bash
+sudo apt install cmake ninja-build unzip
+```
+
+**CMake 3.20 or later is required.** Check with `cmake --version`. If your distro ships an older version, install a newer one from [cmake.org](https://cmake.org/download/) or via `pip install cmake`.
 
 ## Dependencies
 
-### AURIX Development Studio (ADS)
+The build requires two external dependencies that must be set up manually before configuring. These are **not** fetched automatically.
 
-- **Version**: 1.10 or later
-- **Download**: [Infineon AURIX Development Studio](https://www.infineon.com/aurixdevelopmentstudio)
-- **Toolchain**: TASKING VX-toolset for TriCore (bundled with ADS)
-  - Compiler: `cctc` (C TriCore Compiler)
-  - Linker: `ltc`
-  - Builder: `amk`
+### 1. TriCore GCC Toolchain (v4.9.4)
 
-### iLLD — Infineon Low Level Drivers
-
-- **Version required**: `iLLD_TC3xx v1.20.0`
-- **Obtain from**: Infineon MyICP / AURIX partner portal
-- **Install path**: unpack into `iLLD/` at the project root
-  (excluded from this repository by `.gitignore`)
-
-### Target Device
-
-- **MCU**: Infineon AURIX TC387 (TC38xA family)
-- **Crystal**: 20 MHz (configured in `Src/BaseSw/Ifx_Cfg.h`)
-- **CPU clock**: 300 MHz (configured via PLL in `Src/AppSw/Platform/Clk_Cfg.c`)
-
----
-
-## How to Build
-
-### Option A — AURIX Development Studio (recommended)
-
-1. **Clone this repository**
-   ```bash
-   git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
-   ```
-
-2. **Unpack iLLD** into the project root:
-   ```
-   som_aurix_fw/
-   └── iLLD/        ← unpack iLLD_TC3xx_1_20_0 here
-   ```
-
-3. **Obtain the TC387 linker script** from the iLLD board package or HIGHTEC
-   examples and place it at `Linker/tc387.ld`.
-
-4. **Import into ADS**
-   ```
-   File -> Import -> General -> Existing Projects into Workspace
-   -> Browse to: som_aurix_fw/
-   -> Finish
-   ```
-
-5. **Configure source folders** (if not resolved automatically)
-   ```
-   Right-click project -> Properties -> C/C++ General -> Source Location
-   -> Confirm Src/AppSw/* folders are listed
-   ```
-
-6. **Fill in GPIO pin assignments** (if board schematic differs)
-   Open `Src/AppSw/Platform/Platform_PinCfg.c` and verify that all
-   `AppPin_t` definitions match the target board schematic. The current
-   values are populated from the `GP_AURIX_Subsystem_PinDefn.xlsx` pin map.
-
-7. **Build**
-   ```
-   Project -> Build Project  (Ctrl+B)
-   ```
-   Output: `TriCore Debug/TC387_COMHPC_PMC.elf`
-
-### Option B — Command Line (HIGHTEC GCC)
-
-Requires `tricore-gcc` on `PATH`:
+Clone the prebuilt toolchain binaries, reassemble the split zip, and extract into `tools/toolchain/`:
 
 ```bash
-cd som_aurix_fw
-make                    # Debug build (default)
-make CONFIG=Release     # Release build (optimised)
-make clean
+# Clone the toolchain repo (split-zip distribution)
+git clone --depth 1 https://github.com/volumit/tricore_gcc494_linux_bins.git _tc_toolchain_tmp
+
+# Reassemble the split zip parts
+cd _tc_toolchain_tmp
+cat tricore_494_linux.zip.* > tricore_494_linux.zip
+
+# Extract into the project's tools/toolchain/ directory
+mkdir -p ../tools/toolchain
+unzip -qo tricore_494_linux.zip -d ../tools/toolchain
+
+# Make binaries executable
+chmod -R +x ../tools/toolchain
+
+# Clean up
+cd ..
+rm -rf _tc_toolchain_tmp
 ```
-### Option C — CMake Method on Command Line (HIGHTEC GCC)
+
+The CMake toolchain file automatically looks for `tricore-elf-gcc` inside `tools/toolchain/`. Verify the install:
 
 ```bash
-#Configure
+find tools/toolchain -name "tricore-elf-gcc" -type f   # should find the compiler
+```
+
+Alternatively, if you install the toolchain elsewhere and put it on your `PATH`, the toolchain file will find it there too. You can also point to a custom location with:
+
+```bash
+cmake --preset som-debug -DTC_TOOLCHAIN_DIR=/your/custom/path
+```
+
+### 2. Infineon iLLD (v1.20.0)
+
+Clone the Infineon iLLD release and assemble it into the `iLLD/` directory at the repo root:
+
+```bash
+# Clone iLLD v1.20.0
+git clone --depth 1 -b V1.20.0 https://github.com/Infineon/illd_release_tc3x.git _illd_tmp
+
+# Assemble the flat iLLD/ directory structure the build expects
+mkdir -p iLLD
+cp -r _illd_tmp/src/BaseSw/Infra   iLLD/
+cp -r _illd_tmp/src/BaseSw/Service iLLD/
+
+# Flatten module sources from iLLD/TC3xx/Tricore/ up into iLLD/
+for dir in _illd_tmp/src/BaseSw/iLLD/TC3xx/Tricore/*/; do
+    cp -r "$dir" iLLD/
+done
+
+# Clean up the temp clone
+rm -rf _illd_tmp
+```
+
+After this, `iLLD/Cpu/Std/Ifx_Types.h` should exist. CMake will verify this at configure time and error out with instructions if it's missing.
+
+## Quick Start
+
+```bash
+# Clone the repo
+git clone https://github.com/AMD-AECG-SSW-PUBLIC/som_aurix_fw
+cd som_aurix_fw
+
+# Set up iLLD (see Dependencies section above)
+# ...
+
+# Configure
 cmake --preset som-debug
-cmake --preset som-release
-cmake --preset eval-debug
-cmake --preset eval-release
 
 # Build
-cmake --build --preset som-debug
-
-# Flash
-cmake --build --preset som-debug --target flash
-
-# Clean (keeps config, just removes build artifacts)
-cmake --build --preset som-debug --target clean
-
-# Nuke (wipes config too, requires re-configure)
-rm -rf build/som-debug
-rm -rf build/
-
-# Utilities
-cmake --build --preset som-debug --target size
-cmake --build --preset som-debug --target disasm
+cmake --build --preset som-debug -j16
 ```
 
----
+## Build Presets
+
+| Preset         | Board               | Optimisation | Define              |
+|----------------|----------------------|--------------|---------------------|
+| `som-debug`    | GP System-on-Module  | `-O0 -g3`   | `TARGET_GP_SOM=1`   |
+| `som-release`  | GP System-on-Module  | `-O2`        | `TARGET_GP_SOM=1`   |
+| `eval-debug`   | Eval Board           | `-O0 -g3`    | `TARGET_EVAL_BOARD=1`|
+| `eval-release` | Eval Board           | `-O2`        | `TARGET_EVAL_BOARD=1`|
+
+Usage:
+
+```bash
+cmake --preset <preset>
+cmake --build --preset <preset> -j16
+```
+
+The eval board preset automatically excludes UsbPd sources and selects the LFBGA292 pin map.
+
+## Build Commands Reference
+
+```bash
+# Configure
+cmake --preset som-debug
+
+# Build
+cmake --build --preset som-debug -j16
+
+# Clean (keeps config, removes build artifacts)
+cmake --build --preset som-debug --target clean
+
+# Full clean (requires re-configure)
+rm -rf build/
+
+# Section sizes
+cmake --build --preset som-debug --target size
+
+# Disassembly listing
+cmake --build --preset som-debug --target disasm
+```
 
 ## Key Timing Parameters (AMD 58241 §16)
 

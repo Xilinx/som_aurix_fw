@@ -1,50 +1,34 @@
-# =============================================================================
-# AURIX TC387 COM-HPC Controller — CMake Build
-# =============================================================================
-#
-# Usage (via presets — recommended):
-#   cmake --preset som-debug          # configure for SoM, Debug
-#   cmake --build --preset som-debug  # build
-#
-#   cmake --preset eval-release       # configure for Eval Board, Release
-#   cmake --build --preset eval-release
-#
-# Usage (manual):
-#   cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/tricore-gcc.cmake \
-#         -DBOARD=som -DCMAKE_BUILD_TYPE=Debug -G Ninja
-#   cmake --build build
-#
-# Custom targets:
-#   cmake --build build --target size     # print section sizes
-#   cmake --build build --target disasm   # generate disassembly listing
-#   cmake --build build --target flash    # program via AURIXFlasher
-# =============================================================================
 cmake_minimum_required(VERSION 3.20)
-
 project(TC387_COMHPCController
     LANGUAGES C ASM
     VERSION   1.0.0
 )
-
 # =============================================================================
 # Options
 # =============================================================================
 set(BOARD "som" CACHE STRING "Board variant: som | eval")
 set_property(CACHE BOARD PROPERTY STRINGS som eval)
-
 set(CPU "tc38xx" CACHE STRING "TriCore CPU variant for -mcpu flag")
-
 # =============================================================================
 # Target executable
 # =============================================================================
 set(TARGET_NAME ${PROJECT_NAME})
 add_executable(${TARGET_NAME})
-
 # =============================================================================
-# iLLD paths
+# iLLD dependency — must be cloned manually (see README)
 # =============================================================================
-set(ILLD_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/iLLD)
+set(ILLD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/iLLD")
 
+if(NOT EXISTS "${ILLD_ROOT}/Cpu/Std/Ifx_Types.h")
+    message(FATAL_ERROR
+        "iLLD not found at ${ILLD_ROOT}/\n"
+        "Please clone and assemble iLLD before configuring. See README for steps:\n"
+        "  1. git clone --depth 1 -b V1.20.0 https://github.com/Infineon/illd_release_tc3x.git _illd_tmp\n"
+        "  2. Run the assembly commands to populate ./iLLD/\n"
+        "  3. Re-run cmake --preset <preset>\n"
+    )
+endif()
+message(STATUS "Using iLLD: ${ILLD_ROOT}")
 # =============================================================================
 # Application sources
 # =============================================================================
@@ -57,12 +41,10 @@ set(APP_SRC_DIRS
     Src/AppSw/UsbPd
     Src/AppSw/FwMgmt
 )
-
 foreach(dir IN LISTS APP_SRC_DIRS)
     file(GLOB _srcs "${dir}/*.c")
     target_sources(${TARGET_NAME} PRIVATE ${_srcs})
 endforeach()
-
 # --- Board-specific source filtering ----------------------------------------
 if(BOARD STREQUAL "eval")
     # Exclude UsbPd sources for eval board
@@ -77,7 +59,6 @@ if(BOARD STREQUAL "eval")
     endforeach()
     set_target_properties(${TARGET_NAME} PROPERTIES SOURCES "${_all_srcs}")
 endif()
-
 # =============================================================================
 # iLLD sources
 # =============================================================================
@@ -113,27 +94,23 @@ set(ILLD_SRC_DIRS
     ${ILLD_ROOT}/_Lib/InternalMux
     ${ILLD_ROOT}/_Impl
 )
-
 # Collect .c sources from iLLD directories
 foreach(dir IN LISTS ILLD_SRC_DIRS)
     file(GLOB _srcs "${dir}/*.c")
     target_sources(${TARGET_NAME} PRIVATE ${_srcs})
 endforeach()
-
 # Collect assembly sources (.S, .sx) from iLLD directories
 foreach(dir IN LISTS ILLD_SRC_DIRS)
     file(GLOB _asm "${dir}/*.S" "${dir}/*.sx")
     target_sources(${TARGET_NAME} PRIVATE ${_asm})
 endforeach()
-
 # Board-specific PinMap
 if(BOARD STREQUAL "eval")
-    file(GLOB _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
+    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
 else()
-    file(GLOB _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_516.c")
+    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_516.c")
 endif()
 target_sources(${TARGET_NAME} PRIVATE ${_pinmap})
-
 # =============================================================================
 # Include directories
 # =============================================================================
@@ -155,6 +132,7 @@ target_include_directories(${TARGET_NAME} PRIVATE
     ${ILLD_ROOT}/_Impl
     ${ILLD_ROOT}/_Impl/TC38x
     ${ILLD_ROOT}/_PinMap
+    ${ILLD_ROOT}/_PinMap/TC38x
     ${ILLD_ROOT}/Cpu/Std
     ${ILLD_ROOT}/Scu/Std
     ${ILLD_ROOT}/Port/Std
@@ -180,7 +158,6 @@ target_include_directories(${TARGET_NAME} PRIVATE
     ${ILLD_ROOT}/Service/CpuGeneric/_Utilities
     ${ILLD_ROOT}/Service/CpuGeneric/SysSe/Bsp
 )
-
 # =============================================================================
 # Compile definitions
 # =============================================================================
@@ -189,13 +166,11 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<CONFIG:Debug>:CFG_DEBUG=1>
     $<$<CONFIG:Release>:NDEBUG>
 )
-
 if(BOARD STREQUAL "eval")
     target_compile_definitions(${TARGET_NAME} PRIVATE TARGET_EVAL_BOARD=1)
 else()
     target_compile_definitions(${TARGET_NAME} PRIVATE TARGET_GP_SOM=1)
 endif()
-
 # =============================================================================
 # Compiler flags
 # =============================================================================
@@ -210,21 +185,17 @@ target_compile_options(${TARGET_NAME} PRIVATE
     $<$<CONFIG:Debug>:-g3 -O0>
     $<$<CONFIG:Release>:-O2>
 )
-
 # Tell CMake to treat .S and .sx files as assembler-with-cpp
 set_source_files_properties(
     ${CMAKE_CURRENT_SOURCE_DIR}  # fallback
     PROPERTIES LANGUAGE ASM
 )
-
 # ASM files need the same flags (gcc -x assembler-with-cpp)
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -mcpu=${CPU} -x assembler-with-cpp")
-
 # =============================================================================
 # Linker configuration
 # =============================================================================
 set(LDSCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/Linker/tc387.ld)
-
 target_link_options(${TARGET_NAME} PRIVATE
     -mcpu=${CPU}
     -T ${LDSCRIPT}
@@ -234,13 +205,11 @@ target_link_options(${TARGET_NAME} PRIVATE
     -nostartfiles
     -Wl,--start-group -lc -lm -Wl,--end-group
 )
-
 # Re-link if linker script changes
 set_target_properties(${TARGET_NAME} PROPERTIES
     LINK_DEPENDS ${LDSCRIPT}
     SUFFIX       ".elf"
 )
-
 # =============================================================================
 # Post-build: generate .hex and .bin
 # =============================================================================
@@ -254,7 +223,6 @@ add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
     COMMAND ${CMAKE_SIZE} --format=berkeley $<TARGET_FILE:${TARGET_NAME}>
     COMMENT "Generating .hex and .bin, printing size"
 )
-
 # =============================================================================
 # Convenience targets: size, disasm, flash
 # =============================================================================
@@ -263,36 +231,37 @@ add_custom_target(size
     DEPENDS ${TARGET_NAME}
     COMMENT "Section sizes"
 )
-
 add_custom_target(disasm
     COMMAND ${CMAKE_OBJDUMP} -d -S $<TARGET_FILE:${TARGET_NAME}>
         > $<TARGET_FILE_DIR:${TARGET_NAME}>/${TARGET_NAME}.lss
     DEPENDS ${TARGET_NAME}
     COMMENT "Disassembly → ${TARGET_NAME}.lss"
 )
-
 # =============================================================================
 # Flash support (WSL / Windows AURIXFlasher)
 # =============================================================================
 # Auto-discover AURIXFlasher.exe if not set explicitly.
 # This runs at configure time — results are printed and cached.
 set(FLASHER "" CACHE FILEPATH "Path to AURIXFlasher.exe (auto-detected if empty)")
-
 if(NOT FLASHER OR FLASHER STREQUAL "")
-    file(GLOB _flasher_candidates
-        "/mnt/c/Infineon/AURIX-Studio-*/tools/AurixFlasherSoftwareTool_*/AURIXFlasher.exe"
-        "/mnt/c/Program Files/Infineon/*/AURIXFlasher.exe"
-        "/opt/Infineon/*/AURIXFlasher.exe"
-        "/usr/local/bin/AURIXFlasher"
-    )
-    if(_flasher_candidates)
-        list(GET _flasher_candidates 0 FLASHER)
+    # Check repo-local flasher first
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/flasher/AURIXFlasher.exe")
+        set(FLASHER "${CMAKE_CURRENT_SOURCE_DIR}/tools/flasher/AURIXFlasher.exe")
+    else()
+        # Fall back to system-installed flasher
+        file(GLOB _flasher_candidates
+            "/mnt/c/Infineon/AURIX-Studio-*/tools/AurixFlasherSoftwareTool_*/AURIXFlasher.exe"
+            "/mnt/c/Program Files/Infineon/*/AURIXFlasher.exe"
+            "/opt/Infineon/*/AURIXFlasher.exe"
+            "/usr/local/bin/AURIXFlasher"
+        )
+        if(_flasher_candidates)
+            list(GET _flasher_candidates 0 FLASHER)
+        endif()
     endif()
 endif()
-
 # Auto-discover HEX staging directory (Windows-accessible path for WSL)
 set(HEX_STAGING_DIR "" CACHE PATH "Windows-accessible dir for .hex staging (auto-detected if empty)")
-
 if(NOT HEX_STAGING_DIR OR HEX_STAGING_DIR STREQUAL "")
     if(DEFINED ENV{USER} AND EXISTS "/mnt/c/Users/$ENV{USER}")
         set(HEX_STAGING_DIR "/mnt/c/Users/$ENV{USER}")
@@ -302,10 +271,8 @@ if(NOT HEX_STAGING_DIR OR HEX_STAGING_DIR STREQUAL "")
         set(HEX_STAGING_DIR "/tmp")
     endif()
 endif()
-
 # Convert /mnt/c/... to C:/... for the Windows-side flasher
 string(REGEX REPLACE "^/mnt/c/" "C:/" HEX_WIN "${HEX_STAGING_DIR}/TC387.hex")
-
 # --- Print environment summary at configure time ----------------------------
 # This replaces "make setup" — you see it once when you run cmake --preset ...
 message(STATUS "===============================")
@@ -322,7 +289,6 @@ endif()
 message(STATUS "HEX staging dir:  ${HEX_STAGING_DIR}")
 message(STATUS "HEX Windows path: ${HEX_WIN}")
 message(STATUS "===============================")
-
 # --- flash target: build, copy hex, program ----------------------------------
 add_custom_target(flash
     COMMAND ${CMAKE_COMMAND} -E echo "[FLASH] Copying hex to staging..."
