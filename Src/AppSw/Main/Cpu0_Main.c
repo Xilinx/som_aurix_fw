@@ -1,27 +1,26 @@
-/**
- * @file    Cpu0_Main.c
- * @brief   CPU0 entry point for the TC387 COM-HPC power and USB PD controller.
- * 
- * Initialisation order:
- *   1. Watchdog disable (development mode)
- *   2. SCU clock init — 300 MHz
- *   3. GPIO port direction init
- *   4. STM0 timer init
- *   5. ASCLIN0 debug UART init
- *   6. I2C master init
- *   7. Power manager init
- *   8. System monitor (SoM only)
- *   9. ERU fault ISRs
- *  10. Voltage monitoring
- *  11. COM-HPC watchdog (SoM only)
- *  12. USB PD manager (SoM only)
- * 
- * Build with BOARD=eval to exclude SoM-specific peripherals.
- */
-
+/* ================================================================== */
+/*  Cpu0_Main.c — CPU0: startup, orchestration, OTA, NV, CLI          */
+/*                                                                    */
+/*  Refactor notes (no behavior change intended except as listed):    */
+/*    - DFlash/PFlash self-tests moved to SelfTest.c                  */
+/*    - Phase 3 wait/handover and main-loop fault forwarding pulled   */
+/*      into prv_ helpers; block-scoped statics became file-scoped    */
+/*    - Duplicate "All cores running" print removed                   */
+/*    - Bare Tlf35585_ServiceWdt() calls after Ipc_Init() are now     */
+/*      guarded on g_wdtOwner == 0 (ownership rule made mechanical).  */
+/*      Calls BEFORE Ipc_Init() (Phase 0, recovery mode) stay         */
+/*      unconditional: g_wdtOwner lives in .ipc_shared (NOLOAD) and   */
+/*      is uninitialized SRAM until Ipc_Init() runs.                  */
+/*    - prv_ForwardTlfEvents() now also prints the event line (the    */
+/*      CPU2-side print in Tlf35585_LogEvent should be deleted)       */
+/*    - Pruned includes for modules that now live on CPU1/CPU2        */
+/*      (VoltMon, FusaSpi, Eru_FaultIsr, Crc32, SysMonitor, UsbPd,    */
+/*      I2c_Slave, ComHpcWdt) — re-add any the compiler asks for      */
+/* ================================================================== */
 #include "Ifx_Types.h"
 #include "IfxCpu.h"
 #include "IfxScuWdt.h"
+#include "Ipc.h"
 #include "Clk_Cfg.h"
 #include "Port_Init.h"
 #include "Stm_Timer.h"
@@ -29,136 +28,186 @@
 #include "I2c_Master.h"
 #include "PowerManager.h"
 #include "Platform_Cfg.h"
-#include "Eru_FaultIsr.h"
-#include "VoltMon.h"
 #include "Tlf35585.h"
-#include "UsbPd_Cfg.h"
-
-#if !defined(TARGET_EVAL_BOARD)
-#include "UsbPd_Manager.h"
+#include "DFlash.h"
+#include "BootValid.h"
+#include "PFlash.h"
+#include "Swap.h"
+#include "NvLog.h"
+#include "Uart_Xfer.h"
+#include "FwUpdate.h"
+#include "BiosRom.h"
+#include "Bist.h"
+#include "DebugCli.h"
+#include "Platform_PinCfg.h"
 #include "SysMonitor.h"
-#include "ComHpcWdt.h"
-#endif
+#include "SelfTest.h"
 
 
-/* Banner printed on UART at startup */
+/* ================================================================== */
+/*  Multicore sync                                                    */
+/* ================================================================== */
+IFX_ALIGN(4) IfxCpu_syncEvent g_cpuSyncEvent __attribute__((section(".ipc_shared"))) = 0;  
+
+/* Rendezvous barrier + report. Judged on the sync word itself, not
+ * the iLLD boolean (its sense is inverted in this iLLD version). */
+static void prv_SyncBarrier(void)
+{
+    uint32 sync;
+
+    IfxCpu_emitEvent(&g_cpuSyncEvent);
+    (void)IfxCpu_waitEvent(&g_cpuSyncEvent, 100);
+
+    sync = g_cpuSyncEvent;
+    Debug_Printf("[SYS] barrier %s, sync=0x%X\r\n",
+                 ((sync & 0xFu) == 0xFu) ? "OK" : "INCOMPLETE",
+                 (unsigned)sync);
+}
+
+/* ================================================================== */
+/*  Firmware version string                                           */
+/* ================================================================== */
 #if defined(TARGET_EVAL_BOARD)
-#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.1 [EVAL BOARD]\r\n"
+#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.2 [EVAL BOARD] [MULTICORE]\r\n"
 #else
-#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.1\r\n"
+#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.2 [MULTICORE]\r\n"
 #endif
 
+
+
+/* ================================================================== */
+/*  CPU0 entry point                                                  */
+/* ================================================================== */
 int core0_main(void)
 {
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
-    
+
+    /* ============================================================== */
+    /*  Phase 0: Hardware primitives + TLF race (CPU0 only)           */
+    /*  NOTE: g_wdtOwner is NOT valid yet (init'd in Ipc_Init) —      */
+    /*  all TLF servicing in this phase is unconditional.             */
+    /* ============================================================== */
     Clk_Init();
     Port_Init();
     Stm_Init();
-
+    Tlf35585_EarlyInit();
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
-    Debug_Print("[SYS] Init: UART OK\r\n");
-
+    Debug_Print("[SYS] Init: UART fdsfdaOK\r\n");
+    UartXfer_Init();
+    Debug_Print("[SYS] Init: Side UART OK\r\n");
     I2cMaster_Init();
     Debug_Print("[SYS] Init: I2C OK\r\n");
 
-    PowerManager_Init();
-    Debug_Print("[SYS] Init: PowerManager OK\r\n");
+    /* TLF full init — still on CPU0 before cores are released.
+     * CPU2 takes over WDT service after the handover in Phase 3. */
+    Tlf35585_Init();
+    Tlf35585_RegisterFaultCb(PowerManager_RequestPowerOff);
+    Debug_Print("[SYS] Init: TLF OK\r\n");
 
+    /* ============================================================== */
+    /*  Recovery mode check (SoM only) — pre-Ipc_Init, so the TLF     */
+    /*  service here must stay unconditional.                         */
+    /* ============================================================== */
 #if !defined(TARGET_EVAL_BOARD)
-    SysMonitor_Init();
-    SysMonitor_RegisterShutdownCb(PowerManager_OnThermtripIsr);
-    Debug_Print("[SYS] Init: SysMonitor OK\r\n");
+    if (!prv_ReadPin(&PIN_CB_RSTBTN_L))
+    {
+        Debug_Print("[SYS] RECOVERY MODE — RSTBTN# held at boot\r\n");
+        Debug_Print("[SYS] UART MUX stays on AURIX, PM not started\r\n");
+        FwUpdate_Init();
+        NvLog_WriteU32(NVLOG_EVT_BOOT, NVLOG_SRC_SYSTEM,
+                       NVLOG_SEV_WARNING, 0x00EC0DE1u);
+        while (1)
+        {
+            FwUpdate_Run();
+            Tlf35585_ServiceWdt();      /* cores never released here */
+        }
+    }
 #endif
 
-    Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
-#if !defined(TARGET_EVAL_BOARD)
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-    Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
-#endif
-#endif
-    Eru_FaultIsr_Init();
-    Debug_Print("[SYS] Init: ERU fault ISRs OK\r\n");
+    /* ============================================================== */
+    /*  Phase 1: BIOS ROM + IPC init (before core release)            */
+    /* ============================================================== */
+    BiosRom_Init();
+    Debug_Print("[SYS] Init: BIOS ROM bus released\r\n");
+    Ipc_Init();                          /* g_wdtOwner valid from here on */
+    Debug_Print("[SYS] Init: IPC shared memory OK\r\n");
 
-    VoltMon_Init();
-    VoltMon_RegisterFaultCb(PowerManager_OnVoltageFault);
-    Debug_Print("[SYS] Init: VoltMon OK\r\n");
+    /* ============================================================== */
+    /*  Phase 2: Flash + NV + SOTA (CPU0 owned)                       */
+    /* ============================================================== */
+    DFlash_Init();
+    Debug_Print("[SYS] Init: DFlash OK\r\n");
+    if (g_wdtOwner == 0u) Tlf35585_ServiceWdt();
+    NvLog_Init();
+    if (g_wdtOwner == 0u) Tlf35585_ServiceWdt();
+    Debug_Print("[SYS] Init: NvLog OK\r\n");
 
-#if !defined(TARGET_EVAL_BOARD)
-    ComHpcWdt_Init();
-    Debug_Print("[SYS] Init: ComHpcWdt OK\r\n");
-#endif
-
-#if !defined(TARGET_EVAL_BOARD)
-#if (USBPD_FEATURE_ENABLE == 1u)
-    UsbPdManager_Init();
-    Debug_Print("[SYS] Init: UsbPdManager OK\r\n");
-#endif
+#if defined(TARGET_EVAL_BOARD)
+    SelfTest_DFlash();
 #endif
 
-    Debug_Print("[SYS] Entering main loop\r\n");
+    {
+        BootValid_Status_t bootStatus = BootValid_CheckOnStartup();
+        Debug_Printf("[SYS] Init: BootValid = %u\r\n", (unsigned)bootStatus);
+    }
 
+    PFlash_Init();
+    PFlash_RegisterKeepAliveCb(Tlf35585_ServiceWdt);
+    Debug_Print("[SYS] Init: PFlash OK\r\n");
+    Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
+    FwUpdate_Init();
+    Bist_RunPost(Tlf35585_ServiceWdt);
+    Debug_Print("[SYS] Init: POST complete\r\n");
+
+#if defined(TARGET_EVAL_BOARD)
+    SelfTest_PFlash();
+#endif
+
+    /* ============================================================== */
+    /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
+    /* ============================================================== */
+    prv_SyncBarrier();
+
+    if (prv_WaitForCores(5000u))
+    {
+        prv_HandoverTlfWdt();
+    }
+    /* On timeout: CPU0 keeps WDT ownership; the main loop below
+     * continues servicing (g_wdtOwner still 0). */
+
+    /* ============================================================== */
+    /*  Phase 4: Debug CLI + main loop                                */
+    /* ============================================================== */
+    Debug_DrainRings();                  /* flush tail of core init logs */
+    Debug_Print("[SYS] CPU0 entering main loop\r\n");
+    DebugCli_Init();
 
     for (;;)
     {
         uint32 loopStartMs = Stm_GetTimeMs();
 
-        //IfxPort_togglePin(&MODULE_P34,4);
-
-        PowerManager_Run();
-        VoltMon_Scan();
-
-#if defined(TARGET_EVAL_BOARD)
+        NvLog_Run();
+        FwUpdate_Run();
+        Bist_Run(NULL_PTR);              /* keep-alive not needed: either
+                                          * CPU2 owns the WDT, or the line
+                                          * below services it */
+        if (g_wdtOwner == 0u)
         {
-            static uint32 s_lastReportMs = 0u;
-            uint32 nowMs = Stm_GetTimeMs();
-            if ((nowMs - s_lastReportMs) >= 2000u)
-            {
-                s_lastReportMs = nowMs;
-                VoltMon_PrintReport();
-            }
+            Tlf35585_ServiceWdt();       /* only if CPU2 never came up */
         }
-#endif
+        Debug_DrainRings();
+        DebugCli_Run();
 
-#if !defined(TARGET_EVAL_BOARD)
-        Tlf35585_ServiceWdt();
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-        ComHpcWdt_Run();
-#endif
+        prv_CommitSotaOnce();
+        prv_ForwardVoltageFaults();
+        prv_ForwardVoltageWarnings();
+        prv_ForwardTlfEvents();
 
-        if (PowerManager_GetState() == PM_STATE_ON)
-        {
-            SysMonitor_Run();
-#if (USBPD_FEATURE_ENABLE == 1u)
-            UsbPdManager_Run();
-#endif
-        }
-#endif
-
-        /* Fixed-period pacing: makes debounce/timeout constants throughout
-         * PowerManager/SysMonitor map to real elapsed time, and surfaces
-         * WCET overruns instead of silently letting the loop free-run. */
-        {
-            static uint32 s_lastOverrunLogMs = 0u;
-            uint32 elapsedMs = Stm_GetTimeMs() - loopStartMs;
-            if (elapsedMs < MAIN_LOOP_PERIOD_MS)
-            {
-                Stm_DelayMs(MAIN_LOOP_PERIOD_MS - elapsedMs);
-            }
-            else
-            {
-                uint32 nowMs = Stm_GetTimeMs();
-                if ((nowMs - s_lastOverrunLogMs) >= MAIN_LOOP_OVERRUN_LOG_INTERVAL_MS)
-                {
-                    s_lastOverrunLogMs = nowMs;
-                    Debug_Printf("[MAIN] loop overrun: %ums (budget %ums)\r\n",
-                                 (unsigned)elapsedMs, (unsigned)MAIN_LOOP_PERIOD_MS);
-                }
-            }
-        }
+        prv_PaceLoop(loopStartMs);
     }
+
     return 0;
 }

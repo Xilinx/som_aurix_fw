@@ -15,6 +15,10 @@
 #include "Uart_Debug.h"
 #include "Stm_Timer.h"
 #include "IfxEvadc_Adc.h"
+#include "NvLog.h"
+#include "Platform_PinCfg.h"
+#include "FusaSpi.h"
+#include "Ipc.h"
 
 /* All analog inputs use the same sense topology:
  *
@@ -42,6 +46,7 @@
 
 static IfxEvadc_Adc          s_evadc;
 static boolean s_voltMonEnabled = FALSE;
+static VoltMon_ChFaultState_t s_faultState[VOLTMON_MAX_CHANNELS];
 
 /* clang-format off */
 
@@ -189,42 +194,57 @@ static uint16 prv_CountsToRailMv(uint16 counts, uint16 dividerScale)
 
 static void prv_CheckThresholds(uint8 chIdx, uint16 measuredMv)
 {
-    const VoltMon_ChCfg_t *ch;
-    VoltMon_Severity_t severity;
+    const VoltMon_ChCfg_t  *ch = &s_chTable[chIdx];
+    VoltMon_ChFaultState_t *st = &s_faultState[chIdx];
+    VoltMon_Severity_t      severity = VOLTMON_OK;
 
-    ch = &s_chTable[chIdx];
-    severity = VOLTMON_OK;
+    if      (measuredMv < ch->uvFaultMv) severity = VOLTMON_FAULT;
+    else if (measuredMv < ch->uvWarnMv)  severity = VOLTMON_WARNING;
+    else if (measuredMv > ch->ovFaultMv) severity = VOLTMON_FAULT;
+    else if (measuredMv > ch->ovWarnMv)  severity = VOLTMON_WARNING;
 
-    if (measuredMv < ch->uvFaultMv)
+    if (severity > st->level)
     {
-        severity = VOLTMON_FAULT;
-        Debug_Printf("[VMON] FAULT UV: %s = %umV (min %umV)\r\n",
-                     ch->name, (unsigned)measuredMv, (unsigned)ch->uvFaultMv);
-    }
-    else if (measuredMv < ch->uvWarnMv)
-    {
-        severity = VOLTMON_WARNING;
-        Debug_Printf("[VMON] WARN UV: %s = %umV\r\n",
-                     ch->name, (unsigned)measuredMv);
-    }
-    else if (measuredMv > ch->ovFaultMv)
-    {
-        severity = VOLTMON_FAULT;
-        Debug_Printf("[VMON] FAULT OV: %s = %umV (max %umV)\r\n",
-                     ch->name, (unsigned)measuredMv, (unsigned)ch->ovFaultMv);
-    }
-    else if (measuredMv > ch->ovWarnMv)
-    {
-        severity = VOLTMON_WARNING;
-        Debug_Printf("[VMON] WARN OV: %s = %umV\r\n",
-                     ch->name, (unsigned)measuredMv);
-    }
+        /* ---- ENTRY / ESCALATION EDGE: act exactly once ---- */
+        st->level     = severity;
+        st->goodCount = 0u;
 
-    if ((severity >= VOLTMON_FAULT) && (s_faultCb != NULL_PTR))
+        if (severity >= VOLTMON_FAULT)
+        {
+            Debug_Printf("[VMON] FAULT %s: %s = %umV (win %u..%umV)\r\n",
+                         (measuredMv < ch->uvFaultMv) ? "UV" : "OV",
+                         ch->name, (unsigned)measuredMv,
+                         (unsigned)ch->uvFaultMv, (unsigned)ch->ovFaultMv);
+            if (s_faultCb != NULL_PTR)
+            {
+                s_faultCb(ch, measuredMv, severity);   /* once */
+            }
+        }
+        else /* VOLTMON_WARNING */
+        {
+            Debug_Printf("[VMON] WARN %s: %s = %umV\r\n",
+                         (measuredMv < ch->uvWarnMv) ? "UV" : "OV",
+                         ch->name, (unsigned)measuredMv);
+            Ipc_SignalWarning(chIdx, measuredMv);      /* see note */
+        }
+    }
+    else if ((severity < st->level) && (st->level > VOLTMON_OK))
     {
-        s_faultCb(ch, measuredMv, severity);
+        /* ---- below latched level: recovery hysteresis ---- */
+        st->goodCount++;
+        if (st->goodCount >= VOLTMON_RECOVERY_SAMPLES)
+        {
+            st->level     = severity;   /* step down (may be WARN or OK) */
+            st->goodCount = 0u;
+        }
+    }
+    else
+    {
+        st->goodCount = 0u;             /* holding at latched level */
     }
 }
+
+
 
 /* ---- Public API --------------------------------------------------------- */
 
@@ -433,3 +453,21 @@ void VoltMon_PrintReport(void)
     Debug_Print("[VMON] -----------------\r\n");
 }
 #endif
+
+boolean VoltMon_IsChannelFaulted(uint32 ch)
+{
+    return (ch < VOLTMON_MAX_CHANNELS) ? s_faultState[ch].faulted : FALSE;
+}
+
+boolean VoltMon_AnyFaultActive(void)
+{
+    uint32 ch;
+    for (ch = 0u; ch < VOLTMON_MAX_CHANNELS; ch++)
+    {
+        if (s_faultState[ch].faulted)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}

@@ -7,6 +7,7 @@
 #define USBPD_MANAGER_H
 
 #include "Ifx_Types.h"
+#include "UsbPd_Hpi.h"
 
 #define USBPD_RUNTIME_FAIL_LIMIT   10u
 #define USBPD_SPURIOUS_INT_LIMIT   100u

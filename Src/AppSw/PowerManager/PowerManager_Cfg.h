@@ -44,9 +44,7 @@ typedef struct
     uint32      pgTimeoutMs;    /* max time for PG to assert */
 } PwrRail_Cfg_t;
 
-#define PM_RAIL_VR3V3_COUNT     1u
-#define PM_PG_TIMEOUT_MS    5u
-#define PM_PWRBTN_HOLD_MS   4000u   /* 4s ACPI force-off convention */
+
 
 extern PwrRail_Cfg_t PM_RAILS_VR3V3[PM_RAIL_VR3V3_COUNT];
 

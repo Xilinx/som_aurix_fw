@@ -20,6 +20,7 @@
 #define SYS_MONITOR_H
 
 #include "Ifx_Types.h"
+#include "AppPin.h"
 
 
 #define SYSMON_POLL_INTERVAL_MS     5u   /* main-loop poll rate for PROCHOT# */
@@ -91,5 +92,7 @@ void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
  *        (thermal throttle or carrier hot).
  */
 boolean SysMonitor_IsThrottling(void);
+
+boolean prv_ReadPin(const AppPin_t *pin);
 
 #endif /* SYS_MONITOR_H */

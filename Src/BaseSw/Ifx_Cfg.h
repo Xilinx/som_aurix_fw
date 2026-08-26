@@ -26,6 +26,19 @@
 #endif
 #endif
 
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE0
+#define IFX_CFG_SSW_ENABLE_TRICORE0   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE1
+#define IFX_CFG_SSW_ENABLE_TRICORE1   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE2
+#define IFX_CFG_SSW_ENABLE_TRICORE2   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE3
+#define IFX_CFG_SSW_ENABLE_TRICORE3   (1U)
+#endif
+
 /* ---- External oscillator ------------------------------------------------ */
 /* Verify against the board crystal / XTAL specification. */
 #define IFX_CFG_SCU_XTAL_FREQUENCY  20000000u   /* 20 MHz board crystal     */

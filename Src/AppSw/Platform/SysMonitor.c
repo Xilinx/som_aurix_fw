@@ -23,6 +23,7 @@
 #include "IfxPort.h"
 #include "I2c_Master.h"
 #include "PowerManager.h"
+#include "NvLog.h"
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
 static boolean s_carrierHotState   = FALSE;
@@ -49,10 +50,7 @@ static void prv_SetPin(const AppPin_t *pin, boolean high)
         IfxPort_setPinLow(AppPin_GetPort(pin->portIdx),  pin->pinIdx);
 }
 
-static boolean prv_ReadPin(const AppPin_t *pin)
-{
-    return (boolean)IfxPort_getPinState(AppPin_GetPort(pin->portIdx), pin->pinIdx);
-}
+
 
 static sint16 prv_ReadApuTempC(void)
 {
@@ -94,6 +92,11 @@ static boolean s_thermalThrottle = FALSE;
 static uint8 s_i2cFailCount = 0u;
 
 /* ---- Public API ---------------------------------------------------------- */
+
+boolean prv_ReadPin(const AppPin_t *pin)
+{
+    return (boolean)IfxPort_getPinState(AppPin_GetPort(pin->portIdx), pin->pinIdx);
+}
 
 void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb)
 {
@@ -184,6 +187,7 @@ void SysMonitor_Run(void)
                     Debug_Printf("[SYS] THERMAL WARNING: APU die %dC >= %dC, "
                                  "asserting PROCHOT\r\n",
                                  (int)tempC, (int)SYSMON_WARNING_TEMP_C);
+                    NvLog_WriteU32(NVLOG_EVT_THERMAL_WARN, NVLOG_SRC_THERMAL, NVLOG_SEV_WARNING, (uint32)tempC);
                 }
                 SysMonitor_AssertApuProchot();
             }
@@ -341,6 +345,29 @@ void SysMonitor_Run(void)
     }
 #endif
 
+    {
+        static boolean s_lastRapid = FALSE, s_lastLid = FALSE, s_lastTamper = FALSE;
+        boolean rapid  = !prv_ReadPin(&PIN_RAPID_SD);
+        boolean lid    = !prv_ReadPin(&PIN_LID_L);
+        boolean tamper = !prv_ReadPin(&PIN_TAMPER_L);
+
+        if (rapid != s_lastRapid) {
+            NvLog_WriteU32(NVLOG_EVT_MISC_RAPID_SHDN, NVLOG_SRC_COMHPC,
+                        NVLOG_SEV_INFO, (uint32)rapid);
+            Debug_Printf("[SYS] RAPID_SHUTDOWN=%u\r\n", (unsigned)rapid);
+            s_lastRapid = rapid;
+        }
+        if (lid != s_lastLid) {
+            NvLog_WriteU32(NVLOG_EVT_MISC_LID, NVLOG_SRC_COMHPC,
+                        NVLOG_SEV_INFO, (uint32)lid);
+            s_lastLid = lid;
+        }
+        if (tamper != s_lastTamper) {
+            NvLog_WriteU32(NVLOG_EVT_MISC_TAMPER, NVLOG_SRC_COMHPC,
+                        NVLOG_SEV_WARNING, (uint32)tamper);
+            s_lastTamper = tamper;
+        }
+    }
 }
 
 void SysMonitor_AssertApuProchot(void)

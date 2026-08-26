@@ -85,10 +85,10 @@ const AppPin_t PIN_APU_PROCHOT_L        = {11u, 10u};  /* P11.10 */
 const AppPin_t PIN_APML_ALERT           = {11u, 11u};  /* P11.11 */
 
 /* TLF35585 PMIC GPIO (directly toggle — no physical TLF on eval kit) */
-const AppPin_t PIN_TLF_ERR              = {14u,  2u};  /* P14.2 */
-const AppPin_t PIN_TLF_SS               = {14u,  3u};  /* P14.3 */
-const AppPin_t PIN_TLF_WAKE             = {14u,  4u};  /* P14.4 */
-const AppPin_t PIN_TLF_WDI              = {14u,  5u};  /* P14.5 */
+const AppPin_t PIN_TLF_WDI              = {14u,  3u};  /* P14.3 — WDI input to TLF    */
+const AppPin_t PIN_TLF_ERR              = {33u,  8u};  /* P33.8 — SMU_FSP0 / ERR      */
+const AppPin_t PIN_TLF_SS               = {33u,  9u};  /* P33.9 — Safe State 1 output */
+const AppPin_t PIN_TLF_WAKE             = {33u, 10u};  /* P33.10 — Wake/Inhibit       */
 
 /* Fan Control */
 const AppPin_t PIN_FAN_TACHIN           = {11u, 12u};  /* P11.12 */

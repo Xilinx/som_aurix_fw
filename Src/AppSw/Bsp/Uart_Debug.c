@@ -20,19 +20,27 @@
 #include <stdio.h>
 #include <string.h>
 #include "IfxCpu_Irq.h"
+#include "Ipc.h"
 
-#define TX_DATA_SIZE        512u
+#define TX_DATA_SIZE        4096u
 #define FMT_BUF_SIZE        256u
 #define UART_TX_ISR_PRIO    5u   /* below ERU_PRIO_THERMTRIP/CARRIER_HOT/
                                   * WD_STROBE (20/21/22) */
+#define UART_RX_ISR_PRIO    6u    /* ADD */
 
 /* TX buffer must include Ifx_Fifo header + 8-byte alignment guard. */
 static IfxAsclin_Asc s_ascHandle;
 static uint8         s_txBuf[TX_DATA_SIZE + sizeof(Ifx_Fifo) + 8u];
+static uint8         s_rxBuf[64 + sizeof(Ifx_Fifo) + 8u];    /* ADD */
 
 IFX_INTERRUPT(uartTxISR, 0, UART_TX_ISR_PRIO)
 {
     IfxAsclin_Asc_isrTransmit(&s_ascHandle);
+}
+
+IFX_INTERRUPT(uartRxISR, 0, UART_RX_ISR_PRIO)
+{
+    IfxAsclin_Asc_isrReceive(&s_ascHandle);
 }
 
 void Debug_Init(void)
@@ -60,7 +68,7 @@ void Debug_Init(void)
 
     /* TX interrupt drains the ring buffer in the background; RX/error unused. */
     cfg.interrupt.txPriority    = UART_TX_ISR_PRIO;
-    cfg.interrupt.rxPriority    = 0u;
+    cfg.interrupt.rxPriority    = UART_RX_ISR_PRIO;
     cfg.interrupt.erPriority    = 0u;
     cfg.interrupt.typeOfService = IfxSrc_Tos_cpu0;
 
@@ -71,22 +79,67 @@ void Debug_Init(void)
     cfg.txBufferSize = (Ifx_SizeT)TX_DATA_SIZE;
 
     /* RX not used for debug output. */
-    cfg.rxBuffer     = NULL_PTR;
-    cfg.rxBufferSize = 0u;
+    cfg.rxBuffer     = s_rxBuf;            
+    cfg.rxBufferSize = (Ifx_SizeT)64u; 
 
     IfxAsclin_Asc_initModule(&s_ascHandle, &cfg);
+    IfxCpu_Irq_installInterruptHandler(&uartTxISR, UART_TX_ISR_PRIO);
+    IfxCpu_Irq_installInterruptHandler(&uartRxISR, UART_RX_ISR_PRIO);
+}
+
+static void prv_RingPut(volatile Ipc_DbgRing_t *r, const char *s)
+{
+    uint32 h = r->head;
+    while (*s != '\0')
+    {
+        uint32 next = (h + 1u) & (DBGRING_SIZE - 1u);
+        if (next == r->tail)
+            break;                       /* full: drop, never block */
+        r->buf[h] = *s++;
+        h = next;
+    }
+    __dsync();
+    r->head = h;
+}
+
+void Debug_DrainRings(void)
+{
+    volatile Ipc_DbgRing_t *rings[2] = { &g_dbgRing1, &g_dbgRing2 };
+    uint32 i;
+    for (i = 0u; i < 2u; i++)
+    {
+        uint32 t = rings[i]->tail;
+        uint32 h = rings[i]->head;
+        while (t != h)
+        {
+            /* contiguous run up to wrap point, then one Asc write */
+            uint32 end = (h > t) ? h : DBGRING_SIZE;
+            Ifx_SizeT count = (Ifx_SizeT)(end - t);
+            (void)IfxAsclin_Asc_write(&s_ascHandle,
+                                      (const void *)&rings[i]->buf[t],
+                                      &count, TIME_INFINITE);
+            t = (t + (uint32)count) & (DBGRING_SIZE - 1u);
+        }
+        rings[i]->tail = t;
+    }
 }
 
 void Debug_Print(const char *str)
 {
-    Ifx_SizeT count;
-
     if ((str == NULL_PTR) || (*str == '\0'))
-    {
         return;
+
+    switch (IfxCpu_getCoreIndex())
+    {
+        case 1:  prv_RingPut(&g_dbgRing1, str); return;
+        case 2:  prv_RingPut(&g_dbgRing2, str); return;
+        default: break;                          /* CPU0, CPU3 fall through */
     }
-    count = (Ifx_SizeT)strlen(str);
-    (void)IfxAsclin_Asc_write(&s_ascHandle, str, &count, TIME_INFINITE);
+
+    {
+        Ifx_SizeT count = (Ifx_SizeT)strlen(str);
+        (void)IfxAsclin_Asc_write(&s_ascHandle, str, &count, TIME_INFINITE);
+    }
 }
 
 void Debug_Printf(const char *fmt, ...)
@@ -97,4 +150,9 @@ void Debug_Printf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     Debug_Print(buf);
+}
+
+IfxAsclin_Asc *Debug_GetAscHandle(void)
+{
+    return &s_ascHandle;
 }

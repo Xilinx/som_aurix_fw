@@ -10,6 +10,7 @@
 #define UART_DEBUG_H
 
 #include "Ifx_Types.h"
+#include "IfxAsclin_Asc.h"
 
 /** Baud rate for the debug UART. */
 #define UART_DEBUG_BAUD     115200u
@@ -28,5 +29,9 @@ void Debug_Print(const char *str);
  * @brief printf-style formatted output (blocking). Limited to 256 chars/call.
  */
 void Debug_Printf(const char *fmt, ...);
+
+void Debug_DrainRings(void);
+
+IfxAsclin_Asc *Debug_GetAscHandle(void);
 
 #endif /* UART_DEBUG_H */

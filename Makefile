@@ -26,7 +26,7 @@
 # -----------------------------------------------------------------------------
 # Toolchain
 # -----------------------------------------------------------------------------
-TC_PREFIX   := tricore-
+TC_PREFIX   := tricore-elf-
 CC          := $(TC_PREFIX)gcc
 AS          := $(TC_PREFIX)gcc -x assembler-with-cpp
 LD          := $(TC_PREFIX)gcc
@@ -63,7 +63,8 @@ APP_SRC_DIRS := \
 	Src/AppSw/Bsp           \
 	Src/AppSw/Platform      \
 	Src/AppSw/PowerManager  \
-	Src/AppSw/UsbPd
+	Src/AppSw/UsbPd         \
+	Src/AppSw/FwMgmt
 
 # -----------------------------------------------------------------------------
 # iLLD source directories
@@ -90,9 +91,11 @@ ILLD_SRC_DIRS := \
 	$(ILLD_ROOT)/Scu/Std                          \
 	$(ILLD_ROOT)/Stm/Std                          \
 	$(ILLD_ROOT)/Src/Std                          \
+	$(ILLD_ROOT)/Qspi/SpiSlave				      \
 	$(ILLD_ROOT)/Dma/Std                          \
 	$(ILLD_ROOT)/Dma/Dma                          \
 	$(ILLD_ROOT)/Pms/Std                          \
+	$(ILLD_ROOT)/Flash/Std						  \
 	$(ILLD_ROOT)/Service/CpuGeneric/StdIf         \
 	$(ILLD_ROOT)/Service/CpuGeneric/SysSe/Bsp     \
 	$(ILLD_ROOT)/Service/CpuGeneric/SysSe/Comm    \
@@ -146,6 +149,7 @@ INCLUDES := \
 	-I Src/AppSw/Platform       \
 	-I Src/AppSw/PowerManager   \
 	-I Src/AppSw/UsbPd          \
+	-I Src/AppSw/FwMgmt         \
 	-I Src/BaseSw               \
 	-I $(ILLD_ROOT)             \
 	-I $(ILLD_ROOT)/Infra/Platform  \
@@ -155,6 +159,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/_Impl       \
 	-I $(ILLD_ROOT)/_Impl/TC38x \
 	-I $(ILLD_ROOT)/_PinMap \
+	-I $(ILLD_ROOT)/_PinMap/TC38x \
 	-I $(ILLD_ROOT)/Cpu/Std     \
 	-I $(ILLD_ROOT)/Scu/Std     \
 	-I $(ILLD_ROOT)/Port/Std    \
@@ -165,6 +170,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/I2c/I2c     \
 	-I $(ILLD_ROOT)/Qspi/Std    \
 	-I $(ILLD_ROOT)/Qspi/SpiMaster \
+	-I $(ILLD_ROOT)/Qspi/SpiSlave   \
 	-I $(ILLD_ROOT)/Dma/Std             \
 	-I $(ILLD_ROOT)/Dma/Dma             \
 	-I $(ILLD_ROOT)/Evadc/Std         \
@@ -173,6 +179,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/Cpu/Trap    \
 	-I $(ILLD_ROOT)/Src/Std		\
 	-I $(ILLD_ROOT)/Pms/Std     \
+	-I $(ILLD_ROOT)/Flash/Std   \
 	-I $(ILLD_ROOT)/_Lib/DataHandling \
 	-I $(ILLD_ROOT)/_Lib/InternalMux \
 	-I $(ILLD_ROOT)/Service/CpuGeneric/_Utilities \
@@ -269,7 +276,7 @@ $(BIN_DIR):
 	@mkdir -p $@
 
 clean:
-	rm -rf Build/
+	rm -rf Build/ build/
 
 size: $(TARGET).elf
 	$(SIZE) --format=berkeley $<

@@ -67,6 +67,39 @@
 #define PM_MAX_RETRIES              30u      /* attempts before latch-off, N retries */
 #define PM_RETRY_DELAY_MS           500u 
 
+
+#define PM_SLP_S5_TIMEOUT_MS            250u
+#define PM_SLP_S3_TIMEOUT_MS            500u
+#define PM_T6_WAIT_MS                   22u
+#define PM_RSTBTN_DEBOUNCE_POLLS        3u
+#define PM_FORCED_OFF_COOLDOWN_MS       2000u
+#define PM_PWRBTN_DEBOUNCE_POLLS        3u
+#define PM_S0I3_TIMEOUT_MS              30000u
+
+/* AMD T1': processor-enforced minimum SLP_S3_L assertion time for
+ * S0 -> S0i3 -> S0 transitions only (spec minimum 46.5ms, rounded up to
+ * whole-ms timer resolution). Until this elapses, a SLP_S3 deassertion
+ * reading is not yet a trustworthy wake indication. */
+#define PM_T1_PRIME_MS                  47u
+
+/* Minimum time in PM_STATE_S5 before a SLP_S5 deassertion is trusted as
+ * an autonomous wake. */
+#define PM_S5_WAKE_HOLDOFF_MS           2000u
+
+/* RSTBTN# response: width of the high pulse driven on COLD_RST
+ * (PIN_APU_RESET_OUT_L / P33.15) when the physical reset button is
+ * pressed. No datasheet-defined minimum for this pulse; captured as a
+ * standalone build-time value. */
+#define PM_COLD_RST_PULSE_MS            10u
+
+#define PM_RTCCLK_STABLE_MS             16u
+#define PM_GRP_D_OFF_DWELL_MS           2u    /* flowchart: after Group D ENs removed */
+#define PM_GRP_C_OFF_DWELL_MS           16u   /* flowchart: after Group C ENs removed (T2) */
+
+#define PM_RAIL_VR3V3_COUNT     1u
+#define PM_PG_TIMEOUT_MS    5u
+#define PM_PWRBTN_HOLD_MS   4000u   /* 4s ACPI force-off convention */
+
 /* ---- FuSa feature-set gate -----------------------------------------------
  * Default OFF. Guards enabling the COM-HPC watchdog (ComHpcWdt_Enable),
  * both on cold boot (PM_STATE_RAMP_S0) and on re-arm after a warm reset

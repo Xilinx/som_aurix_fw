@@ -8,30 +8,7 @@
 
 #include "Ifx_Types.h"
 #include "VoltMon.h"
-
-#define PM_SLP_S5_TIMEOUT_MS            250u
-#define PM_SLP_S3_TIMEOUT_MS            500u
-#define PM_T6_WAIT_MS                   22u
-#define PM_RSTBTN_DEBOUNCE_POLLS        3u
-#define PM_FORCED_OFF_COOLDOWN_MS       2000u
-#define PM_PWRBTN_DEBOUNCE_POLLS        3u
-#define PM_S0I3_TIMEOUT_MS              30000u
-#define PM_CF9_SLP_TIMEOUT_MS           6000u
-/* AMD T1': processor-enforced minimum SLP_S3_L assertion time for
- * S0 -> S0i3 -> S0 transitions only (spec minimum 46.5ms, rounded up to
- * whole-ms timer resolution). Until this elapses, a SLP_S3 deassertion
- * reading is not yet a trustworthy wake indication. */
-#define PM_T1_PRIME_MS                  47u
-
-/* RSTBTN# response: width of the high pulse driven on COLD_RST
- * (PIN_APU_RESET_OUT_L / P33.15) when the physical reset button is
- * pressed. No datasheet-defined minimum for this pulse; captured as a
- * standalone build-time value. */
-#define PM_COLD_RST_PULSE_MS            10u
-
-#define PM_RTCCLK_STABLE_MS             16u
-#define PM_GRP_D_OFF_DWELL_MS           2u    /* flowchart: after Group D ENs removed */
-#define PM_GRP_C_OFF_DWELL_MS           16u   /* flowchart: after Group C ENs removed (T2) */
+#include "Platform_Cfg.h"
 
 
 #if (PM_PWRBTN_DEBOUNCE_POLLS < 1u)
@@ -123,5 +100,44 @@ void PowerManager_OnThermtripIsr(void);
 /* Voltage fault callback for VoltMon.
  * Called from main-loop context by VoltMon_Scan(). */
 void PowerManager_OnVoltageFault(const VoltMon_ChCfg_t *ch,  uint16 measuredMv, VoltMon_Severity_t severity);
+
+/**
+ * @brief  Voltage fault callback for VoltMon.
+ *
+ * Called from main-loop context by VoltMon_Scan() when a channel
+ * crosses its UV/OV fault threshold.  Initiates a fault response
+ * based on severity.
+ *
+ * @param  ch          Pointer to the faulting channel's configuration.
+ * @param  measuredMv  The measured voltage in millivolts.
+ * @param  severity    Fault severity level.
+ */
+void PowerManager_OnVoltageFault(const VoltMon_ChCfg_t *ch,
+                                 uint16 measuredMv,
+                                 VoltMon_Severity_t severity);
+
+/**
+ * @brief  Request a warm reset of the APU.
+ *
+ */
+void PowerManager_RequestWarmReset(void);
+
+/**
+ * @brief  Request a cold reboot of the APU.
+ *
+ */
+void PowerManager_RequestColdReset(void);
+
+/**
+ * @brief  Request an immediate forced power off.
+ *
+ */
+void PowerManager_RequestForcedOff(void);
+
+/**
+ * @brief  Clear a latched fault and return to PM_STATE_OFF.
+ *
+ */
+void PowerManager_ClearFault(void);
 
 #endif /* POWER_MANAGER_H */
