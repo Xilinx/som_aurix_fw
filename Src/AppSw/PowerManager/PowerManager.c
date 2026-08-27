@@ -512,7 +512,6 @@ static void prv_GoToS5(void)
 
     /* Secure APU and deassert PWRGD before touching rails. */
     prv_UartClaimByAurix();
-    prv_AssertKbrst();
     prv_DeassertPwrgd();
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
@@ -939,6 +938,7 @@ void PowerManager_Run(void)
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S5)) break;
 
             prv_DeassertApuReset();
+            prv_DeassertKbrst();
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                         /* Hand UART to APU just before RSMRST_L release */
             prv_UartReleaseToSoc();
@@ -1021,7 +1021,6 @@ void PowerManager_Run(void)
             Stm_DelayMs(PM_RESET_HOLD_AFTER_PWRGD_MS);
 
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0)) break;
-            prv_DeassertKbrst();  /* KBRST_L released    */
 
             /* Added  PWROK check with PIN_APU_PWROK */
             /* T6: wait for SoC PWROK assertion (21.4ms per AMD spec) */
@@ -1100,11 +1099,10 @@ void PowerManager_Run(void)
                 s_shutdownToOff = TRUE;
                 s_waitForBtnRelease = TRUE;
                 s_thermtripDebounce = 0u;
-                /* Neither SYS_RESET_L nor RSMRST_L is asserted here —
-                 * Group B stays powered throughout this S0->S5
-                 * transition, so neither signal is toggled. */
+                /* Neither SYS_RESET_L, KBRST_L, nor RSMRST_L is asserted
+                 * here — Group B stays powered throughout this S0->S5
+                 * transition, so none of these signals are toggled. */
                 prv_UartClaimByAurix();
-                prv_AssertKbrst();
                 //prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 //prv_AssertPltrst();
@@ -1121,7 +1119,6 @@ void PowerManager_Run(void)
                 s_s0i3EntryMs = Stm_GetTimeMs();
                 s_slpS3WasActive = TRUE;   /* arm wake-edge detect for DN_S3_S5 */
                 prv_UartClaimByAurix();
-                prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 //prv_AssertPltrst();
@@ -1226,7 +1223,10 @@ void PowerManager_Run(void)
                     s_pwrBtnDebounce     = 0u;
                     s_wakeStartMs        = Stm_GetTimeMs();
 
+                    /* Normal behavior expects ApuReset and Kbrst to already
+                     * be deasserted at this point. */
                     prv_DeassertApuReset();
+                    prv_DeassertKbrst();
                     Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                     prv_UartReleaseToSoc();
 
@@ -1326,7 +1326,6 @@ void PowerManager_Run(void)
                 s_wakeStartMs        = Stm_GetTimeMs();
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
-                prv_DeassertKbrst();
                 if (slpS3WakeEdge)
                 {
                     Debug_Print("[PM] SLP_S3_L rising edge — autonomous S0i3 wake, "
