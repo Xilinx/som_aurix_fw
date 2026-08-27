@@ -29,7 +29,7 @@
 #define VOLTMON_VREF_MV         5000u
 #define VOLTMON_ADC_MAX         4095u    /* 12-bit resolution */
 
-#define VOLTMON_SMA_ENABLE      0u
+#define VOLTMON_SMA_ENABLE      1u
 
 #if (VOLTMON_SMA_ENABLE == 1u)
 #define VOLTMON_SMA_SHIFT       2u
