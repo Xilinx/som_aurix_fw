@@ -26,7 +26,7 @@
 # -----------------------------------------------------------------------------
 # Toolchain
 # -----------------------------------------------------------------------------
-TC_PREFIX   := tricore-
+TC_PREFIX   := tricore-elf-
 CC          := $(TC_PREFIX)gcc
 AS          := $(TC_PREFIX)gcc -x assembler-with-cpp
 LD          := $(TC_PREFIX)gcc
