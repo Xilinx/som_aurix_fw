@@ -104,12 +104,9 @@ foreach(dir IN LISTS ILLD_SRC_DIRS)
     file(GLOB _asm "${dir}/*.S" "${dir}/*.sx")
     target_sources(${TARGET_NAME} PRIVATE ${_asm})
 endforeach()
-# Board-specific PinMap
-if(BOARD STREQUAL "eval")
-    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
-else()
-    file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_516.c")
-endif()
+
+file(GLOB_RECURSE _pinmap "${ILLD_ROOT}/_PinMap/*_TC38x_LFBGA292.c")
+
 target_sources(${TARGET_NAME} PRIVATE ${_pinmap})
 # =============================================================================
 # Include directories
