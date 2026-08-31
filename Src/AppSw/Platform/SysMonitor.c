@@ -24,6 +24,7 @@
 #include "I2c_Master.h"
 #include "PowerManager.h"
 #include "NvLog.h"
+#include "Ipc.h"
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
 static boolean s_carrierHotState   = FALSE;
@@ -33,12 +34,14 @@ static uint32  s_carrierClearMs    = 0u;
 static SysMonitor_ShutdownCb_t s_shutdownCb = NULL_PTR;
 static boolean s_shutdownRequested = FALSE;
 static boolean s_carrierClearActive = FALSE;
+static boolean s_i2cFailProchot = FALSE; 
 
 static uint32 s_lastPoll    = 0u;
 static uint32 s_lastLog     = 0u;
 static uint32 s_lastThermal = 0u;
 
 static uint8 s_apuProchotClearCount = 0u;
+static boolean s_apuProchotAsserted = FALSE;
 
 /* ---- Private helpers ----------------------------------------------------- */
 
@@ -127,7 +130,7 @@ void SysMonitor_Init(void)
     s_prochotActive = FALSE;
     s_thermalThrottle = FALSE;
     s_apuProchotClearCount = 0u;
-
+    s_apuProchotAsserted = FALSE;
     Debug_Print("[SYS] SysMonitor: APU_PROCHOT_L=H, PROCHOT#=H, CATERR#=H\r\n");
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
@@ -145,6 +148,10 @@ void SysMonitor_Run(void)
     if (PowerManager_GetState() != PM_STATE_ON)
     {
         return;
+    }
+    if (g_ipcShared.sysmonPause != 0u)
+    {
+        return;                       /* CPU0 diagnostics own the APML bus */
     }
     if (!Stm_IsElapsedMs(&s_lastPoll, SYSMON_POLL_INTERVAL_MS))
     {
@@ -165,7 +172,23 @@ void SysMonitor_Run(void)
 
         if (tempC != SYSMON_TEMP_INVALID)
         {
+            if (s_i2cFailCount >= SYSMON_I2C_FAIL_LIMIT)
+                Debug_Print("[SYS] APML I2C recovered\r\n");
             s_i2cFailCount = 0u;
+            if (s_i2cFailProchot)                  /* release the defensive latch */
+            {
+                s_i2cFailProchot = FALSE;
+                if (!s_thermalThrottle && !s_prochotActive
+#if (SYSMON_CARRIER_HOT_ENABLE == 1u)
+                    && !s_carrierHotState
+#endif
+                )
+                {
+                    SysMonitor_DeassertApuProchot();
+                    prv_SetPin(&PIN_PROCHOT_L, TRUE);
+                }
+            }
+
             if (tempC >= SYSMON_SHUTDOWN_TEMP_C)
             {
                 Debug_Printf("[SYS] THERMAL SHUTDOWN: APU die %dC >= %dC\r\n",
@@ -195,6 +218,7 @@ void SysMonitor_Run(void)
                     tempC < SYSMON_WARNING_HYST_C)
             {
                 s_thermalThrottle = FALSE;
+                s_shutdownRequested = FALSE;
                 Debug_Printf("[SYS] THERMAL CLEAR: APU die %dC, releasing PROCHOT\r\n",
                             (int)tempC);
             #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
@@ -210,17 +234,18 @@ void SysMonitor_Run(void)
         }
         else
         {
-            s_i2cFailCount++;
-            if (s_i2cFailCount >= SYSMON_I2C_FAIL_LIMIT)
+            if (s_i2cFailCount < 255u) s_i2cFailCount++;      /* saturate */
+            if (s_i2cFailCount == SYSMON_I2C_FAIL_LIMIT)      /* truly once */
             {
-                if (s_i2cFailCount == SYSMON_I2C_FAIL_LIMIT)  /* log once */
-                {
-                    Debug_Printf("[SYS] APML I2C failed %u consecutive reads "
-                                "— asserting PROCHOT defensively\r\n",
-                                (unsigned)s_i2cFailCount);
-                }
+                Debug_Print("[SYS] APML I2C failed — thermal telemetry LOST "
+                            "(THERMTRIP# hardware path still armed)\r\n");
+                NvLog_WriteU32(NVLOG_EVT_THERMAL_WARN, NVLOG_SRC_THERMAL,
+                               NVLOG_SEV_WARNING, 0xA9A1FA11u);
+#if (SYSMON_I2C_FAIL_ASSERTS_PROCHOT == 1u)
+                s_i2cFailProchot = TRUE;
                 SysMonitor_AssertApuProchot();
                 prv_SetPin(&PIN_PROCHOT_L, FALSE);
+#endif
             }
         }
     }
@@ -372,7 +397,6 @@ void SysMonitor_Run(void)
 
 void SysMonitor_AssertApuProchot(void)
 {
-    static boolean s_apuProchotAsserted = FALSE;
     prv_SetPin(&PIN_APU_PROCHOT_L, TRUE);
     if (!s_apuProchotAsserted)
     {
@@ -383,11 +407,12 @@ void SysMonitor_AssertApuProchot(void)
 
 void SysMonitor_DeassertApuProchot(void)
 {
-    /* Reset the assert-once flag — but as a static local inside
-     * AssertApuProchot, we can't reach it.  Better to use a
-     * file-scope static for both. */
     prv_SetPin(&PIN_APU_PROCHOT_L, FALSE);
-    Debug_Print("[SYS] APU_PROCHOT_L released HIGH by TC387\r\n");
+    if (s_apuProchotAsserted)
+    {
+        s_apuProchotAsserted = FALSE;
+        Debug_Print("[SYS] APU_PROCHOT_L released HIGH by TC387\r\n");
+    }
 }
 
 void SysMonitor_AssertCaterr(void)
@@ -404,8 +429,7 @@ void SysMonitor_DeassertCaterr(void)
 
 boolean SysMonitor_IsThrottling(void)
 {
-    return s_thermalThrottle
-        || s_prochotActive
+    return s_thermalThrottle || s_prochotActive || s_i2cFailProchot
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
         || s_carrierHotState
 #endif

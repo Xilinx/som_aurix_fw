@@ -31,7 +31,17 @@ typedef enum
     TLF_ERR_STATE   = 3,
     TLF_ERR_FWD     = 4,
     TLF_ERR_SPI_TIMEOUT = 5,
+    TLF_ERR_PROT        = 6,   /* ADD: unlock/lock sequence rejected      */
+    TLF_ERR_VERIFY      = 7,
 } Tlf35585_Status_t;
+
+typedef struct
+{
+    uint8       reqAddr;   /* 0x04..0x0A — write here, echo-readable   */
+    uint8       actAddr;   /* 0x0B..0x11 — active copy, updates on lock */
+    uint8       value;
+    const char *name;
+} TlfProtReg_t;
 
 /* ================================================================== */
 /*  Register addresses (from Infineon TLF35585 reference)             */
@@ -122,10 +132,6 @@ typedef enum
 /* ================================================================== */
 /*  WDCFG0 bits  (verified — WWDETHR field added)                     */
 /* ================================================================== */
-#define TLF_WDCFG0_WDCYC        (1u << 0)
-#define TLF_WDCFG0_WWDTSEL      (1u << 1)
-#define TLF_WDCFG0_FWDEN        (1u << 2)
-#define TLF_WDCFG0_WWDEN        (1u << 3)
 #define TLF_WDCFG0_WWDETHR_MASK 0xF0u       /* WWD error threshold    */
 #define TLF_WDCFG0_WWDETHR_SHIFT 4u
 
@@ -226,14 +232,19 @@ typedef struct
 #define TLF_WDCFG0_FWDEN        (1u << 2)
 #define TLF_WDCFG0_WWDEN        (1u << 3)
 #define TLF_WDCFG0_WWDETHR(n)   (((uint8)(n) & 0x0Fu) << 4)   /* WWD error threshold, bits 7:4 */
+#define TLF_INITERR_VMONF   (1u << 2)   /* voltage monitor failure in INIT */
+#define TLF_INITERR_WWDF    (1u << 3)   /* WWD not serviced in INIT        */
+#define TLF_INITERR_FWDF    (1u << 4)   /* FWD failure in INIT             */
+#define TLF_INITERR_ERRF    (1u << 5) 
 
 /* Init value: watchdogs off, SPI trigger preselected (used by EarlyInit) */
 #define TLF_WDCFG0_INIT_DISABLED   (TLF_WDCFG0_WWDTSEL)
 
-/* Runtime value: WWD on, SPI trigger, WDCYC=0.1ms, error threshold 9.
- * = 0x9A, matching the Infineon reference init value.                  */
+/* Runtime: WWD on, SPI trigger, WDCYC=1 (1ms tick), error threshold 9.
+ * = 0x9B. NOTE: equals the reset default, so activation is proven via
+ * WWDCFG0/1 (0x01/0x03 vs defaults 0x06/0x0B), not via this register. */
 #define TLF_WDCFG0_RUNTIME  (TLF_WDCFG0_WWDETHR(9u) | TLF_WDCFG0_WWDEN \
-                           | TLF_WDCFG0_WWDTSEL | TLF_WDCFG0_WDCYC)  
+                           | TLF_WDCFG0_WWDTSEL | TLF_WDCFG0_WDCYC)
 
 #define TLF_WWDSTAT_WWDECNT_MASK   (0x1Fu) 
 

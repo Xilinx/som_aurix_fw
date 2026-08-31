@@ -18,11 +18,16 @@
 #include "PowerManager.h"
 #include "Tlf35585.h"
 #include "Ipc.h"
-
-#if !defined(TARGET_EVAL_BOARD)
+#include "SelfTest.h"
 #include "SysMonitor.h"
 #include "UsbPd_Manager.h"
-#endif
+#include "Platform_PinCfg.h"
+#include "FwUpdate.h"
+#include "I2c_Master.h"
+#include "IfxAsclin_Asc.h"
+#include "Uart_Xfer.h"
+#include "Cypd6129_Drv.h"
+
 
 /* ================================================================== */
 /*  External references (defined in Uart_Debug.c)                     */
@@ -37,10 +42,18 @@ extern IfxAsclin_Asc *Debug_GetAscHandle(void);
 /* ================================================================== */
 /*  State                                                             */
 /* ================================================================== */
-
 static char    s_cmdBuf[CLI_MAX_CMD_LEN + 1u];
 static uint8   s_cmdLen = 0u;
 static boolean s_initialised = FALSE;
+static uint32        s_schedCmd     = 0u;   /* 0 = none */
+static uint32        s_schedDelayMs = 0u;
+static uint32        s_schedOnSeen  = 0u;   /* ms timestamp when ON first seen */
+
+static boolean s_autobootArmed = (AUTOBOOT_DEFAULT != 0u);
+static boolean s_autobootDone  = FALSE;   /* one shot per AURIX boot      */
+static uint32  s_cliUpMs       = 0u;
+static uint32  s_onSeenMs      = 0u;
+
 
 /* ================================================================== */
 /*  Private: string helpers                                           */
@@ -48,6 +61,7 @@ static boolean s_initialised = FALSE;
 
 static boolean prv_StrEq(const char *a, const char *b)
 {
+    if ((a == NULL_PTR) || (b == NULL_PTR)) return FALSE;
     while (*a && *b)
     {
         if (*a != *b) return FALSE;
@@ -59,6 +73,7 @@ static boolean prv_StrEq(const char *a, const char *b)
 /** Check if s starts with prefix, return pointer past prefix or NULL */
 static const char *prv_StartsWith(const char *s, const char *prefix)
 {
+    if ((s == NULL_PTR) || (prefix == NULL_PTR)) return NULL_PTR;
     while (*prefix)
     {
         if (*s != *prefix) return NULL_PTR;
@@ -77,6 +92,21 @@ static uint32 prv_Atoi(const char *s)
         s++;
     }
     return val;
+}
+
+static uint32 prv_AtoiHex(const char *s)
+{
+    uint32 v = 0u;
+    if ((s[0] == '0') && ((s[1] == 'x') || (s[1] == 'X'))) s += 2;
+    while (1)
+    {
+        char c = *s++;
+        if      ((c >= '0') && (c <= '9')) v = (v << 4u) | (uint32)(c - '0');
+        else if ((c >= 'a') && (c <= 'f')) v = (v << 4u) | (uint32)(c - 'a' + 10);
+        else if ((c >= 'A') && (c <= 'F')) v = (v << 4u) | (uint32)(c - 'A' + 10);
+        else break;
+    }
+    return v;
 }
 
 /** Skip leading spaces */
@@ -107,13 +137,12 @@ static void prv_CmdHelp(void)
         "  nvlog recent [N]  Last N events\r\n"
         "  fusa        FUSA_SPI register dump\r\n"
         "  bist        POST/BIST status\r\n"
-#if !defined(TARGET_EVAL_BOARD)
         "  usbpd       USB PD port states\r\n"
         "  temp        APU temperature\r\n"
-#endif
         "  uptime      Seconds since boot\r\n"
         "  version     Firmware version\r\n"
         "  help        This message\r\n"
+        "  selftest    Usage: selftest [all|crc|sota|swap|fusa|pm|usbpd|fwup] \r\n"
     );
 }
 
@@ -154,38 +183,38 @@ static void prv_CmdStatus(void)
                      (bist.postResult == BIST_ERR_NO_META) ? "SKIP" : "FAIL");
     }
 
-#if !defined(TARGET_EVAL_BOARD)
     Debug_Printf("  PROCHOT:  %u\r\n",
                  (unsigned)SysMonitor_IsThrottling());
-#endif
 
     Debug_Print("=====================\r\n");
 }
 
 static void prv_CmdPowerOn(void)
 {
-    if (PowerManager_GetState() != PM_STATE_OFF)
+    uint32 st = g_ipcShared.pmc.pmState;
+    if ((st != (uint32)PM_STATE_OFF) && (st != (uint32)PM_STATE_S5))
     {
-        Debug_Printf("  Rejected: current state is %u (not OFF)\r\n",
-                     (unsigned)PowerManager_GetState());
+        Debug_Printf("  Rejected: PM state is %u (not OFF/S5)\r\n", (unsigned)st);
         return;
     }
     Debug_Print("  Requesting power on...\r\n");
-    PowerManager_RequestPowerOn();
+    if (!Ipc_SendCommandWait(IPC_CMD_POWER_ON, 0u, 200u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdPowerOff(void)
 {
-    if (PowerManager_GetState() != PM_STATE_ON)
+    if (g_ipcShared.pmc.pmState != PM_STATE_ON)
     {
         Debug_Printf("  Rejected: current state is %u (not ON)\r\n",
-                     (unsigned)PowerManager_GetState());
+                     (unsigned)g_ipcShared.pmc.pmState);
         return;
     }
     Debug_Print("  Requesting power off...\r\n");
     NvLog_WriteU32(NVLOG_EVT_SHUTDOWN_OPERATOR, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    PowerManager_RequestPowerOff();
+    if (!Ipc_SendCommandWait(IPC_CMD_POWER_OFF, 0u, 200u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdForceOff(void)
@@ -194,21 +223,23 @@ static void prv_CmdForceOff(void)
     NvLog_WriteU32(NVLOG_EVT_SHUTDOWN_FORCED, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_WARNING, 0u);
     NvLog_SealSlot(NVLOG_EVT_SHUTDOWN_FORCED);
-    PowerManager_RequestPowerOff();  /* Same as graceful for now */
+    if (!Ipc_SendCommandWait(IPC_CMD_FORCED_OFF, 0u, 200u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdWarmReset(void)
 {
-    if (PowerManager_GetState() != PM_STATE_ON)
+    if (g_ipcShared.pmc.pmState != PM_STATE_ON)
     {
         Debug_Printf("  Rejected: current state is %u (not ON)\r\n",
-                     (unsigned)PowerManager_GetState());
+                     (unsigned)g_ipcShared.pmc.pmState);
         return;
     }
     Debug_Print("  Requesting warm reset...\r\n");
     NvLog_WriteU32(NVLOG_EVT_RESET_WARM, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    PowerManager_RequestWarmReset();
+    if (!Ipc_SendCommandWait(IPC_CMD_WARM_RESET, 0u, 200u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdColdReset(void)
@@ -221,13 +252,14 @@ static void prv_CmdColdReset(void)
 
 static void prv_CmdClearFault(void)
 {
-    if (PowerManager_GetState() != PM_STATE_FAULT)
+    if (g_ipcShared.pmc.pmState != PM_STATE_FAULT)
     {
         Debug_Print("  No fault to clear\r\n");
         return;
     }
     Debug_Print("  Clearing fault latch...\r\n");
-    PowerManager_ClearFault();
+    if (!Ipc_SendCommandWait(IPC_CMD_CLEAR_FAULT, 0u, 200u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdTlf(void)
@@ -316,7 +348,6 @@ static void prv_CmdVersion(void)
     Debug_Printf("  TC387 COM-HPC Controller v0.1\r\n");
 }
 
-#if !defined(TARGET_EVAL_BOARD)
 static void prv_CmdUsbPd(void)
 {
     uint8 i;
@@ -340,7 +371,231 @@ static void prv_CmdTemp(void)
      * If not exposed, print "not available". */
     Debug_Print("  APU temp: read via 'status' (SB-TSI polled in SysMonitor)\r\n");
 }
-#endif
+
+static void prv_CmdMux(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    if (prv_StrEq(a, "apu"))
+    {
+        Debug_Print("  UART MUX -> APU. CLI unreachable on this port;\r\n"
+                    "  use side UART or reset to return.\r\n");
+        Stm_DelayMs(20u);                    /* let the warning flush */
+        IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                          PIN_UART_MUX_SEL.pinIdx);   /* check polarity! */
+    }
+    else if (prv_StrEq(a, "aurix"))
+    {
+        IfxPort_setPinHigh(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                           PIN_UART_MUX_SEL.pinIdx);
+        Debug_Print("  UART MUX -> AURIX\r\n");
+    }
+    else
+        Debug_Print("  usage: mux apu|aurix\r\n");
+}
+
+static void prv_CmdAutoboot(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    if      (prv_StrEq(a, "on"))  { s_autobootArmed = TRUE;  s_autobootDone = FALSE; }
+    else if (prv_StrEq(a, "off")) { s_autobootArmed = FALSE; }
+    else { Debug_Printf("  autoboot: %u (usage: autoboot on|off)\r\n",
+                        (unsigned)s_autobootArmed); return; }
+    Debug_Printf("  autoboot = %u\r\n", (unsigned)s_autobootArmed);
+}
+
+
+static void prv_CmdSched(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    const char *num;
+    if      ((num = prv_StartsWith(a, "off "))   != NULL_PTR) s_schedCmd = (uint32)IPC_CMD_POWER_OFF;
+    else if ((num = prv_StartsWith(a, "force ")) != NULL_PTR) s_schedCmd = (uint32)IPC_CMD_FORCED_OFF;
+    else if ((num = prv_StartsWith(a, "warm "))  != NULL_PTR) s_schedCmd = (uint32)IPC_CMD_WARM_RESET;
+    else if (prv_StrEq(a, "cancel")) { s_schedCmd = 0u; Debug_Print("  sched cleared\r\n"); return; }
+    else { Debug_Print("  usage: sched off|force|warm <secs> | sched cancel\r\n"); return; }
+    s_schedDelayMs = prv_Atoi(prv_SkipSpaces(num)) * 1000u;
+    s_schedOnSeen  = 0u;
+    Debug_Printf("  armed: cmd=%u, %u ms after ON\r\n",
+                 (unsigned)s_schedCmd, (unsigned)s_schedDelayMs);
+}
+
+static void prv_CmdI2cScan(const char *args)
+{
+    uint8 addr, dummy, found = 0u;
+    uint32 histo[8] = {0};
+    uint8 bus = 1u;                              /* default: APML */
+    const char *a = prv_SkipSpaces(args);
+    if (*a != '\0') bus = (uint8)prv_Atoi(a);
+    if (bus > 1u) { Debug_Print("[I2C] usage: i2cscan [0|1]\r\n"); return; }
+
+    Debug_Printf("[I2C] scanning bus %u (%s) 0x08-0x77...\r\n",
+                 (unsigned)bus, (bus == 1u) ? "APML" : "HPI");
+    for (addr = 0x08u; addr <= 0x77u; addr++)
+    {
+        I2c_Status_t st;
+        if (bus == 1u)
+            st = I2cMaster_ApmlReadByte(addr, 0x00u, &dummy);
+        else
+            st = I2cMaster_ReadReg16_Bus(0u, addr, 0x0000u, &dummy, 1u);
+        if (st == I2C_OK) { Debug_Printf("[I2C]   ACK at 0x%02X\r\n", (unsigned)addr); found++; }
+        else if ((uint32)st < 8u) histo[(uint32)st]++;
+    }
+    Debug_Printf("[I2C] done, %u device(s); errs:", (unsigned)found);
+    { uint32 i; for (i = 0u; i < 8u; i++) if (histo[i]) Debug_Printf(" [%u]x%u", (unsigned)i, (unsigned)histo[i]); }
+    Debug_Print("\r\n");
+}
+
+static void prv_CmdI2cStat(void)
+{
+    Debug_Printf("[I2C] BUSSTAT bus0=%u bus1=%u\r\n",
+                 (unsigned)I2cMaster_GetRawBusStatus(0u),
+                 (unsigned)I2cMaster_GetRawBusStatus(1u));
+}
+
+/* In DebugCli.c: */
+static void prv_CmdFwUpdate(void)
+{
+    Debug_Print("[FWUP] Entering update mode on debug UART...\r\n");
+    Debug_Print("[FWUP] Run aurix_update.py now. Press ESC to abort.\r\n");
+
+    UartXfer_SetHandle(Debug_GetAscHandle());
+    FwUpdate_Abort();  /* Reset state to IDLE */
+
+    while (1)
+    {
+        FwUpdate_State_t st = FwUpdate_Run();
+        Tlf35585_ServiceWdt();
+
+        if (st == FWUPDATE_DONE || st == FWUPDATE_ERROR)
+            break;
+    }
+
+    UartXfer_SetHandle(NULL_PTR);  /* Restore default */
+    Debug_Print("[FWUP] Exited update mode\r\n");
+}
+
+
+static void prv_CmdSysmon(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    if (prv_StrEq(a, "pause"))
+    {
+        g_ipcShared.sysmonPause = 1u;
+        __dsync();
+        Debug_Print("  SysMonitor paused (APML bus free for diagnostics)\r\n");
+    }
+    else if (prv_StrEq(a, "resume"))
+    {
+        g_ipcShared.sysmonPause = 0u;
+        __dsync();
+        Debug_Print("  SysMonitor resumed\r\n");
+    }
+    else
+    {
+        Debug_Printf("  sysmon: %s (usage: sysmon pause|resume)\r\n",
+                     (g_ipcShared.sysmonPause != 0u) ? "PAUSED" : "running");
+    }
+}
+
+static void prv_CmdI2cReset(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    uint8 bus = (uint8)prv_Atoi(a);
+    if ((*a == '\0') || (bus > 1u)) { Debug_Print("[I2C] usage: i2creset 0|1\r\n"); return; }
+    I2cMaster_ReinitBus(bus);
+    Debug_Printf("[I2C] bus %u reinitialised, BUSSTAT now %u\r\n",
+                 (unsigned)bus, (unsigned)I2cMaster_GetRawBusStatus(bus));
+}
+
+static void prv_CmdI2cId(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    uint8 addr;
+    uint8 buf[2];
+    I2c_Status_t st;
+
+    if (*a == '\0') { Debug_Print("[I2C] usage: i2cid <hex addr, e.g. 54>\r\n"); return; }
+    addr = (uint8)prv_AtoiHex(a);                       /* see below */
+
+    st = I2cMaster_ReadReg16_Bus(0u, addr, CYPD_REG_SILICON_ID, buf, 2u);
+    if (st == I2C_OK)
+        Debug_Printf("[I2C] 0x%02X: SILICON_ID=0x%02X%02X\r\n",
+                     (unsigned)addr, (unsigned)buf[1], (unsigned)buf[0]);
+    else
+        Debug_Printf("[I2C] 0x%02X: SILICON_ID read failed (%u) — not HPI?\r\n",
+                     (unsigned)addr, (unsigned)st);
+
+    st = I2cMaster_ReadReg16_Bus(0u, addr, CYPD_REG_DEVICE_MODE, buf, 2u);
+    if (st == I2C_OK)
+        Debug_Printf("[I2C] 0x%02X: DEVICE_MODE=0x%02X%02X\r\n",
+                     (unsigned)addr, (unsigned)buf[1], (unsigned)buf[0]);
+}
+
+static void prv_CmdI2cRead(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    uint8 bus, addr, len, i;
+    uint16 reg;
+    uint8 buf[8];
+    I2c_Status_t st;
+
+    bus = (uint8)prv_Atoi(a);           while ((*a >= '0') && (*a <= '9')) a++;
+    a = prv_SkipSpaces(a); addr = (uint8)prv_AtoiHex(a);  while (*a && (*a != ' ')) a++;
+    a = prv_SkipSpaces(a); reg  = (uint16)prv_AtoiHex(a); while (*a && (*a != ' ')) a++;
+    a = prv_SkipSpaces(a); len  = (*a != '\0') ? (uint8)prv_Atoi(a) : 2u;
+    if ((bus > 1u) || (len == 0u) || (len > 8u))
+    { Debug_Print("[I2C] usage: i2cread <bus> <addr> <reg16> [len<=8]\r\n"); return; }
+
+    st = I2cMaster_ReadReg16_Bus(bus, addr, reg, buf, len);
+    if (st != I2C_OK)
+    { Debug_Printf("[I2C] 0x%02X reg 0x%04X: err %u\r\n",
+                   (unsigned)addr, (unsigned)reg, (unsigned)st); return; }
+    Debug_Printf("[I2C] 0x%02X reg 0x%04X:", (unsigned)addr, (unsigned)reg);
+    for (i = 0u; i < len; i++) Debug_Printf(" %02X", (unsigned)buf[i]);
+    Debug_Print("\r\n");
+}
+
+static void prv_CmdPin(void)
+{
+    Debug_Print("[PIN] name              lvl\r\n");
+    Debug_Printf("[PIN] PLTRST_L (P34.2)   %u   (1 = carrier out of reset)\r\n",
+                 (unsigned)prv_ReadPin(&PIN_PLTRST_L));
+    Debug_Printf("[PIN] APU_RESET_IN_L     %u   (mirror input: must be 1)\r\n",
+                 (unsigned)prv_ReadPin(&PIN_APU_RESET_IN_L));
+    Debug_Printf("[PIN] CB_RSTBTN_L        %u   (mirror input: must be 1)\r\n",
+                 (unsigned)prv_ReadPin(&PIN_CB_RSTBTN_L));
+    Debug_Printf("[PIN] RSMRST_OUT_L       %u\r\n",
+                 (unsigned)prv_ReadPin(&PIN_RSMRST_OUT_L));
+    Debug_Printf("[PIN] COLD_RST           %u\r\n",
+                 (unsigned)prv_ReadPin(&PIN_COLD_RST));
+    Debug_Printf("[PIN] APU_PWROK          %u   VIN_PWR_OK %u\r\n",
+                 (unsigned)prv_ReadPin(&PIN_APU_PWROK),
+                 (unsigned)prv_ReadPin(&PIN_VIN_PWR_OK));
+    Debug_Printf("[PIN] SLP_S3 %u  SLP_S5 %u  THERMTRIP_L %u\r\n",
+                 (unsigned)prv_ReadPin(&PIN_SLP_S3),
+                 (unsigned)prv_ReadPin(&PIN_SLP_S5),
+                 (unsigned)prv_ReadPin(&PIN_THERMTRIP_L));
+    {
+        uint8 i, pdHi = 0u, apmlHi = 0u;
+        for (i = 0u; i < 10u; i++)
+        {
+            if (prv_ReadPin(&PIN_USBC_PD_ALERT_L)) pdHi++;
+            if (prv_ReadPin(&PIN_APML_ALERT))      apmlHi++;
+            Stm_DelayMs(1u);
+        }
+        Debug_Printf("[PIN] USBC_PD_ALERT_L    %u/10 high  %s\r\n",
+                     (unsigned)pdHi,
+                     (pdHi == 10u) ? "(pulled up - PD domain alive?)" :
+                     (pdHi == 0u)  ? "(solid low - asserted or dead)"  :
+                                     "(UNSTABLE - floating!)");
+        Debug_Printf("[PIN] APML_ALERT         %u/10 high  %s\r\n",
+                     (unsigned)apmlHi,
+                     (apmlHi == 10u) ? "(pulled up)" :
+                     (apmlHi == 0u)  ? "(solid low)" : "(UNSTABLE - floating!)");
+        Debug_Printf("[PIN] USBC_PD_INT (10.8) %u\r\n",
+                     (unsigned)prv_ReadPin(&PIN_USBC_PD_INT_TO_APU));
+    }
+}
 
 /* ================================================================== */
 /*  Command dispatch                                                  */
@@ -379,21 +634,61 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdFusa();
     else if (prv_StrEq(cmd, "bist"))
         prv_CmdBist();
+    else if (((args = prv_StartsWith(cmd, "i2cscan")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cScan(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2cid")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cId(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2cread8")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cRead(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2cread")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cRead(args);
+
+    else if (((args = prv_StartsWith(cmd, "pin")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPin();
+
+    else if (prv_StrEq(cmd, "i2cstat"))
+        prv_CmdI2cStat();
+    else if (((args = prv_StartsWith(cmd, "i2creset")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cReset(args);
+    else if (((args = prv_StartsWith(cmd, "sysmon")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSysmon(args);
+    else if (((args = prv_StartsWith(cmd, "mux")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdMux(args);                            
+    else if (prv_StrEq(cmd, "uptime"))
+        prv_CmdUptime();
     else if (prv_StrEq(cmd, "uptime"))
         prv_CmdUptime();
     else if (prv_StrEq(cmd, "version"))
         prv_CmdVersion();
-#if !defined(TARGET_EVAL_BOARD)
+    else if ((args = prv_StartsWith(cmd, "selftest")) != NULL_PTR)
+        SelfTest_CliDispatch(args);
+    else if (prv_StrEq(args, "hpd"))
+        SelfTest_UsbPdHpd();
+    else if (prv_StrEq(args, "topo"))
+        SelfTest_UsbPdTopology();
+    else if (prv_StrEq(args, "usbpd_edge"))
+        SelfTest_UsbPdEdgeCases();
     else if (prv_StrEq(cmd, "usbpd"))
         prv_CmdUsbPd();
     else if (prv_StrEq(cmd, "temp"))
         prv_CmdTemp();
-#endif
+    else if (((args = prv_StartsWith(cmd, "autoboot")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))   /* ADD */
+        prv_CmdAutoboot(args);                                                                                 /* ADD */
+    else if (((args = prv_StartsWith(cmd, "sched")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSched(args);
+    else if (prv_StrEq(cmd, "fwupdate"))
+        prv_CmdFwUpdate();                                                                                  /* ADD */
     else
         Debug_Printf("  Unknown command: '%s'. Type 'help'.\r\n", cmd);
 }
 
-/* ================================================================== */
+
+
+
+/* =========1========================================================= */
 /*  Public API                                                        */
 /* ================================================================== */
 
@@ -402,7 +697,9 @@ void DebugCli_Init(void)
     s_cmdLen = 0u;
     s_cmdBuf[0] = '\0';
     s_initialised = TRUE;
-
+    s_cliUpMs = Stm_GetTimeMs();
+    if (s_autobootArmed)
+        Debug_Print(" AUTOBOOT in 5s — press any key to cancel\r\n");
     Debug_Print("\r\n");
     Debug_Print("=================================\r\n");
     Debug_Print(" TC387 COM-HPC Controller CLI\r\n");
@@ -428,7 +725,11 @@ void DebugCli_Run(void)
         count = 1u;
         if (!IfxAsclin_Asc_read(asc, &ch, &count, 0u) || count == 0u)
             break;
-
+        if (s_autobootArmed && !s_autobootDone)
+        {
+            s_autobootArmed = FALSE;
+            Debug_Print("\r\n  [autoboot cancelled]\r\n");
+        }
         /* Echo the character */
         {
             Ifx_SizeT echoCount = 1u;
@@ -458,5 +759,48 @@ void DebugCli_Run(void)
             /* Normal character */
             s_cmdBuf[s_cmdLen++] = (char)ch;
         }
+    }
+}
+
+
+
+
+void DebugCli_Poll(void)
+{
+    uint32 now = Stm_GetTimeMs();
+
+    /* ---- Autoboot ------------------------------------------------- */
+    if (s_autobootArmed && !s_autobootDone
+        && ((now - s_cliUpMs) >= AUTOBOOT_DELAY_MS)
+        && g_ipcShared.cpu1Ready
+        && (g_ipcShared.pmc.pmState == (uint32)PM_STATE_OFF))
+    {
+        s_autobootDone = TRUE;
+        Debug_Print("[SYS] AUTOBOOT: requesting power on\r\n");
+        NvLog_WriteU32(NVLOG_EVT_BOOT, NVLOG_SRC_SYSTEM, NVLOG_SEV_INFO, 0xAB007u);
+        if (!Ipc_SendCommandWait(IPC_CMD_POWER_ON, 0u, 200u))
+            Debug_Print("[SYS] AUTOBOOT: CPU1 did not ack\r\n");
+    }
+
+    if (g_ipcShared.pmc.pmState == (uint32)PM_STATE_ON)
+    {
+        if (s_onSeenMs == 0u) s_onSeenMs = now;
+
+        /* ---- Scheduled command ------------------------------------ */
+        if ((s_schedCmd != 0u)
+            && ((now - s_onSeenMs) >= s_schedDelayMs))
+        {
+            uint32 cmd = s_schedCmd;
+            s_schedCmd = 0u;                     /* one shot */
+            Debug_Printf("[SYS] SCHED: sending cmd %u\r\n", (unsigned)cmd);
+            NvLog_WriteU32(NVLOG_EVT_SHUTDOWN_OPERATOR, NVLOG_SRC_DEBUG,
+                           NVLOG_SEV_INFO, cmd);
+            if (!Ipc_SendCommandWait((Ipc_Command_t)cmd, 0u, 200u))
+                Debug_Print("[SYS] SCHED: CPU1 did not ack\r\n");
+        }
+    }
+    else
+    {
+        s_onSeenMs     = 0u;
     }
 }

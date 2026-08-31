@@ -188,17 +188,5 @@ void core2_main(void)
     }
 }
 
-void core3_main(void)
-{
-    *(volatile uint32 *)0xB0050008u = 0xC3C3C3C3u;
-    IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
-    IfxCpu_emitEvent(&g_cpuSyncEvent);
-    Debug_Printf("[SYS] canaries: %08X %08X %08X\r\n",
-             *(volatile uint32 *)0xB0050000u,
-             *(volatile uint32 *)0xB0050004u,
-             *(volatile uint32 *)0xB0050008u);
-    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}
-    for (;;) { __nop(); }
-}
 
 

@@ -21,12 +21,14 @@
 #include <string.h>
 #include "IfxCpu_Irq.h"
 #include "Ipc.h"
+#include "Bsp.h"
 
 #define TX_DATA_SIZE        4096u
 #define FMT_BUF_SIZE        256u
 #define UART_TX_ISR_PRIO    5u   /* below ERU_PRIO_THERMTRIP/CARRIER_HOT/
                                   * WD_STROBE (20/21/22) */
 #define UART_RX_ISR_PRIO    6u    /* ADD */
+#define UART_TX_TIMEOUT_TICKS   IfxStm_getTicksFromMilliseconds(BSP_DEFAULT_TIMER, 20)
 
 /* TX buffer must include Ifx_Fifo header + 8-byte alignment guard. */
 static IfxAsclin_Asc s_ascHandle;
@@ -112,13 +114,14 @@ void Debug_DrainRings(void)
         uint32 h = rings[i]->head;
         while (t != h)
         {
-            /* contiguous run up to wrap point, then one Asc write */
             uint32 end = (h > t) ? h : DBGRING_SIZE;
             Ifx_SizeT count = (Ifx_SizeT)(end - t);
             (void)IfxAsclin_Asc_write(&s_ascHandle,
                                       (const void *)&rings[i]->buf[t],
-                                      &count, TIME_INFINITE);
+                                      &count, UART_TX_TIMEOUT_TICKS);
             t = (t + (uint32)count) & (DBGRING_SIZE - 1u);
+            if (count == 0)
+                break;              /* TX stalled: bail, retry next loop pass */
         }
         rings[i]->tail = t;
     }

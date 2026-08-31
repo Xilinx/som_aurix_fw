@@ -13,6 +13,7 @@
 #include "AppPin.h"
 #include "PwrGood_Mon.h"
 #include "Platform_PinCfg.h"
+#include "Platform_Cfg.h"
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
 #include "IfxPort.h"
@@ -53,7 +54,6 @@ static uint32  s_wakeStartMs         = 0u;     /* armed at each ON-bound trigger
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
-
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -410,10 +410,13 @@ static void prv_UartClaimByAurix(void)
 
 static void prv_UartReleaseToSoc(void)
 {
+#if (PM_MUX_FOLLOW_POWER == 1u)
     /* Print last AURIX diagnostic before relinquishing the UART path. */
     Debug_Print("[PM] UART MUX -> x86 SoC (UART_MUX_SEL=0)\r\n");
     IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
                       PIN_UART_MUX_SEL.pinIdx);
+#else
+#endif
 }
 
 static void prv_AssertApuReset(void)
@@ -512,7 +515,6 @@ static void prv_GoToS5(void)
 
     /* Secure APU and deassert PWRGD before touching rails. */
     prv_UartClaimByAurix();
-    prv_AssertKbrst();
     prv_DeassertPwrgd();
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
@@ -939,6 +941,7 @@ void PowerManager_Run(void)
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S5)) break;
 
             prv_DeassertApuReset();
+            prv_DeassertKbrst();
             Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                         /* Hand UART to APU just before RSMRST_L release */
             prv_UartReleaseToSoc();
@@ -1021,7 +1024,6 @@ void PowerManager_Run(void)
             Stm_DelayMs(PM_RESET_HOLD_AFTER_PWRGD_MS);
 
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0)) break;
-            prv_DeassertKbrst();  /* KBRST_L released    */
 
             /* Added  PWROK check with PIN_APU_PWROK */
             /* T6: wait for SoC PWROK assertion (21.4ms per AMD spec) */
@@ -1100,11 +1102,10 @@ void PowerManager_Run(void)
                 s_shutdownToOff = TRUE;
                 s_waitForBtnRelease = TRUE;
                 s_thermtripDebounce = 0u;
-                /* Neither SYS_RESET_L nor RSMRST_L is asserted here —
-                 * Group B stays powered throughout this S0->S5
-                 * transition, so neither signal is toggled. */
+                /* Neither SYS_RESET_L, KBRST_L, nor RSMRST_L is asserted
+                 * here — Group B stays powered throughout this S0->S5
+                 * transition, so none of these signals are toggled. */
                 prv_UartClaimByAurix();
-                prv_AssertKbrst();
                 //prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 //prv_AssertPltrst();
@@ -1121,7 +1122,6 @@ void PowerManager_Run(void)
                 s_s0i3EntryMs = Stm_GetTimeMs();
                 s_slpS3WasActive = TRUE;   /* arm wake-edge detect for DN_S3_S5 */
                 prv_UartClaimByAurix();
-                prv_AssertKbrst();
                 // prv_AssertRsmrst();
                 prv_DeassertPwrgd();
                 //prv_AssertPltrst();
@@ -1226,7 +1226,10 @@ void PowerManager_Run(void)
                     s_pwrBtnDebounce     = 0u;
                     s_wakeStartMs        = Stm_GetTimeMs();
 
+                    /* Normal behavior expects ApuReset and Kbrst to already
+                     * be deasserted at this point. */
                     prv_DeassertApuReset();
+                    prv_DeassertKbrst();
                     Stm_DelayMs(PM_RSMRST_DELAY_AFTER_S5_MS);
                     prv_UartReleaseToSoc();
 
@@ -1326,7 +1329,6 @@ void PowerManager_Run(void)
                 s_wakeStartMs        = Stm_GetTimeMs();
                 //prv_DeassertRsmrst();
                 prv_UartReleaseToSoc();
-                prv_DeassertKbrst();
                 if (slpS3WakeEdge)
                 {
                     Debug_Print("[PM] SLP_S3_L rising edge — autonomous S0i3 wake, "
@@ -1472,6 +1474,17 @@ uint8 PowerManager_GetRetryCount(void)
     return s_retryCount;
 }
 
+void PowerManager_RequestForcedOff(void)
+{
+    if (s_state == PM_STATE_ON || s_state == PM_STATE_FAULT)
+    {
+        Debug_Print("[PM] Forced off requested\r\n");
+        prv_AssertApuReset();
+        prv_UartClaimByAurix();
+        prv_SetState(PM_STATE_OFF);
+    }
+}
+
 void PowerManager_RequestWarmReset(void)
 {
     if (s_state == PM_STATE_ON)
@@ -1489,15 +1502,7 @@ void PowerManager_RequestColdReset(void)
         prv_AssertApuReset();
         prv_UartClaimByAurix();
         prv_SetState(PM_STATE_DN_S0_S3);
-    }
-}
-
-void PowerManager_RequestForcedOff(void)
-{
-    if (s_state == PM_STATE_ON || s_state == PM_STATE_FAULT)
-    {
-        Debug_Print("[PM] Forced off requested\r\n");
-        prv_SetState(PM_STATE_OFF);
+        s_powerOnReq = TRUE;
     }
 }
 

@@ -165,7 +165,7 @@ typedef struct
     Ipc_FusaStatus_t  fusa;            /**< CPU2 → all: FuSa status */
     volatile uint32   cpu1Ready;       /**< Set TRUE by CPU1 when init complete */
     volatile uint32   cpu2Ready;       /**< Set TRUE by CPU2 when init complete */
-
+    volatile uint32 sysmonPause;
 } Ipc_SharedMem_t;
 
 typedef struct {
@@ -211,6 +211,10 @@ void Ipc_Init(void);
  * @param  param  Command-specific parameter.
  */
 void Ipc_SendCommand(Ipc_Command_t cmd, uint32 param);
+
+
+boolean Ipc_SendCommandWait(Ipc_Command_t cmd, uint32 param, uint32 timeoutMs);
+
 
 /**
  * @brief  Check if the last command was acknowledged by CPU1.

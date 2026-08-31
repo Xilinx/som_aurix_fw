@@ -21,7 +21,6 @@
 
 #include "Ifx_Types.h"
 
-
 /* Maximum number of monitored channels across all groups */
 #define VOLTMON_MAX_CHANNELS    24u
 
@@ -30,11 +29,7 @@
 #define VOLTMON_VREF_MV         5000u
 #define VOLTMON_ADC_MAX         4095u    /* 12-bit resolution */
 
-#define VOLTMON_SMA_ENABLE      0u
-
-#ifndef VOLTMON_RECOVERY_SAMPLES
-#define VOLTMON_RECOVERY_SAMPLES  10u
-#endif
+#define VOLTMON_SMA_ENABLE      1u
 
 #if (VOLTMON_SMA_ENABLE == 1u)
 #define VOLTMON_SMA_SHIFT       2u
@@ -49,12 +44,6 @@ typedef enum
     VOLTMON_FAULT       = 2u,   /* confirmed UV/OV, notify APU */
     VOLTMON_CRITICAL    = 3u    /* emergency, disable rail */
 } VoltMon_Severity_t;
-
-typedef struct {
-    boolean faulted;        /* current latched fault state          */
-    VoltMon_Severity_t level;       /* OK / WARNING / FAULT, latched   */
-    uint8              goodCount;   /* recovery hysteresis counter     */
-} VoltMon_ChFaultState_t;
 
 /* Per-channel configuration */
 typedef struct
@@ -128,12 +117,10 @@ void VoltMon_Disable(void);
  */
 void VoltMon_SetSmaTaps(uint8 taps);
 
-/* TRUE while any configured channel is in fault state (UV or OV),
- * with recovery hysteresis — see VOLTMON_RECOVERY_SAMPLES. */
+/**
+ * @brief Sees if any fault is active
+ */
 boolean VoltMon_AnyFaultActive(void);
-
-/* Per-channel query, for diagnostics / FusaSpi register map */
-boolean VoltMon_IsChannelFaulted(uint32 ch);
 
 #if defined(TARGET_EVAL_BOARD)
 void VoltMon_PrintReport(void);

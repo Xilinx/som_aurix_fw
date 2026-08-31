@@ -156,7 +156,8 @@ Bist_Status_t Bist_RunPost(void (*keepAliveCb)(void))
     s_postDone = TRUE;
 
     Debug_Printf("[BIST] POST %s in %u ms\r\n",
-                 (s_stats.postResult == BIST_OK) ? "PASSED" : "FAILED",
+                 (s_stats.postResult == BIST_OK) ? "PASSED" :
+                 (s_stats.postResult == BIST_ERR_NO_META) ? "SKIPPED" : "FAILED",
                  (unsigned)s_stats.postDurationMs);
 
     /* On failure: log, alert, but don't halt — the image may still

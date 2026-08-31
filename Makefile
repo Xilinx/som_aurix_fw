@@ -108,22 +108,12 @@ ILLD_SRC_DIRS := \
 # Collect .c files from application and iLLD directories
 APP_SRCS    := $(foreach d, $(APP_SRC_DIRS),  $(wildcard $(d)/*.c))
 ILLD_SRCS   := $(foreach d, $(ILLD_SRC_DIRS), $(wildcard $(d)/*.c))
-
-ifeq ($(BOARD),eval)
-    ILLD_SRCS += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_LFBGA292.c)
-else
-    ILLD_SRCS += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_516.c)
-endif
+ILLD_SRCS   += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_LFBGA292.c)
 
 BOARD ?= som
 
 ifeq ($(BOARD),eval)
     BOARD_DEFINE += -DTARGET_EVAL_BOARD=1
-    APP_SRCS := $(filter-out \
-        Src/AppSw/UsbPd/UsbPd_Manager.c \
-        Src/AppSw/UsbPd/UsbPd_Cfg.c \
-        Src/AppSw/UsbPd/Cypd6129_Drv.c, \
-        $(APP_SRCS))
 else
     BOARD_DEFINE += -DTARGET_GP_SOM=1
 endif
@@ -189,8 +179,10 @@ INCLUDES := \
 # Preprocessor defines
 # -----------------------------------------------------------------------------
 DEFINES_COMMON := \
-	-DIFX_CFG_TC3XX_DEVICE=IFX_CFG_TC38XA
-
+	-DIFX_CFG_TC3XX_DEVICE=IFX_CFG_TC38XA \
+	-DDEVICE_TC38X \
+	-DIFX_PIN_PACKAGE_LFBGA292
+	
 DEFINES_DBG := $(DEFINES_COMMON) -DCFG_DEBUG=1
 DEFINES_REL := $(DEFINES_COMMON) -DNDEBUG
 
@@ -323,5 +315,5 @@ flash: $(TARGET).elf
 	fi
 	@cp $(TARGET).hex $(HEX_STAGING_DIR)/TC387.hex
 	@echo "[FLASH] Programming..."
-	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on
+	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on -port das
 

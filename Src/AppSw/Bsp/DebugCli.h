@@ -47,6 +47,12 @@
 /** Command prompt string */
 #define CLI_PROMPT          "aurix> "
 
+#ifndef AUTOBOOT_DEFAULT
+#define AUTOBOOT_DEFAULT     1u        /* build-time policy               */
+#endif
+#define AUTOBOOT_DELAY_MS    2000u     /* abort window after CLI is up    */
+#define HOLDMUX_GRACE_MS     10000u    /* BIOS serial-probe grace         */
+
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
@@ -66,5 +72,7 @@ void DebugCli_Init(void);
  * on CR/LF.
  */
 void DebugCli_Run(void);
+
+void DebugCli_Poll(void);
 
 #endif /* DEBUGCLI_H */

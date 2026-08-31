@@ -67,6 +67,7 @@
 #define PM_MAX_RETRIES              30u      /* attempts before latch-off, N retries */
 #define PM_RETRY_DELAY_MS           500u 
 
+#define PM_MUX_FOLLOW_POWER   0u
 
 #define PM_SLP_S5_TIMEOUT_MS            250u
 #define PM_SLP_S3_TIMEOUT_MS            500u
@@ -106,6 +107,10 @@
  * (PM_STATE_WARM_RESET), pending FuSa sign-off. Gated symmetrically so the
  * watchdog posture doesn't depend on which reset path was taken. */
 #define FUSA_FEATURE_ENABLE   0u
+
+#ifndef PM_CF9_SUPPRESS_MS
+#define PM_CF9_SUPPRESS_MS      2000u
+#endif
 
 #if defined(TARGET_EVAL_BOARD) && defined(TARGET_GP_SOM)
 #error "Cannot define both TARGET_EVAL_BOARD and TARGET_GP_SOM"

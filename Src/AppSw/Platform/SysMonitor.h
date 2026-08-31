@@ -41,6 +41,7 @@
 #define SBTSI_REG_CPU_TEMP_DEC  0x10u
 
 #define SYSMON_I2C_FAIL_LIMIT   5u
+#define SYSMON_I2C_FAIL_ASSERTS_PROCHOT   0u
 
 #define SYSMON_PROCHOT_CLEAR_POLLS   3u
 
@@ -81,7 +82,7 @@ void SysMonitor_DeassertCaterr(void);
 typedef void (*SysMonitor_ShutdownCb_t)(void);
 void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
 
-#define SYSMON_CARRIER_HOT_ENABLE   0u
+#define SYSMON_CARRIER_HOT_ENABLE   1u
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
 #define SYSMON_CARRIER_DWELL_MS     1000u

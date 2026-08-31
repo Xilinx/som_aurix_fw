@@ -246,21 +246,125 @@ static Tlf35585_Status_t prv_SpiInit(void)
 /* ================================================================== */
 static Tlf35585_Status_t prv_Unlock(void)
 {
+    uint8 p = 0u;
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_UNLOCK_KEY0);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_UNLOCK_KEY1);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_UNLOCK_KEY2);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_UNLOCK_KEY3);
+    Tlf35585_ReadReg(TLF_R_PROTSTAT, &p);
+    if (p != 0xF0u)
+    {
+        Debug_Printf("[TLF] ERROR: unlock rejected, PROTSTAT=0x%02X\r\n", (unsigned)p);
+        return TLF_ERR_PROT;
+    }
     return TLF_OK;
 }
 
 static Tlf35585_Status_t prv_Lock(void)
 {
+    uint8 p = 0u, spisf = 0u, syssf = 0u;
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_LOCK_KEY0);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_LOCK_KEY1);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_LOCK_KEY2);
     Tlf35585_WriteReg(TLF_W_PROTCFG, TLF_LOCK_KEY3);
+    Stm_DelayMs(1u);                         /* >60us before config is active */
+    Tlf35585_ReadReg(TLF_R_PROTSTAT, &p);
+    Tlf35585_ReadReg(TLF_RW_SPISF,   &spisf);
+    Tlf35585_ReadReg(TLF_RW_SYSSF,   &syssf);
+    Debug_Printf("[TLF] post-lock PROTSTAT=0x%02X SPISF=0x%02X SYSSF=0x%02X\r\n",
+                 (unsigned)p, (unsigned)spisf, (unsigned)syssf);   /* was discarded! */
+    if (((p & 0x01u) == 0u) || ((spisf & TLF_SPISF_LOCK) != 0u))
+        return TLF_ERR_PROT;
+    if ((syssf & TLF_SYSSF_CFGE) != 0u)
+        return TLF_ERR_VERIFY;               /* double-bit err: rewrite ALL regs */
     return TLF_OK;
 }
+
+static Tlf35585_Status_t prv_ApplyProtectedConfig(void)
+{
+    Tlf35585_Status_t s;
+    uint8 v, i;
+    uint8 syspcfg0 = 0u, wdcfg1 = 0u, fwdcfg = 0u;
+    uint8 wdcfg0   = TLF_WDCFG0_RUNTIME;
+#if (TLF_FWD_ENABLE == 1u)
+    wdcfg0 |= TLF_WDCFG0_FWDEN;
+#endif
+
+    /* Preserve what we don't manage: re-write the currently ACTIVE values */
+    Tlf35585_ReadReg(TLF_R_SYSPCFG0, &syspcfg0);
+    Tlf35585_ReadReg(TLF_R_WDCFG1,   &wdcfg1);
+    Tlf35585_ReadReg(TLF_R_FWDCFG,   &fwdcfg);
+
+    const TlfProtReg_t regs[7] = {
+        { TLF_W_SYSPCFG0, TLF_R_SYSPCFG0, syspcfg0, "SYSPCFG0" },
+        { TLF_W_SYSPCFG1, TLF_R_SYSPCFG1, 0x00u,    "SYSPCFG1" }, /* ERREN=0, both targets */
+        { TLF_W_WDCFG0,   TLF_R_WDCFG0,   wdcfg0,   "WDCFG0"   },
+        { TLF_W_WDCFG1,   TLF_R_WDCFG1,   wdcfg1,   "WDCFG1"   },
+        { TLF_W_FWDCFG,   TLF_R_FWDCFG,   fwdcfg,   "FWDCFG"   },
+        { TLF_W_WWDCFG0,  TLF_R_WWDCFG0,  0x01u,    "WWDCFG0"  }, /* closed = 1 unit  */
+        { TLF_W_WWDCFG1,  TLF_R_WWDCFG1,  0x03u,    "WWDCFG1"  }, /* open   = 3 units */
+    };
+
+    s = prv_Unlock();
+    if (s != TLF_OK) return s;
+
+    /* Write ALL protected registers in this single session (partial writes
+     * across repeated unlock/lock sessions can raise a false SYSSF.CFGE). */
+    for (i = 0u; i < 7u; i++)
+        Tlf35585_WriteReg(regs[i].reqAddr, regs[i].value);
+
+    /* --- ECHO CHECK: request regs must read back what we wrote --------- */
+    for (i = 0u; i < 7u; i++)
+    {
+        Tlf35585_ReadReg(regs[i].reqAddr, &v);
+        if ((uint8)(v ^ regs[i].value) != 0xFFu)
+        {
+            Debug_Printf("[TLF] WARN: %s echo (req 0x%02X wrote 0x%02X "
+                         "read 0x%02X, expect ~0x%02X)\r\n", regs[i].name,
+                         (unsigned)regs[i].reqAddr, (unsigned)regs[i].value,
+                         (unsigned)v, (unsigned)(0xFFu ^ regs[i].value));
+            /* warning only — activation check below is the gate */
+        }
+    }
+
+    s = prv_Lock();                  /* verifies PROTSTAT + SPISF.LOCK, waits 60us+ */
+    if (s != TLF_OK) return s;
+
+    /* --- ACTIVATION CHECK: active copies must now match ---------------- */
+    for (i = 0u; i < 7u; i++)
+    {
+        Tlf35585_ReadReg(regs[i].actAddr, &v);
+        if (v != regs[i].value)
+        {
+            uint8 syssf = 0u;
+            Tlf35585_ReadReg(TLF_RW_SYSSF, &syssf);
+            Debug_Printf("[TLF] ERROR: %s not ACTIVATED (act 0x%02X=0x%02X, "
+                         "want 0x%02X, SYSSF=0x%02X)\r\n", regs[i].name,
+                         (unsigned)regs[i].actAddr, (unsigned)v,
+                         (unsigned)regs[i].value, (unsigned)syssf);
+            return TLF_ERR_VERIFY;
+        }
+    }
+
+    /* --- Derive WWD service timing from ACTIVATED values, never from
+     *     intent.  Window = CW/OW * 50 watchdog ticks; tick = WDCYC
+     *     (bit0: 0 = 0.1 ms, 1 = 1 ms).                                  */
+    {
+        uint8  ww0 = 0u, ww1 = 0u;
+        uint32 unitMs = ((wdcfg0 & TLF_WDCFG0_WDCYC) != 0u) ? 50u : 5u;
+        Tlf35585_ReadReg(TLF_R_WWDCFG0, &ww0);
+        Tlf35585_ReadReg(TLF_R_WWDCFG1, &ww1);
+        s_wdtClosedWindowMs  = (uint32)ww0 * unitMs;
+        s_wdtOpenWindowMs    = (uint32)ww1 * unitMs;
+        s_wdtServiceTargetMs = s_wdtClosedWindowMs + (s_wdtOpenWindowMs / 2u);
+        Debug_Printf("[TLF] WWD active: closed=%ums open=%ums target=%ums\r\n",
+                     (unsigned)s_wdtClosedWindowMs,
+                     (unsigned)s_wdtOpenWindowMs,
+                     (unsigned)s_wdtServiceTargetMs);
+    }
+    return TLF_OK;
+}
+
 
 /* ================================================================== */
 /*  State transition helper                                           */
@@ -271,12 +375,22 @@ static Tlf35585_Status_t prv_GoToState(uint8 stateReq, const char *name)
     s_devctrlShadow = (s_devctrlShadow & 0xF8u) | (stateReq & 0x07u);   /* ADDED */
     Tlf35585_WriteReg(TLF_W_DEVCTRL,  s_devctrlShadow);
     Tlf35585_WriteReg(TLF_W_DEVCTRLN, (uint8)(~s_devctrlShadow));
+    if ((stateReq == TLF_STATE_SLEEP) || (stateReq == TLF_STATE_STANDBY))
+    {   Debug_Printf("[TLF] -> %s (requested)\r\n", name);  return TLF_OK; }
 
-    Stm_DelayMs(2u);
-
-    Tlf35585_LogEvent(TLF_EVT_STATE_CHANGE);
-    Debug_Printf("[TLF] -> %s\r\n", name);
-
+    uint32 startMs = Stm_GetTimeMs();
+    while (Tlf35585_GetDevState() != stateReq)
+    {
+        if ((Stm_GetTimeMs() - startMs) > 10u)
+        {
+            uint8 syssf = 0u;
+            Tlf35585_ReadReg(TLF_RW_SYSSF, &syssf);
+            if ((syssf & TLF_SYSSF_NOOP) != 0u)
+                Debug_Print("[TLF] STATEREQ rejected (NO_OP: DEVCTRL/N mismatch)\r\n");
+            Tlf35585_LogEvent(TLF_EVT_STATE_CHANGE);
+            return TLF_ERR_STATE;
+        }
+    }
     return TLF_OK;
 }
 
@@ -333,16 +447,6 @@ void Tlf35585_EarlyInit(void)
 
     prv_SpiInit();
 
-    prv_Unlock();
-
-    Tlf35585_WriteReg(TLF_W_WDCFG0, TLF_WDCFG0_INIT_DISABLED);
-
-    Tlf35585_ReadReg(TLF_R_SYSPCFG1, &val);
-    val &= ~TLF_SYSPCFG1_ERREN;
-    Tlf35585_WriteReg(TLF_W_SYSPCFG1, val);
-
-    prv_Lock();
-
     /* Enable voltage supply rails */
     s_devctrlShadow = TLF_DEVCTRL_VREFEN | TLF_DEVCTRL_COMEN
                 | TLF_DEVCTRL_TRK1EN | TLF_DEVCTRL_TRK2EN;    /* known state from scratch */
@@ -364,8 +468,6 @@ void Tlf35585_EarlyInit(void)
 Tlf35585_Status_t Tlf35585_Init(void)
 {
     Tlf35585_Status_t s;
-    uint8 val;
-    uint8 wdcfg0;
 
     Debug_Print("[TLF] Init: QSPI2...\r\n");
     s = prv_SpiInit();
@@ -377,118 +479,72 @@ Tlf35585_Status_t Tlf35585_Init(void)
     Debug_Print("[TLF] SPI OK\r\n");
     Stm_DelayMs(2u);
 
-    /* ---- Restart cause (latched from last init event) ------------ */
+    /* ---- Restart cause: log it, then retire it (W1C) -------------- */
     {
         uint8 initerr = 0u, sysfail = 0u;
         Tlf35585_ReadReg(TLF_RW_INITERR, &initerr);
         Tlf35585_ReadReg(TLF_RW_SYSFAIL, &sysfail);
         Debug_Printf("[TLF] Restart cause: INITERR=0x%02X SYSFAIL=0x%02X\r\n",
                      (unsigned)initerr, (unsigned)sysfail);
+        if (initerr != 0u) Tlf35585_WriteReg(TLF_RW_INITERR, TLF_CLEAR_STATUS);
+        if (sysfail != 0u) Tlf35585_WriteReg(TLF_RW_SYSFAIL, TLF_CLEAR_STATUS);
     }
 
-    /* ---- Clear stale SPI / system flags -------------------------- */
-    Tlf35585_ReadReg(TLF_RW_SPISF, &val);
-    if (val != 0u) Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
-    Tlf35585_ReadReg(TLF_RW_SYSSF, &val);
-    if (val != 0u) Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
+    /* ---- Clear stale flags so post-lock checks see fresh state ---- */
+    Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
+    Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
 
-    /* ---- Protected config: ONE session, runtime values, in INIT -- */
-    prv_Unlock();
+    /* ---- Protected config: THE one and only session ---------------
+     * unlock (verified) -> write all 7 -> echo check -> lock
+     * (verified, prints post-lock PROTSTAT/SPISF/SYSSF) -> activation
+     * check on 0x0B..0x11 -> derive WWD timing from ACTIVE values.   */
+    s = prv_ApplyProtectedConfig();
+    if (s != TLF_OK)
     {
-        uint8 protstat = 0u;
-        Tlf35585_ReadReg(TLF_R_PROTSTAT, &protstat);
-        Debug_Printf("[TLF] PROTSTAT=0x%02X (expect 0xF0 = unlocked)\r\n",
-                     (unsigned)protstat);
+        Tlf35585_DumpStatus("prot-config-failed");
+        return s;
     }
 
-    wdcfg0 = TLF_WDCFG0_RUNTIME;
-#if (TLF_FWD_ENABLE == 1u)
-    wdcfg0 |= TLF_WDCFG0_FWDEN;
-#endif
-    Tlf35585_WriteReg(TLF_W_WDCFG0, wdcfg0);      /* the ONLY WDCFG0 write */
-    Tlf35585_WriteReg(TLF_W_WWDCFG0, 0x01u);      /* closed: 100 ms        */
-    Tlf35585_WriteReg(TLF_W_WWDCFG1, 0x03u);      /* open:   200 ms        */
-    s_wdtClosedWindowMs = 100u;
-    s_wdtOpenWindowMs   = 200u;
-    s_wdtServiceTargetMs = s_wdtClosedWindowMs + (s_wdtOpenWindowMs / 2u);  /* 200ms: mid-open */
-#if defined(TARGET_EVAL_BOARD)
-    Tlf35585_WriteReg(TLF_W_SYSPCFG1, 0x00u);     /* ERR monitor off on eval */
-#else
-    Tlf35585_WriteReg(TLF_W_SYSPCFG1, TLF_SYSPCFG1_ERREN);
-#endif
-
-    prv_Lock();
-
-    /* ---- Verify active config ------------------------------------ */
-    Tlf35585_ReadReg(TLF_R_WDCFG0, &val);
-    Stm_DelayMs(10u);
-    {
-        uint8 protstat = 0u;
-        Tlf35585_ReadReg(TLF_R_PROTSTAT, &protstat);
-        Stm_DelayMs(10u);
-    }
-    Tlf35585_ReadReg(TLF_R_WDCFG0, &val);
-    Stm_DelayMs(10u);
-
-    Debug_Printf("[TLF] WDCFG0 active: 0x%02X\r\n", (unsigned)val);
-    if (val != wdcfg0)
-    {
-        uint8 spisf = 0u, syssf = 0u;
-        Tlf35585_ReadReg(TLF_RW_SPISF, &spisf);
-        Tlf35585_ReadReg(TLF_RW_SYSSF, &syssf);
-        Debug_Printf("[TLF] ERROR: WDCFG0 activate failed "
-                     "(expect 0x%02X, SPISF=0x%02X SYSSF=0x%02X)\r\n",
-                     (unsigned)wdcfg0, (unsigned)spisf, (unsigned)syssf);
-        return TLF_ERR_SPI;
-    }
-    Tlf35585_ReadReg(TLF_R_SYSPCFG1, &val);
-    Debug_Printf("[TLF] SYSPCFG1 active: 0x%02X\r\n", (unsigned)val);
-    {
-        uint8 ww0 = 0u, ww1 = 0u;
-        Tlf35585_ReadReg(TLF_R_WWDCFG0, &ww0);
-        Tlf35585_ReadReg(TLF_R_WWDCFG1, &ww1);
-        Debug_Printf("[TLF] WWD windows active: CFG0=0x%02X CFG1=0x%02X\r\n",
-                     (unsigned)ww0, (unsigned)ww1);
-    }
-    /* ---- Enable rails, settle, retire power-up latches ----------- */
+    /* ---- Enable rails, settle, retire power-up voltage latches ---- */
     s_devctrlShadow |= TLF_DEVCTRL_VREFEN | TLF_DEVCTRL_COMEN;
     Tlf35585_WriteReg(TLF_W_DEVCTRL,  s_devctrlShadow);
     Tlf35585_WriteReg(TLF_W_DEVCTRLN, (uint8)(~s_devctrlShadow));
     Stm_DelayMs(8u);
 
-    Tlf35585_WriteReg(TLF_R_MONSF0, TLF_CLEAR_STATUS);
+    Tlf35585_WriteReg(TLF_R_MONSF0, TLF_CLEAR_STATUS);  /* 0x20..0x23, W1C */
     Tlf35585_WriteReg(TLF_R_MONSF1, TLF_CLEAR_STATUS);
     Tlf35585_WriteReg(TLF_R_MONSF2, TLF_CLEAR_STATUS);
     Tlf35585_WriteReg(TLF_R_MONSF3, TLF_CLEAR_STATUS);
-    Tlf35585_ReadReg(TLF_RW_SYSSF, &val);
-    if (val != 0u) Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
+    Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
 
-    /* ---- First WWD service — in INIT's long open window ---------- */
+    /* ---- First WWD service — inside INIT's long open window ------- */
     {
         uint8 wwdCmd = 0u;
         Tlf35585_ReadReg(TLF_RW_WWDSCMD, &wwdCmd);
         Tlf35585_WriteReg(TLF_RW_WWDSCMD,
             ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
     }
-    Stm_DelayMs(1u);
-    /* ---- NORMAL — last step ------------------------------------- */
-    prv_GoToState(TLF_STATE_NORMAL, "NORMAL");
+    Stm_DelayMs(1u);                  /* >60 us after last service      */
 
-    val = Tlf35585_GetDevState();
-    if (val != TLF_STATE_NORMAL)
+    /* ---- NORMAL — last step --------------------------------------- */
+    s = prv_GoToState(TLF_STATE_NORMAL, "NORMAL");   /* polls DEVSTAT   */
+    if (s != TLF_OK)
     {
-        uint8 syssf = 0u, wwdstat = 0u, ie = 0u;
+        uint8 syssf = 0u, wwdstat = 0u, ie = 0u, spisf = 0u;
         Tlf35585_ReadReg(TLF_RW_SYSSF,   &syssf);
         Tlf35585_ReadReg(TLF_R_WWDSTAT,  &wwdstat);
         Tlf35585_ReadReg(TLF_RW_INITERR, &ie);
-        Debug_Printf("[TLF] ERROR: state=%u after NORMAL req "
-                     "(SYSSF=0x%02X WWDSTAT=0x%02X IE=0x%02X)\r\n",
-                     (unsigned)val, (unsigned)syssf,
-                     (unsigned)wwdstat, (unsigned)ie);
+        Tlf35585_ReadReg(TLF_RW_SPISF,   &spisf);
+        Debug_Printf("[TLF] ERROR: NORMAL refused (SYSSF=0x%02X WWDSTAT=0x%02X "
+                     "IE=0x%02X SPISF=0x%02X ERRpin=%u SS=%u)\r\n",
+                     (unsigned)syssf, (unsigned)wwdstat, (unsigned)ie,
+                     (unsigned)spisf,
+                     (unsigned)Tlf35585_IsErrActive(),
+                     (unsigned)Tlf35585_IsSafeStateActive());
         return TLF_ERR_STATE;
     }
 
-    /* ---- Runtime bookkeeping ------------------------------------- */
+    /* ---- Runtime bookkeeping -------------------------------------- */
     s_wdtLastServiceMs = Stm_GetTimeMs();
     s_lastFaultPollMs  = Stm_GetTimeMs();
     s_initialised      = TRUE;
@@ -496,7 +552,6 @@ Tlf35585_Status_t Tlf35585_Init(void)
     Debug_Print("[TLF] Init complete\r\n");
     return TLF_OK;
 }
-
 
 /* ================================================================== */
 /*  Window Watchdog Service (PMC-PMIC-004, 006)                       */
@@ -551,14 +606,6 @@ void Tlf35585_ServiceWdt(void)
                         // (unsigned)wwdstat, (unsigned)devstat, (unsigned)syssf,
                         // (unsigned)Tlf35585_IsErrActive(),
                         // (unsigned)Tlf35585_IsSafeStateActive());
-            if (((syssf & TLF_SYSSF_WWDE) != 0u) && (wwdstat == 0u) &&
-                ((devstat & TLF_DEVSTAT_STATE_MASK) == TLF_STATE_NORMAL))
-            {
-                s_wwdRecoveredCount++;
-                //Debug_Printf("[TLF] WWDE recovered (total %u), clearing latch\r\n",
-                          //   (unsigned)s_wwdRecoveredCount);
-                Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
-            }
    
         }
     }
@@ -635,17 +682,6 @@ void Tlf35585_CheckFaults(void)
                 Debug_Print("[TLF] SAFE STATE active\r\n");
 
             Tlf35585_LogEvent(TLF_EVT_FAULT);
-            {
-                boolean benignWwdeOnly =
-                    ((syssf & TLF_SYSSF_WWDE) != 0u) &&
-                    ((syssf & (TLF_SYSSF_CFGE | TLF_SYSSF_FWDE)) == 0u) &&
-                    (monsf1 == 0u) && (monsf2 == 0u) &&
-                    !safeState &&
-                    (wwdstat == 0u); 
-
-                if (!benignWwdeOnly && (s_faultCb != NULL_PTR))
-                    s_faultCb();
-            }
         }
         /* level unchanged: fault persists, already reported — silent */
     }

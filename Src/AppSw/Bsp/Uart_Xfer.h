@@ -20,6 +20,7 @@
 #define UART_XFER_H
 
 #include "Ifx_Types.h"
+#include "IfxAsclin_Asc.h"
 
 /* ------------------------------------------------------------------ */
 /*  Configuration                                                     */
@@ -97,5 +98,11 @@ void UartXfer_Write(const uint8 *pSrc, uint32 len);
  * @brief  Flush (discard) all data in the RX ring buffer.
  */
 void UartXfer_FlushRx(void);
+
+/**
+ * @brief  Override the UART handle (for CLI-triggered update via debug UART).
+ * @param  asc  Pointer to an IfxAsclin_Asc handle, or NULL to restore default.
+ */
+void UartXfer_SetHandle(IfxAsclin_Asc *asc);
 
 #endif /* UART_XFER_H */

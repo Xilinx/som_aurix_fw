@@ -17,15 +17,12 @@
 #include "PowerManager.h"
 #include "Eru_FaultIsr.h"
 #include "Platform_Cfg.h"
-
-#if !defined(TARGET_EVAL_BOARD)
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
 #include "UsbPd_Manager.h"
 #include "UsbPd_Hpd.h"
 #include "UsbPd_ApuProxy.h"
 #include "I2c_Slave.h"
-#endif
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -127,7 +124,7 @@ void core1_main(void)
 #endif
 
 #if (USBPD_FEATURE_ENABLE == 1u)
-    I2cSlave_Init(NULL_PTR);
+    //I2cSlave_Init(NULL_PTR);
     UsbPd_Hpd_Init();
     UsbPd_ApuProxy_Init();
     UsbPdManager_Init();

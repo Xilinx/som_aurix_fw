@@ -7,6 +7,7 @@
 #include "IfxSrc.h"
 #include "IfxCpu_Irq.h"
 #include <string.h>
+#include "Stm_Timer.h"
 
 /* ================================================================== */
 /*  Shared memory instance (linker places in LMU SRAM)                */
@@ -110,6 +111,24 @@ void Ipc_SendCommand(Ipc_Command_t cmd, uint32 param)
 
     /* Fire IR to CPU1 */
     IfxSrc_setRequest(&MODULE_SRC.GPSR.GPSR[1].SR[0]);
+}
+
+boolean Ipc_SendCommandWait(Ipc_Command_t cmd, uint32 param, uint32 timeoutMs)
+{
+    uint32 startMs;
+
+    if (!g_ipcShared.cpu1Ready)
+        return FALSE;                 /* consumer not up — don't fire-and-lose */
+
+    Ipc_SendCommand(cmd, param);
+
+    startMs = Stm_GetTimeMs();
+    while (!Ipc_IsCommandAcked())
+    {
+        if ((Stm_GetTimeMs() - startMs) > timeoutMs)
+            return FALSE;
+    }
+    return TRUE;
 }
 
 boolean Ipc_IsCommandAcked(void)

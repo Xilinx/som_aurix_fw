@@ -95,7 +95,7 @@ int core0_main(void)
     Tlf35585_EarlyInit();
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
-    Debug_Print("[SYS] Init: UART fdsfdaOK\r\n");
+    Debug_Print("[SYS] Init: UART OK\r\n");
     UartXfer_Init();
     Debug_Print("[SYS] Init: Side UART OK\r\n");
     I2cMaster_Init();
@@ -103,7 +103,14 @@ int core0_main(void)
 
     /* TLF full init — still on CPU0 before cores are released.
      * CPU2 takes over WDT service after the handover in Phase 3. */
-    Tlf35585_Init();
+    if (Tlf35585_Init() != TLF_OK)
+    {
+        Debug_Print("[SYS] Init: TLF FAILED\r\n");
+    }
+    else
+    {
+        Debug_Print("[SYS] Init: TLF OK\r\n");
+    }
     Tlf35585_RegisterFaultCb(PowerManager_RequestPowerOff);
     Debug_Print("[SYS] Init: TLF OK\r\n");
 
@@ -200,7 +207,7 @@ int core0_main(void)
         }
         Debug_DrainRings();
         DebugCli_Run();
-
+        DebugCli_Poll();
         prv_CommitSotaOnce();
         prv_ForwardVoltageFaults();
         prv_ForwardVoltageWarnings();
