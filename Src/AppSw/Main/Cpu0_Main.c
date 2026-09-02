@@ -57,12 +57,10 @@
 #include "VoltMon.h"
 #include "Tlf35585.h"
 #include "UsbPd_Cfg.h"
-
-#if !defined(TARGET_EVAL_BOARD)
 #include "UsbPd_Manager.h"
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
-#endif
+#include "Tlf35585.h"
 
 
 /* Banner printed on UART at startup */
@@ -77,10 +75,13 @@ int core0_main(void)
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
-    
+
     Clk_Init();
     Port_Init();
     Stm_Init();
+
+    /* TLF must be first — 14ms deadline from power-on */
+    Tlf35585_EarlyInit();          /* ADD: immediate WDT service */
 
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
@@ -88,6 +89,11 @@ int core0_main(void)
 
     I2cMaster_Init();
     Debug_Print("[SYS] Init: I2C OK\r\n");
+
+    /* Full TLF init — clears INITERR, writes config, reaches NORMAL */
+    Tlf35585_Init();               /* MOVED: after UART so we see prints */
+    Tlf35585_RegisterFaultCb(PowerManager_RequestPowerOff);  /* ADD */
+    Debug_Print("[SYS] Init: TLF OK\r\n");
 
     PowerManager_Init();
     Debug_Print("[SYS] Init: PowerManager OK\r\n");
@@ -99,11 +105,13 @@ int core0_main(void)
 #endif
 
     Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
+
 #if !defined(TARGET_EVAL_BOARD)
 #if (SYSMON_CARRIER_WD_ENABLE == 1u)
     Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
 #endif
 #endif
+
     Eru_FaultIsr_Init();
     Debug_Print("[SYS] Init: ERU fault ISRs OK\r\n");
 
@@ -125,13 +133,11 @@ int core0_main(void)
 
     Debug_Print("[SYS] Entering main loop\r\n");
 
-
     for (;;)
     {
         uint32 loopStartMs = Stm_GetTimeMs();
 
-        //IfxPort_togglePin(&MODULE_P34,4);
-
+        Tlf35585_ServiceWdt();     /* MOVED: unconditional, top of loop */
         PowerManager_Run();
         VoltMon_Scan();
 
@@ -148,11 +154,9 @@ int core0_main(void)
 #endif
 
 #if !defined(TARGET_EVAL_BOARD)
-        Tlf35585_ServiceWdt();
 #if (SYSMON_CARRIER_WD_ENABLE == 1u)
         ComHpcWdt_Run();
 #endif
-
         if (PowerManager_GetState() == PM_STATE_ON)
         {
             SysMonitor_Run();
@@ -162,9 +166,6 @@ int core0_main(void)
         }
 #endif
 
-        /* Fixed-period pacing: makes debounce/timeout constants throughout
-         * PowerManager/SysMonitor map to real elapsed time, and surfaces
-         * WCET overruns instead of silently letting the loop free-run. */
         {
             static uint32 s_lastOverrunLogMs = 0u;
             uint32 elapsedMs = Stm_GetTimeMs() - loopStartMs;

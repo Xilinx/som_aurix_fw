@@ -50,8 +50,6 @@
 #include "IfxPort.h"
 #include "IfxQspi_SpiMaster.h"
 #include "IfxCpu_Irq.h"
-#include "NvLog.h"
-#include "Ipc.h"
 
 /* ================================================================== */
 /*  SPI configuration constants                                       */
@@ -781,17 +779,17 @@ void Tlf35585_LogEvent(uint8 eventType)
                  (unsigned)evt.errPin, (unsigned)evt.ssPin);
         uint32 pmicData[4] = { (uint32)evt.syssf, (uint32)evt.monsf1,
                             (uint32)evt.wwdstat, (uint32)evt.devstat };
-        NvLog_Write(NVLOG_EVT_PMIC_FAULT, NVLOG_SRC_PMIC, NVLOG_SEV_ERROR, pmicData);
+        //NvLog_Write(NVLOG_EVT_PMIC_FAULT, NVLOG_SRC_PMIC, NVLOG_SEV_ERROR, pmicData);
     }
     else
     {
-        g_ipcShared.fusa.tlfEvtData[0] = (uint32)evt.syssf;
-        g_ipcShared.fusa.tlfEvtData[1] = (uint32)evt.monsf1;
-        g_ipcShared.fusa.tlfEvtData[2] = (uint32)evt.wwdstat;
-        g_ipcShared.fusa.tlfEvtData[3] = (uint32)evt.devstat;
-        __dsync();
-        g_ipcShared.fusa.tlfEvtSeq++;
-        __dsync();
+        //g_ipcShared.fusa.tlfEvtData[0] = (uint32)evt.syssf;
+        //g_ipcShared.fusa.tlfEvtData[1] = (uint32)evt.monsf1;
+        //g_ipcShared.fusa.tlfEvtData[2] = (uint32)evt.wwdstat;
+        //g_ipcShared.fusa.tlfEvtData[3] = (uint32)evt.devstat;
+        //__dsync();
+        //g_ipcShared.fusa.tlfEvtSeq++;
+        //__dsync();
     }
 }
 
@@ -831,17 +829,17 @@ void Tlf35585_EnableIsrMode(void)
 void Tlf35585_PublishRegSnapshot(void)          /* CPU2, ~1 Hz */
 {
     uint8 v;
-    Tlf35585_ReadReg(TLF_R_DEVSTAT,  &v); g_ipcShared.fusa.tlfRegs[0]  = v;
-    Tlf35585_ReadReg(TLF_RW_SYSSF,   &v); g_ipcShared.fusa.tlfRegs[1]  = v;
-    Tlf35585_ReadReg(TLF_RW_SPISF,   &v); g_ipcShared.fusa.tlfRegs[2]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF0,   &v); g_ipcShared.fusa.tlfRegs[3]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF1,   &v); g_ipcShared.fusa.tlfRegs[4]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF2,   &v); g_ipcShared.fusa.tlfRegs[5]  = v;
-    Tlf35585_ReadReg(TLF_RW_INITERR, &v); g_ipcShared.fusa.tlfRegs[6]  = v;
-    Tlf35585_ReadReg(TLF_R_WDCFG0,  &v); g_ipcShared.fusa.tlfRegs[7]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDCFG0, &v); g_ipcShared.fusa.tlfRegs[8]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDCFG1, &v); g_ipcShared.fusa.tlfRegs[9]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDSTAT,  &v); g_ipcShared.fusa.tlfRegs[10] = v;
+    Tlf35585_ReadReg(TLF_R_DEVSTAT,  &v); //g_ipcShared.fusa.tlfRegs[0]  = v;
+    Tlf35585_ReadReg(TLF_RW_SYSSF,   &v); //g_ipcShared.fusa.tlfRegs[1]  = v;
+    Tlf35585_ReadReg(TLF_RW_SPISF,   &v); //g_ipcShared.fusa.tlfRegs[2]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF0,   &v); //g_ipcShared.fusa.tlfRegs[3]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF1,   &v); //g_ipcShared.fusa.tlfRegs[4]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF2,   &v); //g_ipcShared.fusa.tlfRegs[5]  = v;
+    Tlf35585_ReadReg(TLF_RW_INITERR, &v); //g_ipcShared.fusa.tlfRegs[6]  = v;
+    Tlf35585_ReadReg(TLF_R_WDCFG0,  &v); //g_ipcShared.fusa.tlfRegs[7]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDCFG0, &v); //g_ipcShared.fusa.tlfRegs[8]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDCFG1, &v); //g_ipcShared.fusa.tlfRegs[9]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDSTAT,  &v); // g_ipcShared.fusa.tlfRegs[10] = v;
     __dsync();
-    g_ipcShared.fusa.tlfRegsSeq++;
+    //g_ipcShared.fusa.tlfRegsSeq++;
 }
