@@ -52,6 +52,7 @@ uint32 SelfTest_UsbPdCfg(void);
 uint32 SelfTest_UsbPdHpd(void);
 uint32 SelfTest_UsbPdTopology(void); 
 uint32 SelfTest_UsbPdEdgeCases(void);
+uint32 SelfTest_NvLogStress(void);
 
 /** CLI dispatch — called from DebugCli when user types "selftest ..." */
 void SelfTest_CliDispatch(const char *args);

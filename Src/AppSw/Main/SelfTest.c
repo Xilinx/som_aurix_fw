@@ -703,6 +703,173 @@ uint32 SelfTest_Pm(void)
     Debug_Printf("[TEST:PM] %s\r\n", prv_Result(err));
     return err;
 }
+
+uint32 SelfTest_NvLogStress(void)
+{
+    uint32 err = 0u;
+    NvLog_Stats_t before, after;
+    uint32 i;
+
+    Debug_Print("[TEST:NVLOG] Stress: write 50 events, flush, verify...\r\n");
+    NvLog_GetStats(&before);
+
+    for (i = 0u; i < 50u; i++)
+    {
+        NvLog_WriteU32(NVLOG_EVT_MARKER, NVLOG_SRC_DEBUG,
+                       NVLOG_SEV_INFO, i);
+    }
+
+    NvLog_Flush();
+    Tlf35585_ServiceWdt();
+    NvLog_GetStats(&after);
+
+    Debug_Printf("[TEST:NVLOG] Before: %u events, After: %u events\r\n",
+                 (unsigned)before.eventsInSlot,
+                 (unsigned)after.eventsInSlot);
+
+    if (after.eventsInSlot < before.eventsInSlot + 50u)
+    {
+        err++;
+        Debug_Print("[TEST:NVLOG] FAIL: event count mismatch\r\n");
+    }
+
+    /* Verify last event is readable */
+    Debug_Print("[TEST:NVLOG] Last 3 events:\r\n");
+    NvLog_DumpRecent(NVLOG_SLOT_ACTIVE, 3u);
+
+    /* Test seal + rotation */
+    Debug_Print("[TEST:NVLOG] Sealing active slot...\r\n");
+    uint8 slotBefore = after.activeSlot;
+    NvLog_SealSlot(NVLOG_EVT_MARKER);
+    Tlf35585_ServiceWdt();
+
+    /* Re-init to pick up the new slot */
+    NvLog_Init();
+    Tlf35585_ServiceWdt();
+    NvLog_GetStats(&after);
+
+    Debug_Printf("[TEST:NVLOG] Slot before=%u, after=%u\r\n",
+                 (unsigned)slotBefore, (unsigned)after.activeSlot);
+
+    if (after.activeSlot == slotBefore)
+    {
+        err++;
+        Debug_Print("[TEST:NVLOG] FAIL: slot didn't rotate\r\n");
+    }
+
+    /* Verify old slot is readable from the new context */
+    Debug_Print("[TEST:NVLOG] Reading sealed slot:\r\n");
+    NvLog_DumpRecent(slotBefore, 3u);
+
+    Debug_Printf("[TEST:NVLOG] %s\r\n", prv_Result(err));
+    return err;
+}
+
+uint32 SelfTest_FusaAlert(void)
+{
+    uint32 err = 0u;
+
+    Debug_Print("[TEST:FUSA_ALERT] Testing ALERT# pin toggle...\r\n");
+
+    /* Assert */
+    FusaSpi_AssertAlert();
+    boolean pinLow = (boolean)(IfxPort_getPinState(
+        AppPin_GetPort(PIN_FUSA_SPI_ALERT.portIdx),
+        PIN_FUSA_SPI_ALERT.pinIdx) == 0u);
+
+    if (!pinLow)
+    {
+        err++;
+        Debug_Print("    FAIL: ALERT# not LOW after assert\r\n");
+    }
+    else
+    {
+        Debug_Print("    ALERT# asserted (LOW) OK\r\n");
+    }
+
+    /* Deassert */
+    FusaSpi_DeassertAlert();
+    boolean pinHigh = (boolean)(IfxPort_getPinState(
+        AppPin_GetPort(PIN_FUSA_SPI_ALERT.portIdx),
+        PIN_FUSA_SPI_ALERT.pinIdx) == 1u);
+
+    if (!pinHigh)
+    {
+        err++;
+        Debug_Print("    FAIL: ALERT# not HIGH after deassert\r\n");
+    }
+    else
+    {
+        Debug_Print("    ALERT# deasserted (HIGH) OK\r\n");
+    }
+
+    Debug_Printf("[TEST:FUSA_ALERT] %s\r\n", prv_Result(err));
+    return err;
+}
+
+uint32 SelfTest_FusaLive(void)
+{
+    uint32 err = 0u;
+    const uint32 *regMap;
+
+    Debug_Print("[TEST:FUSA_LIVE] Register map with live data...\r\n");
+
+    FusaSpi_Update();
+    regMap = FusaSpi_GetRegMap();
+
+    /* On SoM, voltage channels should have nonzero values */
+    uint32 nonZeroVolt = 0u;
+    uint32 ch;
+    for (ch = 0u; ch < 24u; ch++)
+    {
+        if (regMap[FUSA_REG_VOLT_CH_BASE + ch] > 0u)
+            nonZeroVolt++;
+    }
+
+    Debug_Printf("    Voltage channels with data: %u\r\n",
+                 (unsigned)nonZeroVolt);
+
+    if (nonZeroVolt < 3u)
+    {
+        err++;
+        Debug_Print("    FAIL: fewer than 3 voltage channels populated\r\n");
+    }
+
+    /* TLF state should be NORMAL (2) */
+    if (regMap[FUSA_REG_TLF_STATE] != 2u)
+    {
+        err++;
+        Debug_Printf("    FAIL: TLF state=%u (expect 2=NORMAL)\r\n",
+                     (unsigned)regMap[FUSA_REG_TLF_STATE]);
+    }
+    else
+    {
+        Debug_Print("    TLF state = NORMAL OK\r\n");
+    }
+
+    /* PM state should be valid */
+    if (regMap[FUSA_REG_POWER_STATE] == (uint32)PM_STATE_ON)
+    {
+        Debug_Print("    PM state = ON OK\r\n");
+    }
+    else
+    {
+        Debug_Printf("    PM state = %u (not ON — may be expected)\r\n",
+                     (unsigned)regMap[FUSA_REG_POWER_STATE]);
+    }
+
+    /* Boot count should be nonzero */
+    if (regMap[FUSA_REG_BOOT_COUNT] > 0u)
+    {
+        Debug_Printf("    Boot count = %u OK\r\n",
+                     (unsigned)regMap[FUSA_REG_BOOT_COUNT]);
+    }
+
+    FusaSpi_DumpRegMap();
+
+    Debug_Printf("[TEST:FUSA_LIVE] %s\r\n", prv_Result(err));
+    return err;
+}
  
 /* ================================================================== */
 /*  TEST: USB PD APU proxy packing                                    */
@@ -1510,6 +1677,10 @@ void SelfTest_CliDispatch(const char *args)
         SelfTest_Pm();
     else if (prv_StrEq(args, "usbpd"))
         SelfTest_UsbPd();
+    else if (prv_StrEq(args, "fusa-live"))
+        SelfTest_FusaLive();
+    else if (prv_StrEq(args, "fusa-alert"))
+        SelfTest_FusaLive();
     else if (prv_StrEq(args, "fwup"))
         SelfTest_FwUpdate();
     else if (prv_StrEq(args, "updconf"))
@@ -1517,5 +1688,5 @@ void SelfTest_CliDispatch(const char *args)
     else if (prv_StrEq(args, "usbpd_live"))
         SelfTest_UsbPdLive();
     else
-        Debug_Print("  Usage: selftest [all|crc|sota|swap|fusa|pm|usbpd|fwup]\r\n");
+        Debug_Print("  Usage: selftest [all|crc|sota|swap|fusa|pm|usbpd|fwup|fusa-alert|fusa-alive]\r\n");
 }

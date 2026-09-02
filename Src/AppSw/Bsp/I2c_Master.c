@@ -112,7 +112,7 @@ void I2cMaster_Init(void)
     };
 
     IfxI2c_I2c_initConfig(&cfg, &MODULE_I2C1);
-    cfg.baudrate = 100000.0f;   /* 400 kHz fast-mode per PPR §5.3.2 */
+    cfg.baudrate = 400000.0f;   /* 400 kHz fast-mode per PPR §5.3.2 */
     cfg.mode     = IfxI2c_Mode_StandardAndFast;
     cfg.pins     = &pins1;
 

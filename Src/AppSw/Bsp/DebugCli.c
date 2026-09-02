@@ -27,6 +27,8 @@
 #include "IfxAsclin_Asc.h"
 #include "Uart_Xfer.h"
 #include "Cypd6129_Drv.h"
+#include "IfxI2c_I2c.h"
+#include <stdlib.h>
 
 
 /* ================================================================== */
@@ -531,30 +533,50 @@ static void prv_CmdI2cId(const char *args)
                      (unsigned)addr, (unsigned)buf[1], (unsigned)buf[0]);
 }
 
-static void prv_CmdI2cRead(const char *args)
+static uint32 prv_HexToU32(const char *s)
 {
-    const char *a = prv_SkipSpaces(args);
-    uint8 bus, addr, len, i;
-    uint16 reg;
-    uint8 buf[8];
-    I2c_Status_t st;
-
-    bus = (uint8)prv_Atoi(a);           while ((*a >= '0') && (*a <= '9')) a++;
-    a = prv_SkipSpaces(a); addr = (uint8)prv_AtoiHex(a);  while (*a && (*a != ' ')) a++;
-    a = prv_SkipSpaces(a); reg  = (uint16)prv_AtoiHex(a); while (*a && (*a != ' ')) a++;
-    a = prv_SkipSpaces(a); len  = (*a != '\0') ? (uint8)prv_Atoi(a) : 2u;
-    if ((bus > 1u) || (len == 0u) || (len > 8u))
-    { Debug_Print("[I2C] usage: i2cread <bus> <addr> <reg16> [len<=8]\r\n"); return; }
-
-    st = I2cMaster_ReadReg16_Bus(bus, addr, reg, buf, len);
-    if (st != I2C_OK)
-    { Debug_Printf("[I2C] 0x%02X reg 0x%04X: err %u\r\n",
-                   (unsigned)addr, (unsigned)reg, (unsigned)st); return; }
-    Debug_Printf("[I2C] 0x%02X reg 0x%04X:", (unsigned)addr, (unsigned)reg);
-    for (i = 0u; i < len; i++) Debug_Printf(" %02X", (unsigned)buf[i]);
-    Debug_Print("\r\n");
+    uint32 val = 0u;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+        s += 2;
+    while (*s)
+    {
+        uint8 c = (uint8)*s;
+        if (c >= '0' && c <= '9')      val = (val << 4u) | (c - '0');
+        else if (c >= 'a' && c <= 'f') val = (val << 4u) | (c - 'a' + 10u);
+        else if (c >= 'A' && c <= 'F') val = (val << 4u) | (c - 'A' + 10u);
+        else break;
+        s++;
+    }
+    return val;
 }
 
+static void prv_CmdI2cRead(const char *args)
+{
+    args = prv_SkipSpaces(args);
+    uint8 bus = (uint8)prv_Atoi(args);
+    while (*args && *args != ' ') args++;
+    args = prv_SkipSpaces(args);
+    uint8 addr = (uint8)prv_HexToU32(args);
+    while (*args && *args != ' ') args++;
+    args = prv_SkipSpaces(args);
+    uint8 reg = (uint8)prv_HexToU32(args);
+
+    uint8 val = 0u;
+    I2c_Status_t st;
+
+    if (bus == 1u)
+    {
+        st = I2cMaster_ApmlReadByte(addr, reg, &val);
+    }
+    else
+    {
+        st = I2cMaster_ReadReg16_Bus(bus, addr, (uint16)reg, &val, 1u);
+    }
+
+    Debug_Printf("[I2C] bus=%u addr=0x%02X reg=0x%02X → %s val=0x%02X\r\n",
+                 (unsigned)bus, (unsigned)addr, (unsigned)reg,
+                 (st == I2C_OK) ? "OK" : "FAIL", (unsigned)val);
+}
 static void prv_CmdPin(void)
 {
     Debug_Print("[PIN] name              lvl\r\n");
@@ -595,6 +617,171 @@ static void prv_CmdPin(void)
         Debug_Printf("[PIN] USBC_PD_INT (10.8) %u\r\n",
                      (unsigned)prv_ReadPin(&PIN_USBC_PD_INT_TO_APU));
     }
+}
+
+static void prv_CmdI2cProbe(void)
+{
+    /* Temporarily read SDA/SCL as GPIO to check voltage level */
+    boolean sda = (boolean)IfxPort_getPinState(&MODULE_P11, 13u);
+    boolean scl = (boolean)IfxPort_getPinState(&MODULE_P11, 14u);
+    Debug_Printf("[I2C1] SDA(P11.13)=%u SCL(P11.14)=%u\r\n",
+                 (unsigned)sda, (unsigned)scl);
+    /* Both should read HIGH (1) if pull-ups are working */
+    /* If either reads LOW, the line is stuck — wiring issue */
+}
+
+static void prv_CmdI2cDiag(void)
+{
+    boolean sda, scl;
+
+    /* Step 1: Read with I2C module active */
+    sda = (boolean)IfxPort_getPinState(&MODULE_P11, 13u);
+    scl = (boolean)IfxPort_getPinState(&MODULE_P11, 14u);
+    Debug_Printf("[I2C1] With module active: SDA=%u SCL=%u\r\n",
+                 (unsigned)sda, (unsigned)scl);
+
+    /* Step 2: Disable I2C1 module, set pins to input (hi-Z) */
+    MODULE_I2C1.RUNCTRL.U = 0u;  /* Stop the module */
+
+    IfxPort_setPinModeInput(&MODULE_P11, 13u, IfxPort_InputMode_noPullDevice);
+    IfxPort_setPinModeInput(&MODULE_P11, 14u, IfxPort_InputMode_noPullDevice);
+
+    Stm_DelayMs(1u);
+
+    sda = (boolean)IfxPort_getPinState(&MODULE_P11, 13u);
+    scl = (boolean)IfxPort_getPinState(&MODULE_P11, 14u);
+    Debug_Printf("[I2C1] Pins as input (AURIX released): SDA=%u SCL=%u\r\n",
+                 (unsigned)sda, (unsigned)scl);
+
+    if (scl == 0u)
+    {
+        Debug_Print("[I2C1] SCL still LOW with AURIX released\r\n");
+        Debug_Print("[I2C1]   -> APU or external device is holding SCL low\r\n");
+        Debug_Print("[I2C1]   -> Check if APU SIC pin is configured as output driving low\r\n");
+    }
+    else
+    {
+        Debug_Print("[I2C1] SCL went HIGH when AURIX released\r\n");
+        Debug_Print("[I2C1]   -> AURIX I2C module was holding SCL low\r\n");
+        Debug_Print("[I2C1]   -> I2C1 init has a pin mode or module config issue\r\n");
+
+        /* Step 3: Try bus recovery — toggle SCL 9 times as GPIO */
+        Debug_Print("[I2C1] Attempting bus recovery (9 clock pulses)...\r\n");
+        IfxPort_setPinModeOutput(&MODULE_P11, 14u,
+                                  IfxPort_OutputMode_openDrain,
+                                  IfxPort_OutputIdx_general);
+        uint32 i;
+        for (i = 0u; i < 9u; i++)
+        {
+            IfxPort_setPinLow(&MODULE_P11, 14u);
+            Stm_DelayMs(1u);
+            IfxPort_setPinHigh(&MODULE_P11, 14u);
+            Stm_DelayMs(1u);
+        }
+
+        sda = (boolean)IfxPort_getPinState(&MODULE_P11, 13u);
+        scl = (boolean)IfxPort_getPinState(&MODULE_P11, 14u);
+        Debug_Printf("[I2C1] After recovery: SDA=%u SCL=%u\r\n",
+                     (unsigned)sda, (unsigned)scl);
+    }
+
+    /* Step 4: Re-init I2C to restore normal operation */
+    Debug_Print("[I2C1] Re-initialising I2C1...\r\n");
+    I2cMaster_ReinitBus(1u);
+
+    Stm_DelayMs(10u);
+    sda = (boolean)IfxPort_getPinState(&MODULE_P11, 13u);
+    scl = (boolean)IfxPort_getPinState(&MODULE_P11, 14u);
+    Debug_Printf("[I2C1] After reinit: SDA=%u SCL=%u\r\n",
+                 (unsigned)sda, (unsigned)scl);
+}
+
+static void prv_CmdI2cBitbang(void)
+{
+    /* Bit-bang a single I2C read to 0x4C (SB-TSI) reg 0x01
+     * This bypasses the iLLD I2C module entirely */
+    uint8 addr;
+    uint32 found = 0u;
+
+    MODULE_I2C1.RUNCTRL.U = 0u;
+    Stm_DelayMs(1u);
+
+    IfxPort_setPinModeOutput(&MODULE_P11, 13u,
+                             IfxPort_OutputMode_openDrain,
+                             IfxPort_OutputIdx_general);
+    IfxPort_setPinModeOutput(&MODULE_P11, 14u,
+                             IfxPort_OutputMode_openDrain,
+                             IfxPort_OutputIdx_general);
+
+    Debug_Print("[I2C1_BB] Scanning 0x08-0x77 via bit-bang...\r\n");
+
+    for (addr = 0x08u; addr <= 0x77u; addr++)
+    {
+        /* Release lines */
+        IfxPort_setPinHigh(&MODULE_P11, 13u);
+        IfxPort_setPinHigh(&MODULE_P11, 14u);
+        Stm_DelayUs(10u);
+
+        /* START */
+        IfxPort_setPinLow(&MODULE_P11, 13u);
+        Stm_DelayUs(5u);
+        IfxPort_setPinLow(&MODULE_P11, 14u);
+        Stm_DelayUs(5u);
+
+        /* Send address byte: addr << 1 | 0 (write) */
+        uint8 addrByte = (addr << 1u) | 0u;
+        sint8 bit;
+        for (bit = 7; bit >= 0; bit--)
+        {
+            if (addrByte & (1u << bit))
+                IfxPort_setPinHigh(&MODULE_P11, 13u);
+            else
+                IfxPort_setPinLow(&MODULE_P11, 13u);
+            Stm_DelayUs(5u);
+            IfxPort_setPinHigh(&MODULE_P11, 14u);
+            Stm_DelayUs(5u);
+            IfxPort_setPinLow(&MODULE_P11, 14u);
+            Stm_DelayUs(5u);
+        }
+
+        /* ACK bit */
+        IfxPort_setPinHigh(&MODULE_P11, 13u);
+        IfxPort_setPinModeInput(&MODULE_P11, 13u,
+                                IfxPort_InputMode_noPullDevice);
+        Stm_DelayUs(5u);
+        IfxPort_setPinHigh(&MODULE_P11, 14u);
+        Stm_DelayUs(5u);
+        boolean ack = (boolean)(IfxPort_getPinState(&MODULE_P11, 13u) == 0u);
+        IfxPort_setPinLow(&MODULE_P11, 14u);
+        Stm_DelayUs(5u);
+
+        /* Restore SDA as output for STOP */
+        IfxPort_setPinModeOutput(&MODULE_P11, 13u,
+                                 IfxPort_OutputMode_openDrain,
+                                 IfxPort_OutputIdx_general);
+
+        /* STOP */
+        IfxPort_setPinLow(&MODULE_P11, 13u);
+        Stm_DelayUs(5u);
+        IfxPort_setPinHigh(&MODULE_P11, 14u);
+        Stm_DelayUs(5u);
+        IfxPort_setPinHigh(&MODULE_P11, 13u);
+        Stm_DelayUs(10u);
+
+        if (ack)
+        {
+            Debug_Printf("[I2C1_BB] ACK at 0x%02X\r\n", (unsigned)addr);
+            found++;
+        }
+
+        if ((addr & 0x0Fu) == 0x0Fu)
+            Tlf35585_ServiceWdt();
+    }
+
+    Debug_Printf("[I2C1_BB] Done, %u device(s) found\r\n", (unsigned)found);
+
+    /* Restore I2C module */
+    I2cMaster_ReinitBus(1u);
 }
 
 /* ================================================================== */
@@ -656,7 +843,15 @@ static void prv_Dispatch(const char *cmd)
     else if (((args = prv_StartsWith(cmd, "sysmon")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdSysmon(args);
     else if (((args = prv_StartsWith(cmd, "mux")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
-        prv_CmdMux(args);                            
+        prv_CmdMux(args);
+    else if (((args = prv_StartsWith(cmd, "test-nvlog")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        SelfTest_NvLogStress();
+    else if (((args = prv_StartsWith(cmd, "i2cprobe")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cProbe();
+    else if (((args = prv_StartsWith(cmd, "i2cdiag")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cDiag();
+    else if (((args = prv_StartsWith(cmd, "i2cbb")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cBitbang();                                     
     else if (prv_StrEq(cmd, "uptime"))
         prv_CmdUptime();
     else if (prv_StrEq(cmd, "uptime"))
