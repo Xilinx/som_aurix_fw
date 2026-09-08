@@ -542,8 +542,6 @@ Key compile-time parameters in `Platform_Cfg.h` and `PowerManager_Cfg.h`:
 
 | Document | Description |
 |---|---|
-| AMD Publication **58241** Rev 0.50 (Jul 2023) | *Electrical Data Sheet for AMD Family 1Ah Models 70h-77h Processors* — power sequencing requirements in **Section 16**. Obtain under NDA from your AMD representative. |
-| AMD Publication **58023** | *Infrastructure Roadmap (IRM) for FP11 Processors* — power supply specifications referenced by AMD 58241 §16.1.1. |
 | Infineon **iLLD\_TC3xx v1.20.0** | Low Level Driver library for AURIX TC3xx — required for build. |
 | Infineon **CYPD6129 HPI Specification** (002-24049) | CCGx Host Processor Interface register map used by `Cypd6129_Drv.c`. |
 | **PICMG COM-HPC Specification** Rev 1.0 | Defines COM-HPC module power management signals (PWRGD, RSMRST, SLP\_S\*, PROCHOT\#, CATERR\#, PLTRST\#, RSMRST\_OUT\#). |
