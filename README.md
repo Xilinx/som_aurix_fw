@@ -1,4 +1,4 @@
-# som_aurix_fw — TC387 COM-HPC Platform Controller
+# som_aurix_fw - TC387 COM-HPC Platform Controller
 
 Bare-metal firmware for the **Infineon AURIX TC387** acting as the module-side
 platform management controller on a COM-HPC System-on-Module (SOM) hosting the
@@ -19,11 +19,11 @@ sequencing model:
 
 | Stage | SOM Enable Signal | Rails Controlled | AMD Group |
 |---|---|---|---|
-| 0 — EFUSE | `MAIN_12V_EFUSE_EN` | 12V\_MAIN path to SOM | COM-HPC pre-condition |
-| 0a — VR3V3 | `VR_APU_3V3_EN` | VR\_APU\_3V3 standby rail | Group A (standby) |
-| 1 — Group B | `PWR_GROUP_B_EN` | VDD\_MISC\_S5, VDD\_12\_S5, VDD\_18\_S5, VDDIO\_33\_S5 | Group B (S5) |
-| 2 — Group C | `PWR_GROUP_C_EN` | VDD\_MEM, VDDIO\_MEM, VDD\_MEMQ (Ch A & B) | Group C (S3/S0) |
-| 3 — Group D | `PWR_GROUP_D_EN` | VDDCR (via MP2825A / MP86979) | Group D (S0) |
+| 0 - EFUSE | `MAIN_12V_EFUSE_EN` | 12V\_MAIN path to SOM | COM-HPC pre-condition |
+| 0a - VR3V3 | `VR_APU_3V3_EN` | VR\_APU\_3V3 standby rail | Group A (standby) |
+| 1 - Group B | `PWR_GROUP_B_EN` | VDD\_MISC\_S5, VDD\_12\_S5, VDD\_18\_S5, VDDIO\_33\_S5 | Group B (S5) |
+| 2 - Group C | `PWR_GROUP_C_EN` | VDD\_MEM, VDDIO\_MEM, VDD\_MEMQ (Ch A & B) | Group C (S3/S0) |
+| 3 - Group D | `PWR_GROUP_D_EN` | VDDCR (via MP2825A / MP86979) | Group D (S0) |
 
 Sequencing enforces the following per AMD 58241 §16.1.2:
 
@@ -129,7 +129,7 @@ Fault causes are tracked via `PM_ResetCause_t`:
   `PM_COLD_RST_PULSE_MS`. If `CB_RSTBTN#` is still held, `COLD_RST`
   remains asserted until the button is released and the minimum pulse
   width has elapsed.
-- No rail or state changes occur — the APU performs its own internal reset.
+- No rail or state changes occur - the APU performs its own internal reset.
   PG-loss monitoring stays armed throughout.
 
 **CF9-style cold reset detection**: the firmware observes `APU_RESET_L`
@@ -165,10 +165,6 @@ Before releasing `COLD_RST` on cold boot (and during warm reset), the
 firmware reads the `BSEL[2:0]` boot-select straps, asserts the SPI MUX to
 take ownership of the BIOS ROM flash, and runs a validation check. If
 validation fails, the boot is blocked and a fault is raised.
-
-The AMD-defined validation method is TBD — the current implementation is a
-pass-through stub that always returns success. The SPI MUX is released back
-to the APU after validation completes.
 
 ### 10. Analog Voltage Monitoring (VoltMon)
 
@@ -213,9 +209,9 @@ The firmware manages the following COM-HPC module-to-carrier signals:
 | `APU_PWROK` | In (from APU) | SoC power-good feedback; polled during ramp and monitored in S0 |
 | `APU_RESET_L` | In (from APU) | SoC reset status; observed for CF9 cold-reset detection |
 | `APU_PWR_GOOD` | Out | Asserted when all power groups are stable (5 ms deglitch) |
-| `COLD_RST` (`SYS_RESET_L`) | Out | APU system reset — released after PWRGD hold time |
-| `WARM_RST` (`KBRST_L`) | Out | APU keyboard reset — warm reset path |
-| `MMC_RSMRST_L` | Out | APU resume reset — deasserted after S5 rails stable + 10 ms |
+| `COLD_RST` (`SYS_RESET_L`) | Out | APU system reset - released after PWRGD hold time |
+| `WARM_RST` (`KBRST_L`) | Out | APU keyboard reset - warm reset path |
+| `MMC_RSMRST_L` | Out | APU resume reset - deasserted after S5 rails stable + 10 ms |
 | `PLTRST_L` | Out | Platform reset to carrier; mirrors SoC `RESET_L` per COM-HPC spec |
 | `RSMRST_OUT_L` | Out | Mirrors AURIX `RSMRST_L` to COM-HPC carrier |
 | `PROCHOT#` | Out | Asserted LOW when APU thermal event detected (COM-HPC) |
@@ -309,13 +305,13 @@ DisplayPort Alt-mode signalling.
 
 ```
 som_aurix_fw/
-├── .project               # AURIX Development Studio — Makefile project descriptor
+├── .project               # AURIX Development Studio - Makefile project descriptor
 ├── .cproject              # CDT indexer / IntelliSense include paths
 ├── .gitignore
 ├── Makefile               # Standalone build (HIGHTEC GCC, tricore-gcc)
 ├── Linker/
 │   └── tc387.ld           # TC387 linker script (obtain from iLLD board package)
-├── iLLD/                  # Infineon iLLD_TC3xx v1.20.0 — NOT committed; see below
+├── iLLD/                  # Infineon iLLD_TC3xx v1.20.0 - NOT committed; see below
 └── Src/
     ├── BaseSw/
     │   └── Ifx_Cfg.h      # iLLD top-level config (MCU variant, XTAL, PLL)
@@ -331,8 +327,8 @@ som_aurix_fw/
         ├── Platform/
         │   ├── Platform_Cfg.h     # Timing constants, I2C addresses, rail counts
         │   ├── Platform_PinCfg.h  # GPIO pin assignments (extern const AppPin_t)
-        │   ├── Platform_PinCfg.c  # Pin definitions — all port/pin indices
-        │   ├── Clk_Cfg.h/c        # SCU PLL init — 300 MHz from 20 MHz XTAL
+        │   ├── Platform_PinCfg.c  # Pin definitions - all port/pin indices
+        │   ├── Clk_Cfg.h/c        # SCU PLL init - 300 MHz from 20 MHz XTAL
         │   ├── Port_Init.h/c      # GPIO direction/mode init for all board signals
         │   └── SysMonitor.h/c     # PROCHOT# propagation, CATERR# default drive
         ├── PowerManager/
@@ -542,6 +538,6 @@ Key compile-time parameters in `Platform_Cfg.h` and `PowerManager_Cfg.h`:
 
 | Document | Description |
 |---|---|
-| Infineon **iLLD\_TC3xx v1.20.0** | Low Level Driver library for AURIX TC3xx — required for build. |
+| Infineon **iLLD\_TC3xx v1.20.0** | Low Level Driver library for AURIX TC3xx - required for build. |
 | Infineon **CYPD6129 HPI Specification** (002-24049) | CCGx Host Processor Interface register map used by `Cypd6129_Drv.c`. |
 | **PICMG COM-HPC Specification** Rev 1.0 | Defines COM-HPC module power management signals (PWRGD, RSMRST, SLP\_S\*, PROCHOT\#, CATERR\#, PLTRST\#, RSMRST\_OUT\#). |
