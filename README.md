@@ -194,7 +194,7 @@ Four-core partitioning with deterministic peripheral ownership:
 - `Ipc_PmcStatus_t` — CPU1→all: PM state, reset cause, retry count, temperature
 - `Ipc_FusaStatus_t` — CPU2→all: 24 voltage channels, TLF status, fault codes
 
-**Synchronisation:** `IfxCpu_syncEvent` barrier — all cores block until every core emits, then proceed simultaneously.
+**Synchronisation:** `IfxCpu_syncEvent` barrier where all cores block until every core emits, then proceed simultaneously.
 
 **TLF WDT ownership handover:** CPU0 services during init, writes `g_ipcShared.wdtOwner = 2`, CPU2 takes over for runtime. Dual-path SPI: CPU2 uses ISRs, CPU0 polls SRR flags manually (interrupt-off safe during flash erases).
 
@@ -400,13 +400,6 @@ som_aurix_fw/
 | QSPI3 | CPU2 | FusaSpi slave | Carrier safety controller |
 | QSPI0 | None | BiosRom (tri-stated) | Released to Ryzen |
 
-## Hardware Validated
-
-| Platform | MCU | PMIC | Status |
-|----------|-----|------|--------|
-| KIT_A2G_TC387_5V_TRB (eval board) | SAK-TC387QP-160F300S | TLF35584 | ✅ Full v0.2 self-test suite |
-| Sapphire Robotics SoM + carrier | SAK-TC387QP-160F300S AE | TLF35585 | ✅ 23/24 ARD items, Ryzen boots Ubuntu |
-
 ## Prerequisites
 
 ### TriCore GCC Toolchain (v4.9.4)
@@ -511,8 +504,6 @@ Key compile-time parameters in `Platform_Cfg.h`:
 
 | Document | Description |
 |---|---|
-| AMD Publication **58241** Rev 0.50 (Jul 2023) | *Electrical Data Sheet for AMD Family 1Ah Models 70h-77h Processors* — power sequencing requirements in **Section 16**. Obtain under NDA from your AMD representative. |
-| AMD Publication **58023** | *Infrastructure Roadmap (IRM) for FP11 Processors* — power supply specifications referenced by AMD 58241 §16.1.1. |
 | Infineon **iLLD\_TC3xx v1.20.0** | Low Level Driver library for AURIX TC3xx — required for build. |
 | Infineon **CYPD6129 HPI Specification** (002-24049) | CCGx Host Processor Interface register map used by `Cypd6129_Drv.c`. |
 | **PICMG COM-HPC Specification** Rev 1.0 | Defines COM-HPC module power management signals (PWRGD, RSMRST, SLP\_S\*, PROCHOT\#, CATERR\#, PLTRST\#, RSMRST\_OUT\#). |
