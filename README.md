@@ -2,6 +2,52 @@
 
 Bare-metal firmware for the Infineon AURIX TC387 acting as the module-side platform management controller on a COM-HPC System-on-Module (SOM) hosting the AMD Strix Halo (FP11) x86 SoC.
 
+## Prerequisites
+
+### TriCore GCC Toolchain (v4.9.4)
+```bash
+git clone --depth 1 https://github.com/volumit/tricore_gcc494_linux_bins.git _tc_toolchain_tmp
+cd _tc_toolchain_tmp
+cat tricore_494_linux.zip.* > tricore_494_linux.zip
+mkdir -p ../tools/toolchain
+unzip -qo tricore_494_linux.zip -d ../tools/toolchain
+chmod -R +x ../tools/toolchain
+cd .. && rm -rf _tc_toolchain_tmp
+```
+
+### Infineon iLLD (v1.20.0)
+```bash
+git clone --depth 1 -b V1.20.0 https://github.com/Infineon/illd_release_tc3x.git _illd_tmp
+mkdir -p iLLD
+cp -r _illd_tmp/src/BaseSw/Infra iLLD/
+cp -r _illd_tmp/src/BaseSw/Service iLLD/
+for dir in _illd_tmp/src/BaseSw/iLLD/TC3xx/Tricore/*/; do cp -r "$dir" iLLD/; done
+rm -rf _illd_tmp
+```
+
+## Build
+
+### CMake (recommended)
+```bash
+cmake --preset som-debug          # Configure for SoM
+cmake --build --preset som-debug -j16   # Build
+cmake --build --preset som-debug --target flash  # Flash via miniWiggler
+```
+
+| Preset | Board | Optimisation | Define |
+|--------|-------|-------------|--------|
+| som-debug | GP System-on-Module | -O0 -g3 | TARGET_GP_SOM=1 |
+| som-release | GP System-on-Module | -O2 | TARGET_GP_SOM=1 |
+| eval-debug | Eval Board | -O0 -g3 | TARGET_EVAL_BOARD=1 |
+| eval-release | Eval Board | -O2 | TARGET_EVAL_BOARD=1 |
+
+### Makefile
+```bash
+make BOARD=som -j$(nproc)     # SoM build
+make BOARD=eval -j$(nproc)    # Eval board build
+make flash                     # Flash via miniWiggler (requires UDAS.exe running)
+```
+
 ## What's New in v0.2
 
 - **Multicore architecture** — CPU0/1/2/3 with LMU-based IPC, per-core peripheral ownership, TLF WDT handover
@@ -400,51 +446,7 @@ som_aurix_fw/
 | QSPI3 | CPU2 | FusaSpi slave | Carrier safety controller |
 | QSPI0 | None | BiosRom (tri-stated) | Released to Ryzen |
 
-## Prerequisites
 
-### TriCore GCC Toolchain (v4.9.4)
-```bash
-git clone --depth 1 https://github.com/volumit/tricore_gcc494_linux_bins.git _tc_toolchain_tmp
-cd _tc_toolchain_tmp
-cat tricore_494_linux.zip.* > tricore_494_linux.zip
-mkdir -p ../tools/toolchain
-unzip -qo tricore_494_linux.zip -d ../tools/toolchain
-chmod -R +x ../tools/toolchain
-cd .. && rm -rf _tc_toolchain_tmp
-```
-
-### Infineon iLLD (v1.20.0)
-```bash
-git clone --depth 1 -b V1.20.0 https://github.com/Infineon/illd_release_tc3x.git _illd_tmp
-mkdir -p iLLD
-cp -r _illd_tmp/src/BaseSw/Infra iLLD/
-cp -r _illd_tmp/src/BaseSw/Service iLLD/
-for dir in _illd_tmp/src/BaseSw/iLLD/TC3xx/Tricore/*/; do cp -r "$dir" iLLD/; done
-rm -rf _illd_tmp
-```
-
-## Build
-
-### CMake (recommended)
-```bash
-cmake --preset som-debug          # Configure for SoM
-cmake --build --preset som-debug -j16   # Build
-cmake --build --preset som-debug --target flash  # Flash via miniWiggler
-```
-
-| Preset | Board | Optimisation | Define |
-|--------|-------|-------------|--------|
-| som-debug | GP System-on-Module | -O0 -g3 | TARGET_GP_SOM=1 |
-| som-release | GP System-on-Module | -O2 | TARGET_GP_SOM=1 |
-| eval-debug | Eval Board | -O0 -g3 | TARGET_EVAL_BOARD=1 |
-| eval-release | Eval Board | -O2 | TARGET_EVAL_BOARD=1 |
-
-### Makefile
-```bash
-make BOARD=som -j$(nproc)     # SoM build
-make BOARD=eval -j$(nproc)    # Eval board build
-make flash                     # Flash via miniWiggler (requires UDAS.exe running)
-```
 
 ## Firmware Update (Post-Production)
 
