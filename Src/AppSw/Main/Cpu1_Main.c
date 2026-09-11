@@ -23,6 +23,7 @@
 #include "UsbPd_Hpd.h"
 #include "UsbPd_ApuProxy.h"
 #include "I2c_Slave.h"
+#include "UsbPd_Cfg.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -124,7 +125,7 @@ void core1_main(void)
 #endif
 
 #if (USBPD_FEATURE_ENABLE == 1u)
-    //I2cSlave_Init(NULL_PTR);
+    I2cSlave_Init(NULL_PTR);
     UsbPd_Hpd_Init();
     UsbPd_ApuProxy_Init();
     UsbPdManager_Init();

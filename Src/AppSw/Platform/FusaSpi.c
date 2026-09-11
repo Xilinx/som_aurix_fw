@@ -26,6 +26,7 @@
 #include "IfxQspi_SpiSlave.h"
 #include "IfxCpu_Irq.h"
 #include "SysMonitor.h"
+#include "UsbPd_Cfg.h"
 
 /* ================================================================== */
 /*  Register map storage                                              */

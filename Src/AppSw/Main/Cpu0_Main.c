@@ -115,26 +115,6 @@ int core0_main(void)
     Debug_Print("[SYS] Init: TLF OK\r\n");
 
     /* ============================================================== */
-    /*  Recovery mode check (SoM only) — pre-Ipc_Init, so the TLF     */
-    /*  service here must stay unconditional.                         */
-    /* ============================================================== */
-#if !defined(TARGET_EVAL_BOARD)
-    if (!prv_ReadPin(&PIN_CB_RSTBTN_L))
-    {
-        Debug_Print("[SYS] RECOVERY MODE — RSTBTN# held at boot\r\n");
-        Debug_Print("[SYS] UART MUX stays on AURIX, PM not started\r\n");
-        FwUpdate_Init();
-        NvLog_WriteU32(NVLOG_EVT_BOOT, NVLOG_SRC_SYSTEM,
-                       NVLOG_SEV_WARNING, 0x00EC0DE1u);
-        while (1)
-        {
-            FwUpdate_Run();
-            Tlf35585_ServiceWdt();      /* cores never released here */
-        }
-    }
-#endif
-
-    /* ============================================================== */
     /*  Phase 1: BIOS ROM + IPC init (before core release)            */
     /* ============================================================== */
     BiosRom_Init();

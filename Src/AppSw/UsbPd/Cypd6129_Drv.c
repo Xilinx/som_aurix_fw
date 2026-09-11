@@ -9,6 +9,7 @@
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
 #include "IfxPort.h"
+#include "UsbPd_Cfg.h"
 
 
 #if (USBPD_FEATURE_ENABLE == 1u)

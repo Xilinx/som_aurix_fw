@@ -29,7 +29,30 @@
 #include "Cypd6129_Drv.h"
 #include "IfxI2c_I2c.h"
 #include <stdlib.h>
+#include "IfxI2c_reg.h"
+#include "I2c_Slave.h"
 
+static I2cSlave_Inst_t s_cliSlave;
+
+
+#define CLI_SLAVE_MODULE   MODULE_I2C0
+#define CLI_SNIFF_MODULE    MODULE_I2C0
+#define CLI_SNIFF_SDA_PORT (&MODULE_P13)      /* <-- set to bus-0 SDA port   */
+#define CLI_SNIFF_SDA_PIN  1u                 /* <-- set to bus-0 SDA pin    */
+#define CLI_SNIFF_SCL_PORT (&MODULE_P13)      /* <-- set to bus-0 SCL port   */
+#define CLI_SNIFF_SCL_PIN  2u                 /* <-- set to bus-0 SCL pin    */
+#define CLI_SNIFF_MAXPKT   32u                /* bytes logged per packet     */
+ 
+
+#define SNIFF_LOG 64u
+static uint8  s_snPkt[SNIFF_LOG][8];
+static uint8  s_snAck[SNIFF_LOG][8];
+static uint8  s_snLen[SNIFF_LOG];
+static uint32 s_snT[SNIFF_LOG];
+/* ---- 2. Command handler: paste next to prv_CmdI2cScan --------------- */
+ 
+#define SNIFF_SDA()  ((uint32)IfxPort_getPinState(CLI_SNIFF_SDA_PORT, CLI_SNIFF_SDA_PIN))
+#define SNIFF_SCL()  ((uint32)IfxPort_getPinState(CLI_SNIFF_SCL_PORT, CLI_SNIFF_SCL_PIN))
 
 /* ================================================================== */
 /*  External references (defined in Uart_Debug.c)                     */
@@ -619,6 +642,7 @@ static void prv_CmdPin(void)
     }
 }
 
+
 static void prv_CmdI2cProbe(void)
 {
     /* Temporarily read SDA/SCL as GPIO to check voltage level */
@@ -784,6 +808,360 @@ static void prv_CmdI2cBitbang(void)
     I2cMaster_ReinitBus(1u);
 }
 
+
+
+/**
+ * i2csniff [secs]
+ * Passive sniff of bus 0: logs every transaction from any master to any
+ * address. Plug a Type-C device in while it runs. ESC to stop.
+ */
+static void prv_CmdI2cSniff(const char *args)
+{
+    IfxAsclin_Asc *asc = Debug_GetAscHandle();
+    const char *a = prv_SkipSpaces(args);
+    uint32 secs = 30u, t0, pkts = 0u;
+    uint8  pkt[CLI_SNIFF_MAXPKT];
+    uint8  ack[CLI_SNIFF_MAXPKT];
+    uint32 n = 0u;
+    boolean inPkt = FALSE, aborted = FALSE;
+    uint32 sdaPrev, sclPrev;
+    uint32 seen[16] = {0};                    /* bitmap of 7-bit addresses seen */
+ 
+    if (*a != '\0') secs = prv_Atoi(a);
+ 
+    /* release the bus: module off, pins hi-Z inputs */
+    CLI_SNIFF_MODULE.RUNCTRL.U = 0u;
+    IfxPort_setPinModeInput(CLI_SNIFF_SDA_PORT, CLI_SNIFF_SDA_PIN, IfxPort_InputMode_noPullDevice);
+    IfxPort_setPinModeInput(CLI_SNIFF_SCL_PORT, CLI_SNIFF_SCL_PIN, IfxPort_InputMode_noPullDevice);
+    Stm_DelayMs(1u);
+ 
+    Debug_Printf("[SNIFF] bus0 idle SDA=%u SCL=%u; listening %us, ESC to stop\r\n",
+                 (unsigned)SNIFF_SDA(), (unsigned)SNIFF_SCL(), (unsigned)secs);
+ 
+    sdaPrev = SNIFF_SDA();
+    sclPrev = SNIFF_SCL();
+    t0 = Stm_GetTimeMs();
+ 
+    while ((Stm_GetTimeMs() - t0) < (secs * 1000u))
+    {
+        uint32 sda = SNIFF_SDA();
+        uint32 scl = SNIFF_SCL();
+ 
+        /* START: SDA falls while SCL high ------------------------------ */
+        if (scl && sclPrev && sdaPrev && !sda)
+        {
+            uint32 tPkt = Stm_GetTimeMs() - t0;
+            boolean stop = FALSE;
+            n = 0u;
+ 
+            /* decode bytes until STOP or repeated START ---------------- */
+            while (!stop && (n < CLI_SNIFF_MAXPKT))
+            {
+                uint32 b = 0u, bit;
+                boolean rs = FALSE;
+ 
+                for (bit = 0u; bit < 8u; bit++)
+                {
+                    uint32 d;
+                    while (SNIFF_SCL()) {}                 /* wait SCL low  */
+                    while (!SNIFF_SCL()) {}                /* wait SCL high */
+                    d = SNIFF_SDA();
+                    /* while SCL high, watch for STOP (SDA rises) or
+                       repeated START (SDA falls) on the first bit        */
+                    while (SNIFF_SCL())
+                    {
+                        uint32 d2 = SNIFF_SDA();
+                        if (bit == 0u)
+                        {
+                            if (d2 && !d)  { stop = TRUE; break; }
+                            if (!d2 && d)  { rs   = TRUE; break; }
+                        }
+                    }
+                    if (stop || rs) break;
+                    b = (b << 1u) | d;
+                }
+                if (stop) break;
+                if (rs) { pkt[n] = 0xFFu; ack[n] = 2u; n++; continue; }  /* mark Sr */
+ 
+                /* ACK bit */
+                while (SNIFF_SCL()) {}
+                while (!SNIFF_SCL()) {}
+                pkt[n] = (uint8)b;
+                ack[n] = (uint8)(SNIFF_SDA() == 0u);       /* 1 = ACK   */
+                n++;
+            }
+ 
+            /* print packet ---------------------------------------------- */
+            {
+                if (pkts < SNIFF_LOG)
+                {
+                    uint32 i, m = (n < 8u) ? n : 8u;
+                    for (i = 0u; i < m; i++) { s_snPkt[pkts][i] = pkt[i]; s_snAck[pkts][i] = ack[i]; }
+                    s_snLen[pkts] = (uint8)m;
+                    s_snT[pkts]   = tPkt;
+                }
+                pkts++;
+                {
+                    uint32 i;
+                    for (i = 0u; i < n; i++)
+                        if ((i == 0u) || (ack[i - 1u] == 2u))
+                            seen[(pkt[i] >> 1u) >> 5u] |= (1u << ((pkt[i] >> 1u) & 31u));
+                }
+            }
+            sda = SNIFF_SDA();
+            scl = SNIFF_SCL();
+        }
+ 
+        sdaPrev = sda;
+        sclPrev = scl;
+ 
+        /* housekeeping only while bus idle */
+        if (sda && scl)
+        {
+            Tlf35585_ServiceWdt();
+            if (asc != NULL_PTR)
+            {
+                uint8 ch; Ifx_SizeT c = 1u;
+                if (IfxAsclin_Asc_read(asc, &ch, &c, 0u) && (c == 1u) && (ch == 0x1Bu))
+                {
+                    aborted = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+ 
+    I2cMaster_ReinitBus(0u);
+     {
+        uint32 p, i, m = (pkts < SNIFF_LOG) ? pkts : SNIFF_LOG;
+        for (p = 0u; p < m; p++)
+        {
+            Debug_Printf("[SNIFF] #%u @%ums:", (unsigned)(p + 1u), (unsigned)s_snT[p]);
+            for (i = 0u; i < s_snLen[p]; i++)
+            {
+                if (s_snAck[p][i] == 2u) { Debug_Print(" Sr"); continue; }
+                if ((i == 0u) || (s_snAck[p][i - 1u] == 2u))
+                    Debug_Printf(" [%02X %c%s]", (unsigned)(s_snPkt[p][i] >> 1u),
+                                 (s_snPkt[p][i] & 1u) ? 'R' : 'W', s_snAck[p][i] ? "" : " NAK");
+                else
+                    Debug_Printf(" %02X%s", (unsigned)s_snPkt[p][i], s_snAck[p][i] ? "" : "n");
+            }
+            Debug_Print(" P\r\n");
+        }
+    }
+    Debug_Printf("[SNIFF] %s, %u packet(s). Addresses seen:",
+                 aborted ? "aborted" : "done", (unsigned)pkts);
+    {
+        uint32 i;
+        for (i = 0u; i < 128u; i++)
+            if (seen[i >> 5u] & (1u << (i & 31u)))
+                Debug_Printf(" 0x%02X", (unsigned)i);
+    }
+    Debug_Print("\r\n");
+}
+
+static void prv_CmdI2cSlaveScan(const char *args)
+{
+    Ifx_I2C *i2c = &CLI_SLAVE_MODULE;
+    const char *a = prv_SkipSpaces(args);
+    uint32 dwell = 100u, pass, addr7, hits = 0u;
+
+    if (*a != '\0') dwell = prv_Atoi(a);
+
+    Debug_Printf("[I2CSS] slave sweep 0x08-0x77, %ums each, keep the cable plugged in\r\n",
+                 (unsigned)dwell);
+
+    for (pass = 0u; pass < 2u; pass++)
+    {
+        Debug_Printf("[I2CSS] pass %u: ADR = addr %s\r\n",
+                     (unsigned)pass, pass ? "unshifted" : "<< 1");
+        for (addr7 = 0x08u; addr7 <= 0x77u; addr7++)
+        {
+            uint32 t0, am = 0u, rx = 0u;
+
+            i2c->RUNCTRL.B.RUN  = 0u;
+            i2c->ADDRCFG.B.MNS  = 0u;
+            i2c->ADDRCFG.B.TBAM = 0u;
+            i2c->ADDRCFG.B.ADR  = pass ? addr7 : (addr7 << 1u);
+            i2c->ADDRCFG.B.GCE  = 0u;
+            i2c->ADDRCFG.B.MCE  = 0u;
+            i2c->ADDRCFG.B.SOPE = 1u;
+            i2c->ADDRCFG.B.SONA = 1u;
+            i2c->PIRQSC.U       = 0xFFFFFFFFu;
+            i2c->ERRIRQSC.U     = 0xFFFFFFFFu;
+            i2c->RUNCTRL.B.RUN  = 1u;
+
+            t0 = Stm_GetTimeMs();
+            while ((Stm_GetTimeMs() - t0) < dwell)
+            {
+                uint32 ffs = i2c->FFSSTAT.B.FFS;
+                if (i2c->PIRQSS.B.AM) { am++; i2c->PIRQSC.B.AM = 1u; }
+                while (ffs--) { (void)i2c->RXD.U; rx++; }
+                if (i2c->PIRQSS.U) i2c->PIRQSC.U = i2c->PIRQSS.U;
+                if (i2c->ERRIRQSS.U) i2c->ERRIRQSC.U = i2c->ERRIRQSS.U;
+            }
+            if (am || rx)
+            {
+                Debug_Printf("[I2CSS]   0x%02X: %u match(es), %u byte(s)\r\n",
+                             (unsigned)addr7, (unsigned)am, (unsigned)rx);
+                hits++;
+            }
+            if ((addr7 & 0x07u) == 0u) Tlf35585_ServiceWdt();
+        }
+    }
+
+    I2cMaster_ReinitBus(0u);
+    Debug_Printf("[I2CSS] done, %u address(es) with traffic; bus0 restored\r\n", (unsigned)hits);
+}
+
+static void prv_CmdI2cSlave(const char *args)
+{
+    Ifx_I2C       *i2c  = &CLI_SLAVE_MODULE;
+    IfxAsclin_Asc *asc  = Debug_GetAscHandle();
+    const char    *a    = prv_SkipSpaces(args);
+    uint32 addr7, secs = 30u, t0;
+    uint32 matches = 0u, bytes = 0u;
+    boolean aborted = FALSE;
+
+    if (*a == '\0')
+    {
+        Debug_Print("[I2CS] usage: i2cslave <hexaddr7> [secs]   e.g. i2cslave 0x40 60\r\n");
+        return;
+    }
+    addr7 = prv_AtoiHex(a);
+    while (*a && *a != ' ') a++;
+    a = prv_SkipSpaces(a);
+    if (*a != '\0') secs = prv_Atoi(a);
+    if ((addr7 < 0x08u) || (addr7 > 0x77u))
+    {
+        Debug_Print("[I2CS] addr must be 0x08..0x77\r\n");
+        return;
+    }
+
+    /* reconfigure module as 7-bit slave */
+    i2c->RUNCTRL.B.RUN  = 0u;
+    i2c->ADDRCFG.B.MNS  = 0u;                /* 0 = slave            */
+    i2c->ADDRCFG.B.TBAM = 0u;                /* 7-bit addressing     */
+    i2c->ADDRCFG.B.ADR  = (addr7 << 1u);     /* ADR[7:1] = address   */
+    i2c->ADDRCFG.B.GCE  = 0u;
+    i2c->ADDRCFG.B.MCE  = 0u;
+    i2c->ADDRCFG.B.SOPE = 1u;                /* stop on packet end   */
+    i2c->ADDRCFG.B.SONA = 1u;                /* stop on NACK         */
+    i2c->FIFOCFG.B.RXFA = 0u;                /* byte-aligned RX FIFO */
+    i2c->FIFOCFG.B.RXFC = 1u;                /* flow controlled      */
+    i2c->FIFOCFG.B.RXBS = 3u;                /* burst 8              */
+    i2c->PIRQSC.U       = 0xFFFFFFFFu;
+    i2c->ERRIRQSC.U     = 0xFFFFFFFFu;
+    i2c->RUNCTRL.B.RUN  = 1u;
+
+    Debug_Printf("[I2CS] bus0 slave @0x%02X for %us, plug a Type-C device in. ESC to stop.\r\n",
+                 (unsigned)addr7, (unsigned)secs);
+
+    t0 = Stm_GetTimeMs();
+    while ((Stm_GetTimeMs() - t0) < (secs * 1000u))
+    {
+        uint32 pirq = i2c->PIRQSS.U;
+        uint32 eirq = i2c->ERRIRQSS.U;
+        uint32 ffs  = i2c->FFSSTAT.B.FFS;    /* bytes waiting in RX FIFO */
+
+        if (pirq & (1u << 0u))               /* AM: address match */
+        {
+            matches++;
+            Debug_Printf("[I2CS] addr match #%u @%ums\r\n",
+                         (unsigned)matches, (unsigned)(Stm_GetTimeMs() - t0));
+        }
+        while (ffs--)
+        {
+            uint8 d = (uint8)i2c->RXD.U;
+            Debug_Printf("[I2CS]   rx 0x%02X\r\n", (unsigned)d);
+            bytes++;
+        }
+        if (pirq & ~(1u << 0u))
+            Debug_Printf("[I2CS] PIRQSS=0x%08X\r\n", (unsigned)pirq);
+        if (pirq) i2c->PIRQSC.U = pirq;
+        if (eirq)
+        {
+            Debug_Printf("[I2CS] ERRIRQSS=0x%08X\r\n", (unsigned)eirq);
+            i2c->ERRIRQSC.U = eirq;
+        }
+
+        if (asc != NULL_PTR)                 /* ESC aborts */
+        {
+            uint8 ch; Ifx_SizeT n = 1u;
+            if (IfxAsclin_Asc_read(asc, &ch, &n, 0u) && (n == 1u) && (ch == 0x1Bu))
+            {
+                aborted = TRUE;
+                break;
+            }
+        }
+
+        Tlf35585_ServiceWdt();
+    }
+
+    I2cMaster_ReinitBus(0u);                 /* back to master mode */
+    Debug_Printf("[I2CS] %s: %u addr match(es), %u byte(s); bus0 restored\r\n",
+                 aborted ? "aborted" : "done",
+                 (unsigned)matches, (unsigned)bytes);
+}
+
+static void prv_CmdI2cTest(const char *args)
+{
+    IfxAsclin_Asc *asc = Debug_GetAscHandle();
+    const char *a = prv_SkipSpaces(args);
+    uint32 addr7 = 0x40u, secs = 60u, shift = 1u, t0, i, m;
+    boolean aborted = FALSE;
+
+    if (*a != '\0') { addr7 = prv_AtoiHex(a); while (*a && *a != ' ') a++; a = prv_SkipSpaces(a); }
+    if (*a != '\0') { secs  = prv_Atoi(a);    while (*a && *a != ' ') a++; a = prv_SkipSpaces(a); }
+    if (*a != '\0') { shift = prv_Atoi(a); }
+
+    /* 1. master scan */
+    Debug_Print("[I2CT] step 1: master scan of bus 0\r\n");
+    prv_CmdI2cScan("0");
+
+    /* 2. retimer emulator */
+    Debug_Printf("[I2CT] step 2: emulating retimer @0x%02X (ADR %s) for %us. Plug a DP alt-mode device in. ESC to stop.\r\n",
+                 (unsigned)addr7, shift ? "<<1" : "unshifted", (unsigned)secs);
+    I2cSlave_Setup(&s_cliSlave, &MODULE_I2C0, (uint8)addr7, (uint8)shift, NULL_PTR);
+    I2cSlave_Start(&s_cliSlave);
+
+    t0 = Stm_GetTimeMs();
+    while ((Stm_GetTimeMs() - t0) < (secs * 1000u))
+    {
+        I2cSlave_Poll(&s_cliSlave);
+        if (!s_cliSlave.busy)
+        {
+            uint8 ch; Ifx_SizeT n = 1u;
+            Tlf35585_ServiceWdt();
+            if ((asc != NULL_PTR) && IfxAsclin_Asc_read(asc, &ch, &n, 0u) && (n == 1u) && (ch == 0x1Bu))
+            { aborted = TRUE; break; }
+        }
+    }
+    I2cSlave_Stop(&s_cliSlave);
+    I2cMaster_ReinitBus(0u);
+
+    /* 3. report */
+    Debug_Printf("[I2CT] %s: %u addr match, %u rx, %u tx, %u nack\r\n",
+                 aborted ? "aborted" : "done",
+                 (unsigned)s_cliSlave.matches, (unsigned)s_cliSlave.rxBytes,
+                 (unsigned)s_cliSlave.txBytes, (unsigned)s_cliSlave.nacks);
+    m = (s_cliSlave.logCount < I2C_SLV_LOG_LEN) ? s_cliSlave.logCount : I2C_SLV_LOG_LEN;
+    for (i = 0u; i < m; i++)
+    {
+        const I2cSlave_LogEntry_t *e = &s_cliSlave.log[i];
+        if (e->isWrite && (e->data == 0xFFu) && (i + 1u < m) && s_cliSlave.log[i + 1u].isWrite)
+            continue;                                   /* skip bare reg-select lines followed by data */
+        Debug_Printf("[I2CT]  @%6ums %s reg 0x%02X %s 0x%02X\r\n",
+                     (unsigned)(e->tMs - t0), e->isWrite ? "W" : "R",
+                     (unsigned)e->reg, e->isWrite ? "<-" : "->", (unsigned)e->data);
+    }
+    if (s_cliSlave.logCount > I2C_SLV_LOG_LEN)
+        Debug_Printf("[I2CT]  ... %u more not logged\r\n", (unsigned)(s_cliSlave.logCount - I2C_SLV_LOG_LEN));
+    Debug_Print("[I2CT] register file (non-zero):");
+    for (i = 0u; i < 256u; i++)
+        if (s_cliSlave.regFile[i]) Debug_Printf(" [%02X]=%02X", (unsigned)i, (unsigned)s_cliSlave.regFile[i]);
+    Debug_Print("\r\n");
+}
 /* ================================================================== */
 /*  Command dispatch                                                  */
 /* ================================================================== */
@@ -836,6 +1214,18 @@ static void prv_Dispatch(const char *cmd)
     else if (((args = prv_StartsWith(cmd, "pin")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdPin();
 
+    else if (((args = prv_StartsWith(cmd, "i2csniff")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cSniff(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2cslave")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cSlave(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2cslavescan")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cSlaveScan(args);
+
+    else if (((args = prv_StartsWith(cmd, "i2ctest")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdI2cTest(args);
+        
     else if (prv_StrEq(cmd, "i2cstat"))
         prv_CmdI2cStat();
     else if (((args = prv_StartsWith(cmd, "i2creset")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))

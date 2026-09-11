@@ -21,6 +21,7 @@
 #include "Uart_Debug.h"
 #include <string.h>
 
+
 #if (USBPD_FEATURE_ENABLE == 1u)
 
 /* ================================================================== */

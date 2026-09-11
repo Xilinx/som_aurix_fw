@@ -24,78 +24,54 @@
 
 #ifndef I2C_SLAVE_H
 #define I2C_SLAVE_H
-
 #include "Ifx_Types.h"
-
-/* ================================================================== */
-/*  Configuration                                                     */
-/* ================================================================== */
+#include "IfxI2c_reg.h"
 
 #ifndef I2C_SLAVE_FEATURE_ENABLE
-#define I2C_SLAVE_FEATURE_ENABLE    1u
+#define I2C_SLAVE_FEATURE_ENABLE 1u
 #endif
 
-/* APU slave addresses (7-bit) */
-#define I2C_SLV_USBC0_ADDR     0x54u
-#define I2C_SLV_USBC1_ADDR     0x58u
+#define I2C_SLV_USBC0_ADDR   0x54u
+#define I2C_SLV_USBC1_ADDR   0x58u
+#define I2C1_SLAVE_ISR_PRIO  50u
+#define I2C_SLV_LOG_LEN      128u
 
-/* ISR priority — must not conflict with I2C master or other ISRs */
-#define I2C1_SLAVE_ISR_PRIO    50u
+typedef boolean (*I2cSlave_ReadCb_t)(uint8 portIdx, uint8 regAddr, uint8 *pData);
 
-/* ================================================================== */
-/*  Callback type for providing response data                         */
-/* ================================================================== */
+typedef struct
+{
+    uint32 tMs;      /* time of transaction               */
+    uint8  reg;      /* register address byte             */
+    uint8  data;     /* data byte (0xFF if none)          */
+    uint8  isWrite;  /* 1 = master wrote, 0 = master read */
+} I2cSlave_LogEntry_t;
 
-/**
- * Callback invoked from the slave ISR when the APU reads a register.
- *
- * @param  portIdx    Which port was addressed (0 for 0x54, 1 for 0x58)
- * @param  regAddr    Register offset the APU is reading
- * @param  pData      Output: byte to send back
- * @return TRUE if data is valid, FALSE to NACK
- */
-typedef boolean (*I2cSlave_ReadCb_t)(uint8 portIdx, uint8 regAddr,
-                                     uint8 *pData);
+typedef struct
+{
+    Ifx_I2C          *mod;
+    uint8             addr7;
+    uint8             addrShifted;     /* 1: ADR = addr7<<1, 0: ADR = addr7 */
+    I2cSlave_ReadCb_t readCb;
+    uint8             regFile[256];    /* retimer emulation: writes land here, reads served from here */
+    /* transaction state */
+    volatile boolean  busy, addrPhase;
+    volatile uint8    regAddr;
+    /* stats + log */
+    volatile uint32   matches, rxBytes, txBytes, nacks;
+    I2cSlave_LogEntry_t log[I2C_SLV_LOG_LEN];
+    volatile uint32   logCount;
+} I2cSlave_Inst_t;
 
-/* ================================================================== */
-/*  Public API                                                        */
-/* ================================================================== */
+/* generic instance API (used by CLI on I2C0) */
+void    I2cSlave_Setup (I2cSlave_Inst_t *s, Ifx_I2C *mod, uint8 addr7, uint8 addrShifted, I2cSlave_ReadCb_t cb);
+void    I2cSlave_Start (I2cSlave_Inst_t *s);
+void    I2cSlave_Stop  (I2cSlave_Inst_t *s);        /* leaves module in master mode, RUN=1 */
+void    I2cSlave_Poll  (I2cSlave_Inst_t *s);        /* call in a loop; services AM/RX/TX/errors */
 
-/**
- * @brief  Initialise I2C1 slave mode alongside existing master mode.
- *
- * Configures the I2C1 address register for slave addresses
- * 0x54 and 0x58.  Enables the protocol interrupt for address
- * match and read-request handling.
- *
- * Must be called AFTER I2cMaster_Init() (which sets up I2C1
- * for APML master transactions).
- *
- * @param  readCb  Callback function for serving APU read requests
- */
-void I2cSlave_Init(I2cSlave_ReadCb_t readCb);
+/* legacy I2C1 / APU proxy API (unchanged behaviour) */
+void    I2cSlave_Init   (I2cSlave_ReadCb_t readCb);
+boolean I2cSlave_IsBusy (void);
+void    I2cSlave_Suspend(void);
+void    I2cSlave_Resume (void);
 
-/**
- * @brief  Check if the slave is currently handling a transaction.
- *
- * The APML master should check this before starting a master
- * transaction to avoid bus conflicts.
- */
-boolean I2cSlave_IsBusy(void);
-
-/**
- * @brief  Temporarily disable slave address matching.
- *
- * Call before an APML master transaction if the hardware
- * cannot do simultaneous master+slave on the same bus.
- */
-void I2cSlave_Suspend(void);
-
-/**
- * @brief  Re-enable slave address matching.
- *
- * Call after an APML master transaction completes.
- */
-void I2cSlave_Resume(void);
-
-#endif /* I2C_SLAVE_H */
+#endif
