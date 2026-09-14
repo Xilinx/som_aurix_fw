@@ -481,11 +481,15 @@ static void prv_CmdI2cStat(void)
 static void prv_CmdFwUpdate(void)
 {
     Debug_Print("[FWUP] Entering update mode on debug UART...\r\n");
-    Debug_Print("[FWUP] Run aurix_update.py now. Press ESC to abort.\r\n");
+    Debug_Print("[FWUP] Send SYNC within 120s\r\n");
 
+    g_debugMuted = TRUE;
     UartXfer_SetHandle(Debug_GetAscHandle());
-    FwUpdate_Abort();  /* Reset state to IDLE */
+    FwUpdate_Abort();
+    Stm_DelayMs(500u);
+    UartXfer_FlushRx();
 
+    uint32 startMs = Stm_GetTimeMs();
     while (1)
     {
         FwUpdate_State_t st = FwUpdate_Run();
@@ -493,9 +497,13 @@ static void prv_CmdFwUpdate(void)
 
         if (st == FWUPDATE_DONE || st == FWUPDATE_ERROR)
             break;
+
+        if ((Stm_GetTimeMs() - startMs) > 600000u) 
+            break;
     }
 
-    UartXfer_SetHandle(NULL_PTR);  /* Restore default */
+    g_debugMuted = FALSE;
+    UartXfer_SetHandle(NULL_PTR);
     Debug_Print("[FWUP] Exited update mode\r\n");
 }
 

@@ -167,7 +167,7 @@ BootValid_Status_t BootValid_CommitUpdate(void)
     return BOOTVALID_OK;
 }
 
-BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank)
+BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank, uint32 imageSize)
 {
     DFlash_SotaMeta_t meta;
     DFlash_Status_t   dStatus;
@@ -175,7 +175,7 @@ BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank
     meta.magic         = DFLASH_SOTA_MAGIC;
     meta.pendingUpdate = 1u;
     meta.bootCounter   = 0u;
-    meta.reserved0     = 0u;
+    meta.reserved0     = imageSize;
     meta.imageCrc      = imageCrc;
     meta.activeBank    = targetBank;
     meta.reserved1     = 0u;

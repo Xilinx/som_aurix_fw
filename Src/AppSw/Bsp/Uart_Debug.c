@@ -33,7 +33,9 @@
 /* TX buffer must include Ifx_Fifo header + 8-byte alignment guard. */
 static IfxAsclin_Asc s_ascHandle;
 static uint8         s_txBuf[TX_DATA_SIZE + sizeof(Ifx_Fifo) + 8u];
-static uint8         s_rxBuf[64 + sizeof(Ifx_Fifo) + 8u];    /* ADD */
+static uint8         s_rxBuf[512 + sizeof(Ifx_Fifo) + 8u];    /* ADD */
+
+volatile boolean g_debugMuted = FALSE;
 
 IFX_INTERRUPT(uartTxISR, 0, UART_TX_ISR_PRIO)
 {
@@ -82,7 +84,7 @@ void Debug_Init(void)
 
     /* RX not used for debug output. */
     cfg.rxBuffer     = s_rxBuf;            
-    cfg.rxBufferSize = (Ifx_SizeT)64u; 
+    cfg.rxBufferSize = (Ifx_SizeT)512u; 
 
     IfxAsclin_Asc_initModule(&s_ascHandle, &cfg);
     IfxCpu_Irq_installInterruptHandler(&uartTxISR, UART_TX_ISR_PRIO);
@@ -129,6 +131,7 @@ void Debug_DrainRings(void)
 
 void Debug_Print(const char *str)
 {
+    if (g_debugMuted) return;
     if ((str == NULL_PTR) || (*str == '\0'))
         return;
 

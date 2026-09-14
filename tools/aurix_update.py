@@ -66,7 +66,7 @@ NAK_ERRORS = {
 
 # Default timeouts (seconds)
 SYNC_TIMEOUT    = 2.0
-HEADER_TIMEOUT  = 30.0   # Includes bank erase (~4 s)
+HEADER_TIMEOUT  = 240.0   # Includes bank erase (~4 s)
 CHUNK_TIMEOUT   = 5.0
 FINAL_TIMEOUT   = 30.0   # CRC verify + meta write + swap
 
@@ -123,6 +123,24 @@ def wait_response(ser: serial.Serial, timeout: float) -> tuple:
 
     return ("BAD", resp)
 
+def wait_response_cli(ser, timeout, cli_mode):
+    if cli_mode:
+        deadline = time.time() + timeout
+        raw = b''
+        while time.time() < deadline:
+            if ser.in_waiting:
+                raw += ser.read(ser.in_waiting)
+                if b'\x06\x06\x06\x06' in raw:
+                    return ("ACK", None)
+                if b'\x15\x15\x15\x15' in raw:
+                    idx = raw.index(b'\x15\x15\x15\x15')
+                    if idx + 4 < len(raw):
+                        return ("NAK", raw[idx + 4])
+                    return ("NAK", 0xFF)
+            time.sleep(0.02)
+        return ("TIMEOUT", None)
+    else:
+        return wait_response(ser, timeout)
 
 # ---------------------------------------------------------------------------
 #  Progress bar
@@ -152,7 +170,7 @@ def print_progress(current: int, total: int, start_time: float, prefix: str = ""
 #  Main upload flow
 # ---------------------------------------------------------------------------
 def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
-                    retries: int = 3, verbose: bool = False) -> bool:
+                    retries: int = 3, verbose: bool = False, cli_mode: bool = False) -> bool:
     """
     Upload a firmware binary to the AURIX.
 
@@ -213,6 +231,15 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
 
     print(f"Port:   {port} @ {baud} baud", file=sys.stderr)
 
+    if cli_mode:
+        print("Sending 'fwupdate' CLI command...", file=sys.stderr)
+        ser.write(b'\r\nfwupdate\r\n')
+        time.sleep(4)
+        while ser.in_waiting:
+            ser.read(ser.in_waiting)
+            time.sleep(0.1)
+        ser.reset_input_buffer()
+
     # Flush any stale data
     ser.reset_input_buffer()
     ser.reset_output_buffer()
@@ -224,7 +251,8 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
     send_u32(ser, SYNC_MAGIC)
     ser.flush()
 
-    result, err = wait_response(ser, SYNC_TIMEOUT)
+    result, err = wait_response_cli(ser, SYNC_TIMEOUT + 5, cli_mode)
+        
     if result != "ACK":
         print(f"FAILED ({result}, err={err})", file=sys.stderr)
         print("  Is the AURIX running and listening on the transfer UART?", file=sys.stderr)
@@ -238,7 +266,7 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
     send_bytes(ser, header)
     ser.flush()
 
-    result, err = wait_response(ser, HEADER_TIMEOUT)
+    result, err = wait_response_cli(ser, HEADER_TIMEOUT, cli_mode)
     if result != "ACK":
         err_name = NAK_ERRORS.get(err, f"0x{err:02X}") if err is not None else "?"
         print(f"FAILED ({result}, err={err_name})", file=sys.stderr)
@@ -259,15 +287,16 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
         chunk = image[offset : offset + CHUNK_SIZE]
         chunk_crc = crc32(chunk)
 
-        # Build DATA frame: seqNum(4) + chunkCrc(4) + data(256)
         frame = struct.pack("<II", seq, chunk_crc) + chunk
+
+        time.sleep(0.02) 
 
         attempt = 0
         while attempt <= retries:
             send_bytes(ser, frame)
             ser.flush()
-
-            result, err = wait_response(ser, CHUNK_TIMEOUT)
+            chunk_timeout = 10.0 if cli_mode else CHUNK_TIMEOUT
+            result, err = wait_response_cli(ser, chunk_timeout, cli_mode)
 
             if result == "ACK":
                 break
@@ -291,7 +320,7 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
     # -- Step 4: Wait for final ACK (CRC verify + meta + swap) ---------------
     print(f"\n[4/4] Waiting for verification + commit...", file=sys.stderr, end=" ")
 
-    result, err = wait_response(ser, FINAL_TIMEOUT)
+    result, err = wait_response_cli(ser, FINAL_TIMEOUT, cli_mode)
     if result != "ACK":
         err_name = NAK_ERRORS.get(err, f"0x{err:02X}") if err is not None else "?"
         print(f"FAILED ({result}, err={err_name})", file=sys.stderr)
@@ -340,7 +369,8 @@ Examples:
                         help="Retry count per chunk on NAK (default: 3)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print detailed diagnostics")
-
+    parser.add_argument("--cli", action="store_true",
+                        help="Send 'fwupdate' CLI command before SYNC (for debug UART)")
     args = parser.parse_args()
 
     target_bank = BANK_A if args.bank == "A" else BANK_B
@@ -352,6 +382,7 @@ Examples:
         target_bank=target_bank,
         retries=args.retries,
         verbose=args.verbose,
+        cli_mode=args.cli,
     )
 
     sys.exit(0 if success else 1)

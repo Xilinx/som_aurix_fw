@@ -34,4 +34,7 @@ void Debug_DrainRings(void);
 
 IfxAsclin_Asc *Debug_GetAscHandle(void);
 
+extern volatile boolean g_debugMuted;
+
+
 #endif /* UART_DEBUG_H */

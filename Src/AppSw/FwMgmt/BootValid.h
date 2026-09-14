@@ -113,6 +113,5 @@ BootValid_Status_t BootValid_CommitUpdate(void);
  * @param  targetBank 0x55 (Bank A) or 0xAA (Bank B).
  * @return BOOTVALID_OK on success, BOOTVALID_ERR_DFLASH on failure.
  */
-BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank);
-
+BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank, uint32 imageSize);
 #endif /* BOOTVALID_H */

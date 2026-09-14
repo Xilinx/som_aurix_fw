@@ -146,7 +146,8 @@ static void invalidateEntry(uint32 ucbBase, uint32 index)
 uint8 Swap_GetCurrentBank(void)
 {
     uint8 cfg = readSwapCfg();
-
+    Debug_Printf("[SWAP] SCU_STMEM1=0x%08X, SWAP_CFG=%u\r\n",
+                 *(volatile uint32 *)0xF0036040U, (unsigned)cfg);
     switch (cfg)
     {
         case 0x01u: return SWAP_BANK_A;

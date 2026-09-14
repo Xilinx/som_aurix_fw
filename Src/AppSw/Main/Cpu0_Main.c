@@ -44,6 +44,7 @@
 #include "SelfTest.h"
 
 
+
 /* ================================================================== */
 /*  Multicore sync                                                    */
 /* ================================================================== */
@@ -146,6 +147,7 @@ int core0_main(void)
     Debug_Print("[SYS] Init: PFlash OK\r\n");
     Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
     FwUpdate_Init();
+    //DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
     Bist_RunPost(Tlf35585_ServiceWdt);
     Debug_Print("[SYS] Init: POST complete\r\n");
 
