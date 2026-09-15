@@ -289,7 +289,7 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
 
         frame = struct.pack("<II", seq, chunk_crc) + chunk
 
-        time.sleep(0.02) 
+        time.sleep(0.005) 
 
         attempt = 0
         while attempt <= retries:

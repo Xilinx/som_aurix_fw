@@ -95,4 +95,6 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank);
  */
 void Swap_TriggerSystemReset(void);
 
+Swap_Status_t Swap_EraseAll(void);
+
 #endif /* SWAP_H */

@@ -147,23 +147,21 @@ int core0_main(void)
     Debug_Print("[SYS] Init: PFlash OK\r\n");
     Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
     FwUpdate_Init();
-    //DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
-    Bist_RunPost(Tlf35585_ServiceWdt);
-    Debug_Print("[SYS] Init: POST complete\r\n");
-
 #if defined(TARGET_EVAL_BOARD)
     SelfTest_PFlash();
 #endif
-
-    /* ============================================================== */
-    /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
-    /* ============================================================== */
     prv_SyncBarrier();
-
     if (prv_WaitForCores(5000u))
     {
         prv_HandoverTlfWdt();
     }
+    //DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
+    Bist_RunPost(Tlf35585_ServiceWdt);
+    Debug_Print("[SYS] Init: POST complete\r\n");
+    /* ============================================================== */
+    /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
+    /* ============================================================== */
+
     /* On timeout: CPU0 keeps WDT ownership; the main loop below
      * continues servicing (g_wdtOwner still 0). */
 

@@ -57,17 +57,16 @@
  *  00 = no swap, 01 = Bank A, 10 = Bank B                          */
 static uint8 readSwapCfg(void)
 {
-    /* SCU_STMEM1 is at 0xF0036040 on TC38x.
-     * The iLLD provides SCU_STMEM1 register access.                 */
-    volatile uint32 *pStmem1 = (volatile uint32 *)0xF0036040U;
-    return (uint8)((*pStmem1 >> 0) & 0x03U);
+    uint32 raw = SCU_STMEM1.U;
+    uint8  cfg = (uint8)(raw & 0x03u);
+    Debug_Printf("[SWAP] readSwapCfg: SCU_STMEM1=0x%08X, bits[1:0]=%u\r\n",
+                 (unsigned)raw, (unsigned)cfg);
+    return cfg;
 }
 
-/** Read SCU_STMEM1.SWAP_DW_INDEX (bits 7:4) — which entry was used */
 static uint8 readSwapIndex(void)
 {
-    volatile uint32 *pStmem1 = (volatile uint32 *)0xF0036040U;
-    return (uint8)((*pStmem1 >> 4) & 0x0FU);
+    return (uint8)((SCU_STMEM1.U >> 4) & 0x0Fu);
 }
 
 /* ------------------------------------------------------------------ */
@@ -76,13 +75,14 @@ static uint8 readSwapIndex(void)
 /*  UCB writes follow the same DFlash page-write sequence but target  */
 /*  the UCB address range.  The iLLD functions work unchanged.        */
 /* ------------------------------------------------------------------ */
-static void ucbWritePage(uint32 pageAddr, uint32 wordL, uint32 wordU)
+static boolean ucbWritePage(uint32 pageAddr, uint32 wordL, uint32 wordU)
 {
     uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
 
+    IfxFlash_clearStatus(FLASH_MODULE);                 /* DMU_HF_CLRE */
+
     IfxFlash_enterPageMode(pageAddr);
     IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
-
     IfxFlash_loadPage2X32(pageAddr, wordL, wordU);
 
     IfxScuWdt_clearSafetyEndinit(pw);
@@ -90,18 +90,39 @@ static void ucbWritePage(uint32 pageAddr, uint32 wordL, uint32 wordU)
     IfxScuWdt_setSafetyEndinit(pw);
 
     IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+
+    uint32 err = MODULE_DMU.HF_ERRSR.U;
+    if (MODULE_DMU.HF_ERRSR.B.PVER || MODULE_DMU.HF_ERRSR.B.PROER ||
+        MODULE_DMU.HF_ERRSR.B.SQER || MODULE_DMU.HF_ERRSR.B.OPER)
+    {
+        Debug_Printf("[SWAP] write 0x%08X failed: ERRSR=0x%08X\r\n",
+                     (unsigned)pageAddr, (unsigned)err);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /** Erase one UCB sector (the whole UCB_SWAP_ORIG or _COPY block). */
-static void ucbEraseSector(uint32 sectorAddr)
+static boolean ucbEraseSector(uint32 sectorAddr)
 {
     uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
 
+    IfxFlash_clearStatus(FLASH_MODULE);
+
     IfxScuWdt_clearSafetyEndinit(pw);
-    IfxFlash_eraseMultipleSectors(sectorAddr, 1U);
+    IfxFlash_eraseSector(sectorAddr);                   /* not eraseMultipleSectors */
     IfxScuWdt_setSafetyEndinit(pw);
 
     IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+
+    if (MODULE_DMU.HF_ERRSR.B.EVER || MODULE_DMU.HF_ERRSR.B.PROER ||
+        MODULE_DMU.HF_ERRSR.B.SQER)
+    {
+        Debug_Printf("[SWAP] erase 0x%08X failed: ERRSR=0x%08X\r\n",
+                     (unsigned)sectorAddr, (unsigned)MODULE_DMU.HF_ERRSR.U);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ */
@@ -124,20 +145,6 @@ static void writeEntry(uint32 ucbBase, uint32 index, uint32 markerVal)
     ucbWritePage(confirmLAddr, SWAP_CONFIRMATION, confirmLAddr);
 }
 
-/** Invalidate an entry by overwriting its CONFIRMATION page. */
-static void invalidateEntry(uint32 ucbBase, uint32 index)
-{
-    uint32 entryAddr    = ucbBase + (index * UCB_ENTRY_SIZE);
-    uint32 confirmLAddr = entryAddr + OFF_CONFIRML;
-
-    /* Overwrite confirmation with invalid values.
-     * Note: DFlash erase state is 0x00, and we can only flip bits
-     * from 0→1 without an erase.  Writing 0xFFFFFFFF over a
-     * confirmed entry (0x57B5327F) works because all the 0-bits
-     * in the confirmation code get set to 1.  This is the strategy
-     * from [SOTA-DEMO].                                             */
-    ucbWritePage(confirmLAddr, INVALID_WORD, INVALID_WORD);
-}
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -146,14 +153,16 @@ static void invalidateEntry(uint32 ucbBase, uint32 index)
 uint8 Swap_GetCurrentBank(void)
 {
     uint8 cfg = readSwapCfg();
-    Debug_Printf("[SWAP] SCU_STMEM1=0x%08X, SWAP_CFG=%u\r\n",
-                 *(volatile uint32 *)0xF0036040U, (unsigned)cfg);
+    uint8 bank;
     switch (cfg)
     {
-        case 0x01u: return SWAP_BANK_A;
-        case 0x02u: return SWAP_BANK_B;
-        default:    return 0u;  /* SWAP not enabled */
+        case 0x01u: bank = SWAP_BANK_A; break;
+        case 0x02u: bank = SWAP_BANK_B; break;
+        default:    bank = 0xFFu; break;
     }
+    Debug_Printf("[SWAP] GetCurrentBank: cfg=%u -> bank=0x%02X\r\n",
+                 (unsigned)cfg, (unsigned)bank);
+    return bank;
 }
 
 uint32 Swap_GetInactiveBase(void)
@@ -179,7 +188,7 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank)
     }
 
     /* Check if SWAP is enabled */
-    if (Swap_GetCurrentBank() == 0u)
+    if (Swap_GetCurrentBank() == 0xFFu)
     {
         Debug_Print("[SWAP] SWAP not enabled (SWAPEN not set)\r\n");
         return SWAP_ERR_NOT_ENABLED;
@@ -208,13 +217,6 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank)
         ucbEraseSector(UCB_SWAP_ORIG_BASE);
 
         nextIndex = 0u;
-    }
-    else
-    {
-        /* Invalidate the current entry in both blocks.
-         * Write COPY first (safety-first ordering).                 */
-        invalidateEntry(UCB_SWAP_COPY_BASE, currentIndex);
-        invalidateEntry(UCB_SWAP_ORIG_BASE, currentIndex);
     }
 
     /* Write new entry — COPY first, then ORIG.
@@ -260,4 +262,25 @@ void Swap_TriggerSystemReset(void)
 
     /* Should never reach here */
     for (;;) {}
+}
+
+Swap_Status_t Swap_EraseAll(void)
+{
+    boolean irqState = IfxCpu_disableInterrupts();
+
+    Debug_Print("[SWAP] Erasing UCB_SWAP...\r\n");
+    boolean okCopy = ucbEraseSector(UCB_SWAP_COPY_BASE);
+    Debug_Printf("[SWAP] COPY erase: %s\r\n", okCopy ? "OK" : "FAILED");
+
+    boolean okOrig = ucbEraseSector(UCB_SWAP_ORIG_BASE);
+    Debug_Printf("[SWAP] ORIG erase: %s\r\n", okOrig ? "OK" : "FAILED");
+
+    writeEntry(UCB_SWAP_COPY_BASE, 0u, (uint32)SWAP_BANK_A);
+    
+    writeEntry(UCB_SWAP_ORIG_BASE, 0u, (uint32)SWAP_BANK_A);
+
+    IfxCpu_restoreInterrupts(irqState);
+
+    Debug_Print("[SWAP] UCB_SWAP reset complete\r\n");
+    return SWAP_OK;
 }

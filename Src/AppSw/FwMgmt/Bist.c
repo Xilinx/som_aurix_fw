@@ -88,7 +88,7 @@ static Bist_Status_t prv_RunCheck(void (*keepAliveCb)(void))
     s_stats.expectedCrc = meta.imageCrc;
 
     /* Determine active bank base address */
-    if (meta.activeBank == 0xAAu)
+    if (meta.activeBank == SWAP_BANK_B)
         activeBase = PFLASH_BANK_A_BASE;
     else
         activeBase = PFLASH_BANK_B_BASE;

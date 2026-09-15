@@ -286,7 +286,7 @@ static void prv_HandleVerifying(void)
     meta.bootCounter   = 0u;
     meta.reserved0     = s_imageSize;
     meta.imageCrc      = s_imageCrc;
-    meta.activeBank    = (s_targetBank == 0u) ? 0x55u : 0xAAu;
+    meta.activeBank    = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
     meta.reserved1     = 0u;
     meta.reserved2     = 0u;
 
@@ -308,13 +308,20 @@ static void prv_HandleVerifying(void)
 
     s_state = FWUPDATE_DONE;
     g_debugMuted = FALSE;
-    uint8 newBank = (s_targetBank == 0u) ? 0x55u : 0xAAu;
+    uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
     Debug_Printf("[FWUP] Calling Swap_ChangeMode(0x%02X)...\r\n", (unsigned)newBank);
     Swap_Status_t ss = Swap_ChangeMode(newBank);
     Debug_Printf("[FWUP] Swap result: %u\r\n", (unsigned)ss);
     Debug_Print("[FWUP] Update complete — resetting...\r\n");
 
     /* Trigger system reset to boot from new image */
+    {
+        uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
+        IfxScuWdt_clearSafetyEndinit(pw);
+        MODULE_SCU.RSTCON.B.SW = 1u;
+        IfxScuWdt_setSafetyEndinit(pw);
+        while(1) {}
+    }
 }
 
 /* ================================================================== */

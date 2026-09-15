@@ -1476,13 +1476,19 @@ uint8 PowerManager_GetRetryCount(void)
 
 void PowerManager_RequestForcedOff(void)
 {
-    if (s_state == PM_STATE_ON || s_state == PM_STATE_FAULT)
+    if (s_state == PM_STATE_OFF)
     {
-        Debug_Print("[PM] Forced off requested\r\n");
-        prv_AssertApuReset();
-        prv_UartClaimByAurix();
-        prv_SetState(PM_STATE_OFF);
+        return;  /* Already off */
     }
+
+    Debug_Print("[PM] Forced off requested\r\n");
+    prv_AssertApuReset();
+    prv_UartClaimByAurix();
+    prv_DeassertPwrgd();
+    VoltMon_Disable();
+    ComHpcWdt_Disable();
+    prv_DisableAllRails();
+    prv_SetState(PM_STATE_OFF);
 }
 
 void PowerManager_RequestWarmReset(void)
@@ -1499,10 +1505,14 @@ void PowerManager_RequestColdReset(void)
     if (s_state == PM_STATE_ON)
     {
         Debug_Print("[PM] Cold reset requested\r\n");
+        VoltMon_Disable();        /* ADD: suppress faults during teardown + re-ramp */
+        ComHpcWdt_Disable();      /* ADD: suppress WDT during reset cycle */
         prv_AssertApuReset();
         prv_UartClaimByAurix();
-        prv_SetState(PM_STATE_DN_S0_S3);
+        prv_DeassertPwrgd();
+        s_shutdownToOff = TRUE;   /* ADD: ensures DN_S3_S5 parks at S5, not S0i3 wait */
         s_powerOnReq = TRUE;
+        prv_SetState(PM_STATE_DN_S0_S3);
     }
 }
 

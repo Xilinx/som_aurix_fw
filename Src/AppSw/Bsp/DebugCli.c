@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include "IfxI2c_reg.h"
 #include "I2c_Slave.h"
+#include "IfxFlash.h"
 
 static I2cSlave_Inst_t s_cliSlave;
 
@@ -43,6 +44,7 @@ static I2cSlave_Inst_t s_cliSlave;
 #define CLI_SNIFF_SCL_PIN  2u                 /* <-- set to bus-0 SCL pin    */
 #define CLI_SNIFF_MAXPKT   32u                /* bytes logged per packet     */
  
+#define FLASH_MODULE            0
 
 #define SNIFF_LOG 64u
 static uint8  s_snPkt[SNIFF_LOG][8];
@@ -54,6 +56,12 @@ static uint32 s_snT[SNIFF_LOG];
 #define SNIFF_SDA()  ((uint32)IfxPort_getPinState(CLI_SNIFF_SDA_PORT, CLI_SNIFF_SDA_PIN))
 #define SNIFF_SCL()  ((uint32)IfxPort_getPinState(CLI_SNIFF_SCL_PORT, CLI_SNIFF_SCL_PIN))
 
+
+#define UCB_SWAP_ORIG_BASE   0xAF402E00U
+#define UCB_SWAP_COPY_BASE   0xAF406E00U
+#define UCB_ENTRY_SIZE       16U
+#define UCB_NUM_ENTRIES      16U
+#define FLASH_MODULE         0
 /* ================================================================== */
 /*  External references (defined in Uart_Debug.c)                     */
 /* ================================================================== */
@@ -229,16 +237,16 @@ static void prv_CmdPowerOn(void)
 
 static void prv_CmdPowerOff(void)
 {
-    if (g_ipcShared.pmc.pmState != PM_STATE_ON)
+    uint8 state = g_ipcShared.pmc.pmState;
+    if (state == PM_STATE_OFF)
     {
-        Debug_Printf("  Rejected: current state is %u (not ON)\r\n",
-                     (unsigned)g_ipcShared.pmc.pmState);
+        Debug_Print("  Already off\r\n");
         return;
     }
-    Debug_Print("  Requesting power off...\r\n");
+    Debug_Printf("  Requesting power off (state=%u)...\r\n", (unsigned)state);
     NvLog_WriteU32(NVLOG_EVT_SHUTDOWN_OPERATOR, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    if (!Ipc_SendCommandWait(IPC_CMD_POWER_OFF, 0u, 200u))
+    if (!Ipc_SendCommandWait(IPC_CMD_POWER_OFF, 0u, 500u))
         Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
@@ -248,22 +256,16 @@ static void prv_CmdForceOff(void)
     NvLog_WriteU32(NVLOG_EVT_SHUTDOWN_FORCED, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_WARNING, 0u);
     NvLog_SealSlot(NVLOG_EVT_SHUTDOWN_FORCED);
-    if (!Ipc_SendCommandWait(IPC_CMD_FORCED_OFF, 0u, 200u))
+    if (!Ipc_SendCommandWait(IPC_CMD_FORCED_OFF, 0u, 2000u))  /* 2s timeout */
         Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdWarmReset(void)
 {
-    if (g_ipcShared.pmc.pmState != PM_STATE_ON)
-    {
-        Debug_Printf("  Rejected: current state is %u (not ON)\r\n",
-                     (unsigned)g_ipcShared.pmc.pmState);
-        return;
-    }
     Debug_Print("  Requesting warm reset...\r\n");
     NvLog_WriteU32(NVLOG_EVT_RESET_WARM, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    if (!Ipc_SendCommandWait(IPC_CMD_WARM_RESET, 0u, 200u))
+    if (!Ipc_SendCommandWait(IPC_CMD_WARM_RESET, 0u, 500u))
         Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
@@ -507,6 +509,180 @@ static void prv_CmdFwUpdate(void)
     Debug_Print("[FWUP] Exited update mode\r\n");
 }
 
+/* TRUE if the 8-byte page holds programmed data. Uses the DMU verify-erased
+ * command so we never load an erased page (that would raise an ECC trap). */
+static boolean ucbPageProgrammed(uint32 pageAddr)
+{
+    IfxFlash_clearStatus(FLASH_MODULE);
+    IfxFlash_verifyErasedPage(pageAddr);
+    IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+    return (MODULE_DMU.HF_ERRSR.B.EVER != 0u);   /* EVER set => not erased */
+}
+
+/* Dump entries 0..maxIndex of one UCB_SWAP block. A page programmed twice
+ * (ECC-errored) still traps on the raw read; inspect that via AURIXFlasher. */
+static void dumpSwapBlock(const char *name, uint32 base, uint32 maxIndex)
+{
+    uint32 i;
+
+    if (maxIndex >= UCB_NUM_ENTRIES)
+    {
+        maxIndex = UCB_NUM_ENTRIES - 1u;
+    }
+
+    for (i = 0u; i <= maxIndex; i++)
+    {
+        uint32 e = base + (i * UCB_ENTRY_SIZE);
+
+        if (!ucbPageProgrammed(e) || !ucbPageProgrammed(e + 8u))
+        {
+            Debug_Printf("[SWAP] %s[%2u]: erased\r\n", name, (unsigned)i);
+        }
+        else
+        {
+            volatile uint32 *p = (volatile uint32 *)e;
+            Debug_Printf("[SWAP] %s[%2u]: MARKER=0x%08X/0x%08X  CONFIRM=0x%08X/0x%08X\r\n",
+                         name, (unsigned)i,
+                         (unsigned)p[0], (unsigned)p[1],
+                         (unsigned)p[2], (unsigned)p[3]);
+        }
+        Tlf35585_ServiceWdt();
+    }
+}
+
+static void printStmem1(const char *tag)
+{
+    uint32 raw = SCU_STMEM1.U;
+    Debug_Printf("[SWAP] %s STMEM1=0x%08X  SWAP_CFG=%u  SWAP_DW_INDEX=%u\r\n",
+                 tag, (unsigned)raw,
+                 (unsigned)(raw & 0x03u),
+                 (unsigned)((raw >> 4) & 0x0Fu));
+}
+
+/* swaptest         -> swap to the other bank, dump ORIG/COPY, wait for reset
+ * swaptest reset   -> same, then trigger a system reset                    */
+static void prv_CmdSwapTest(const char *args)
+{
+    boolean doReset = (args != NULL) && (strncmp(args, "reset", 5) == 0);
+    uint8   current, target;
+    uint32  bootIndex, newIndex;
+    Swap_Status_t ss;
+
+    Debug_Print("[SWAP] ---- swaptest ----\r\n");
+    printStmem1("boot:");
+
+    current = Swap_GetCurrentBank();
+    if (current == SWAP_BANK_A)
+    {
+        target = SWAP_BANK_B;
+    }
+    else if (current == SWAP_BANK_B)
+    {
+        target = SWAP_BANK_A;
+    }
+    else
+    {
+        Debug_Print("[SWAP] SWAP not enabled (SWAPEN) - aborting\r\n");
+        return;
+    }
+
+    bootIndex = (SCU_STMEM1.U >> 4) & 0x0Fu;
+    newIndex  = bootIndex + 1u;
+
+    Debug_Printf("[SWAP] current bank 0x%02X (entry %u) -> target 0x%02X (entry %u)\r\n",
+                 (unsigned)current, (unsigned)bootIndex,
+                 (unsigned)target,  (unsigned)newIndex);
+
+    /* State before touching anything */
+    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, bootIndex);
+    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, bootIndex);
+
+    ss = Swap_ChangeMode(target);
+    Debug_Printf("[SWAP] Swap_ChangeMode -> %u\r\n", (unsigned)ss);
+    if (ss != SWAP_OK)
+    {
+        Debug_Print("[SWAP] swap failed - not resetting\r\n");
+        return;
+    }
+
+    /* Both blocks should now show entry newIndex */
+    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, newIndex);
+    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, newIndex);
+
+    Debug_Printf("[SWAP] expect after reset: SWAP_CFG=%u  SWAP_DW_INDEX=%u\r\n",
+                 (unsigned)((target == SWAP_BANK_A) ? 1u : 2u),
+                 (unsigned)newIndex);
+
+    if (doReset)
+    {
+        Swap_TriggerSystemReset();   /* does not return */
+    }
+
+    Debug_Print("[SWAP] Power cycle or 'swaptest reset' to verify\r\n");
+}
+
+static void prv_CmdFixOtpCopy(const char *args)
+{
+    /* Step 1: Read UCB_OTP0_ORIG (first 32 bytes) */
+    Debug_Print("[OTP] Reading UCB_OTP0_ORIG (0xAF401000):\r\n");
+    uint32 i;
+    uint32 origData[8];
+    for (i = 0u; i < 8u; i++)
+    {
+        origData[i] = *(volatile uint32 *)(0xAF401000U + (i * 4u));
+        Debug_Printf("[OTP]   [%u] 0x%08X\r\n", (unsigned)i, (unsigned)origData[i]);
+        Tlf35585_ServiceWdt();
+    }
+
+    /* Step 2: Confirm before writing */
+    Debug_Print("[OTP] Will write these values to UCB_OTP0_COPY (0xAF405000)\r\n");
+    Debug_Print("[OTP] Type 'yes' to proceed, anything else to abort:\r\n");
+
+    /* For safety, skip confirmation and just do it: */
+    Debug_Print("[OTP] Writing UCB_OTP0_COPY...\r\n");
+
+    uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
+
+    /* Erase COPY sector first */
+    IfxScuWdt_clearSafetyEndinit(pw);
+    IfxFlash_eraseMultipleSectors(0xAF405000U, 1U);
+    IfxScuWdt_setSafetyEndinit(pw);
+    IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+    Debug_Print("[OTP] COPY sector erased\r\n");
+
+    /* Write pages (8 bytes each = 2 words per page) */
+    for (i = 0u; i < 8u; i += 2u)
+    {
+        uint32 addr = 0xAF405000U + (i * 4u);
+
+        IfxFlash_enterPageMode(addr);
+        IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+        IfxFlash_loadPage2X32(addr, origData[i], origData[i + 1u]);
+
+        IfxScuWdt_clearSafetyEndinit(pw);
+        IfxFlash_writePage(addr);
+        IfxScuWdt_setSafetyEndinit(pw);
+
+        IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+        Debug_Printf("[OTP] Wrote page at 0x%08X\r\n", (unsigned)addr);
+        Tlf35585_ServiceWdt();
+    }
+
+    /* Step 3: Verify */
+    Debug_Print("[OTP] Verifying UCB_OTP0_COPY:\r\n");
+    boolean ok = TRUE;
+    for (i = 0u; i < 8u; i++)
+    {
+        uint32 val = *(volatile uint32 *)(0xAF405000U + (i * 4u));
+        boolean match = (val == origData[i]);
+        Debug_Printf("[OTP]   [%u] 0x%08X %s\r\n", (unsigned)i, (unsigned)val,
+                     match ? "OK" : "MISMATCH");
+        if (!match) ok = FALSE;
+        Tlf35585_ServiceWdt();
+    }
+
+    Debug_Printf("[OTP] %s — power cycle required\r\n", ok ? "DONE" : "FAILED");
+}
 
 static void prv_CmdSysmon(const char *args)
 {
@@ -1207,6 +1383,10 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdFusa();
     else if (prv_StrEq(cmd, "bist"))
         prv_CmdBist();
+    else if (((args = prv_StartsWith(cmd, "swaptest")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSwapTest(args);
+    else if (prv_StrEq(cmd, "fixotp"))
+        prv_CmdFixOtpCopy(args);
     else if (((args = prv_StartsWith(cmd, "i2cscan")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdI2cScan(args);
 

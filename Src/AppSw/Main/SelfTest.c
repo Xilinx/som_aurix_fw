@@ -75,7 +75,7 @@ void SelfTest_DFlash(void)
     writeData.bootCounter   = 42u;
     writeData.reserved0     = 0u;
     writeData.imageCrc      = 0xDEADBEEFu;
-    writeData.activeBank    = 0x55u;
+    writeData.activeBank    = SWAP_BANK_A;
     writeData.reserved1     = 0u;
     writeData.reserved2     = 0u;
 
@@ -88,7 +88,7 @@ void SelfTest_DFlash(void)
     if (readBack.pendingUpdate != 1u)           errors++;
     if (readBack.bootCounter != 42u)            errors++;
     if (readBack.imageCrc != 0xDEADBEEFu)       errors++;
-    if (readBack.activeBank != 0x55u)           errors++;
+    if (readBack.activeBank != SWAP_BANK_A)           errors++;
 
     DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
     DFlash_ReadSotaMeta(&readBack);
@@ -395,7 +395,7 @@ uint32 SelfTest_Sota(void)
     meta.bootCounter   = 0u;
     meta.reserved0     = testSize;   /* imageSize in reserved0 */
     meta.imageCrc      = imageCrc;
-    meta.activeBank    = 0x55u;
+    meta.activeBank    = SWAP_BANK_A;
  
     ds = DFlash_WriteSotaMeta(&meta);
     if (ds != DFLASH_OK) { Debug_Print("[TEST:SOTA] FAIL: write meta\r\n"); return 1u; }
@@ -407,7 +407,7 @@ uint32 SelfTest_Sota(void)
     if (readBack.magic != DFLASH_SOTA_MAGIC)    { err++; Debug_Print("[TEST:SOTA] FAIL: magic\r\n"); }
     if (readBack.pendingUpdate != 1u)           { err++; Debug_Print("[TEST:SOTA] FAIL: pending\r\n"); }
     if (readBack.imageCrc != imageCrc)          { err++; Debug_Print("[TEST:SOTA] FAIL: crc\r\n"); }
-    if (readBack.activeBank != 0x55u)           { err++; Debug_Print("[TEST:SOTA] FAIL: bank\r\n"); }
+    if (readBack.activeBank != SWAP_BANK_A)           { err++; Debug_Print("[TEST:SOTA] FAIL: bank\r\n"); }
  
     Debug_Printf("[TEST:SOTA] Metadata: pending=%u bank=0x%02X crc=0x%08X\r\n",
                  (unsigned)readBack.pendingUpdate,
@@ -457,7 +457,7 @@ uint32 SelfTest_Sota(void)
     /* Step 8: Clean up — restore metadata to clean state */
     memset(&meta, 0, sizeof(meta));
     meta.magic      = DFLASH_SOTA_MAGIC;
-    meta.activeBank = 0x55u;
+    meta.activeBank = SWAP_BANK_A;
     DFlash_WriteSotaMeta(&meta);
  
     Debug_Printf("[TEST:SOTA] %s\r\n", prv_Result(err));
@@ -483,24 +483,24 @@ uint32 SelfTest_Swap(void)
     /* Test bank 0x55 */
     memset(&meta, 0, sizeof(meta));
     meta.magic      = DFLASH_SOTA_MAGIC;
-    meta.activeBank = 0x55u;
+    meta.activeBank = SWAP_BANK_A;
     DFlash_WriteSotaMeta(&meta);
     Tlf35585_ServiceWdt();
  
     DFlash_ReadSotaMeta(&meta);
-    Debug_Printf("[TEST:SWAP] Wrote 0x55, read back 0x%02X\r\n",
-                 (unsigned)meta.activeBank);
-    if (meta.activeBank != 0x55u) { err++; Debug_Print("[TEST:SWAP] FAIL: bank 0x55\r\n"); }
+    Debug_Printf("[TEST:SWAP] Wrote BANK_A(0x%02X), read back 0x%02X\r\n",
+                (unsigned)SWAP_BANK_A);
+    if (meta.activeBank != SWAP_BANK_A) { err++; Debug_Print("[TEST:SWAP] FAIL: bank 0x55\r\n"); }
  
     /* Test bank 0xAA */
-    meta.activeBank = 0xAAu;
+    meta.activeBank = SWAP_BANK_B;
     DFlash_WriteSotaMeta(&meta);
     Tlf35585_ServiceWdt();
  
     DFlash_ReadSotaMeta(&meta);
     Debug_Printf("[TEST:SWAP] Wrote 0xAA, read back 0x%02X\r\n",
                  (unsigned)meta.activeBank);
-    if (meta.activeBank != 0xAAu) { err++; Debug_Print("[TEST:SWAP] FAIL: bank 0xAA\r\n"); }
+    if (meta.activeBank != SWAP_BANK_B) { err++; Debug_Print("[TEST:SWAP] FAIL: bank 0xAA\r\n"); }
  
     /* Restore original */
     if (ds == DFLASH_OK)
@@ -509,7 +509,7 @@ uint32 SelfTest_Swap(void)
     {
         memset(&meta, 0, sizeof(meta));
         meta.magic      = DFLASH_SOTA_MAGIC;
-        meta.activeBank = 0x55u;
+        meta.activeBank = SWAP_BANK_A;
         DFlash_WriteSotaMeta(&meta);
     }
  
@@ -1476,7 +1476,7 @@ uint32 SelfTest_FwUpdate(void)
         meta.magic       = DFLASH_SOTA_MAGIC;
         meta.pendingUpdate = 0u;
         meta.imageCrc    = imageCrc;
-        meta.activeBank  = 0x55u;
+        meta.activeBank  = SWAP_BANK_A;
         meta.reserved0   = imageSize;
  
         DFlash_Status_t ds = DFlash_WriteSotaMeta(&meta);
@@ -1496,7 +1496,7 @@ uint32 SelfTest_FwUpdate(void)
         DFlash_SotaMeta_t clean;
         memset(&clean, 0, sizeof(clean));
         clean.magic      = DFLASH_SOTA_MAGIC;
-        clean.activeBank = 0x55u;
+        clean.activeBank = SWAP_BANK_A;
         DFlash_WriteSotaMeta(&clean);
     }
  

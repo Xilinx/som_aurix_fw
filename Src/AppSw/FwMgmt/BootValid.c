@@ -88,7 +88,7 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
          * Determine which bank to revert TO — it's the opposite
          * of the one recorded in the metadata.                      */
         {
-            uint8 revertBank = (meta.activeBank == 0xAAu) ? 0x55u : 0xAAu;
+            uint8 revertBank = (meta.activeBank == SWAP_BANK_B) ? SWAP_BANK_A : SWAP_BANK_B;
 
             /* Clear the pending flag BEFORE reverting so the old
              * bank boots into a clean state.                        */
