@@ -53,6 +53,7 @@
 /* Flash module index (PMU 0) */
 #define FLASH_MODULE                0
 
+/* PFlash.c, near the top — bit positions from Ifx_DMU_HF_ERRSR_Bits in IfxDmu_regdef.h */
 /* ------------------------------------------------------------------ */
 /*  PSPR-resident function pointer table                              */
 /* ------------------------------------------------------------------ */
@@ -84,6 +85,19 @@ static void PFlash_WaitAllUnbusy(void)
     }
 }
 
+static uint32 prv_ErrsrFailMask(void)
+{
+    Ifx_DMU_HF_ERRSR m;
+    m.U       = 0u;
+    m.B.OPER  = 1u;    /* operation error        */
+    m.B.SQER  = 1u;    /* command sequence error */
+    m.B.PROER = 1u;    /* protection error       */
+    m.B.PVER  = 1u;    /* program verify error   */
+    return m.U;
+}
+
+#define PFLASH_ERRSR_FAIL_MASK   prv_ErrsrFailMask()
+
 /** Check 16 KB sector alignment. */
 static boolean isSectorAligned(uint32 addr)
 {
@@ -100,8 +114,9 @@ static boolean isBurstAligned(uint32 addr)
 static boolean isInSwappableRange(uint32 addr, uint32 len)
 {
     uint32 end = addr + len;
-    /* PF0 starts at 0xA0000000, PF3 ends at 0xA0800000 */
-    return (addr >= PFLASH_PF0_BASE) && (end <= PFLASH_PF4_BASE);
+    boolean inA = (addr >= PFLASH_BANK_A_BASE) && (end <= PFLASH_BANK_A_END);
+    boolean inB = (addr >= PFLASH_BANK_B_BASE) && (end <= PFLASH_BANK_B_END);
+    return inA || inB;
 }
 
 /**
@@ -159,20 +174,22 @@ PFlash_Status_t PFlash_EraseSector(uint32 sectorAddr)
      * this is mainly to prevent an ISR from issuing a conflicting
      * DMU command.                                                  */
     irqState = IfxCpu_disableInterrupts();
-
+    IfxFlash_clearStatus(FLASH_MODULE);
     IfxScuWdt_clearSafetyEndinitInline(password);
     g_pspr.eraseSectors(sectorAddr, 1U);
     IfxScuWdt_setSafetyEndinitInline(password);
 
     PFlash_WaitAllUnbusy();
     {
-        uint32 errsr = DMU_HF_ERRSR.U;
+        uint32 errsr = DMU_HF_ERRSR.U & PFLASH_ERRSR_FAIL_MASK;   /* NEW: only real failures */
+
         IfxFlash_resetToRead(FLASH_MODULE);
         IfxCpu_restoreInterrupts(irqState);
         if (errsr != 0u)
         {
-            Debug_Printf("[PFLASH] Write error, ERRSR=0x%08X\r\n", (unsigned)errsr);
-            return PFLASH_ERR_WRITE;
+            Debug_Printf("[PFLASH] Erase error at 0x%08X, ERRSR=0x%08X\r\n",
+                         (unsigned)sectorAddr, (unsigned)errsr);    /* NEW: say erase, with address */
+            return PFLASH_ERR_ERASE;                                /* NEW: distinct code if you have one */
         }
     }
 
@@ -239,7 +256,7 @@ PFlash_Status_t PFlash_WritePage256(uint32 pageAddr, const uint8 *pData)
 
     password = IfxScuWdt_getSafetyWatchdogPasswordInline();
     irqState = IfxCpu_disableInterrupts();
-
+    IfxFlash_clearStatus(FLASH_MODULE);
     g_pspr.enterPageMode(pageAddr);
     PFlash_WaitAllUnbusy();
 
@@ -257,12 +274,13 @@ PFlash_Status_t PFlash_WritePage256(uint32 pageAddr, const uint8 *pData)
     PFlash_WaitAllUnbusy();
 
     {
-        uint32 errsr = DMU_HF_ERRSR.U;
+        uint32 errsr = DMU_HF_ERRSR.U & PFLASH_ERRSR_FAIL_MASK;
         IfxFlash_resetToRead(FLASH_MODULE);
         IfxCpu_restoreInterrupts(irqState);
         if (errsr != 0u)
         {
-            Debug_Printf("[PFLASH] Write error, ERRSR=0x%08X\r\n", (unsigned)errsr);
+            Debug_Printf("[PFLASH] Write error at 0x%08X, ERRSR=0x%08X\r\n",
+                         (unsigned)pageAddr, (unsigned)errsr);
             return PFLASH_ERR_WRITE;
         }
     }

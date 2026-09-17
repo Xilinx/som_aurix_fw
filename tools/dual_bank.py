@@ -3,7 +3,7 @@
 import sys
 from intelhex import IntelHex
 
-BANK_OFF, BANK_SIZE = 0x400000, 0x400000
+BANK_OFF, BANK_SIZE = 0x600000, 0x400000
 SEGMENTS = (0x80000000, 0xA0000000)               # cached and non-cached PFlash aliases
 
 a, b, out = IntelHex(sys.argv[1]), IntelHex(sys.argv[2]), IntelHex()

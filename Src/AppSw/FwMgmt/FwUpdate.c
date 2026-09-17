@@ -310,8 +310,6 @@ static void prv_HandleVerifying(void)
     g_debugMuted = FALSE;
     uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
     Debug_Printf("[FWUP] Calling Swap_ChangeMode(0x%02X)...\r\n", (unsigned)newBank);
-    Swap_Status_t ss = Swap_ChangeMode(newBank);
-    Debug_Printf("[FWUP] Swap result: %u\r\n", (unsigned)ss);
     Debug_Print("[FWUP] Update complete — resetting...\r\n");
 
 }
@@ -356,7 +354,10 @@ FwUpdate_State_t FwUpdate_Run(void)
 
         case FWUPDATE_DONE:
         case FWUPDATE_ERROR:
-            /* Terminal states — stay here until reset or abort */
+            /* release the UART back to the CLI; swap is a separate command */
+            UartXfer_FlushRx();
+            g_debugMuted = FALSE;
+            s_state = FWUPDATE_IDLE;
             break;
 
         default:

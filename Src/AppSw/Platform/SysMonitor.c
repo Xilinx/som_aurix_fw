@@ -43,6 +43,9 @@ static uint32 s_lastThermal = 0u;
 static uint8 s_apuProchotClearCount = 0u;
 static boolean s_apuProchotAsserted = FALSE;
 
+static sint16 s_apuTempC   = SYSMON_TEMP_INVALID;
+static uint32 s_apuTempMs  = 0u;
+
 /* ---- Private helpers ----------------------------------------------------- */
 
 static void prv_SetPin(const AppPin_t *pin, boolean high)
@@ -131,6 +134,9 @@ void SysMonitor_Init(void)
     s_thermalThrottle = FALSE;
     s_apuProchotClearCount = 0u;
     s_apuProchotAsserted = FALSE;
+    g_ipcShared.sysmon.apuTempC  = SYSMON_TEMP_INVALID;
+    g_ipcShared.sysmon.apuTempMs = 0u;
+    g_ipcShared.sysmon.flags     = 0u;
     Debug_Print("[SYS] SysMonitor: APU_PROCHOT_L=H, PROCHOT#=H, CATERR#=H\r\n");
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
@@ -169,7 +175,10 @@ void SysMonitor_Run(void)
     if (Stm_IsElapsedMs(&s_lastThermal, SYSMON_THERMAL_POLL_MS))
     {
         sint16 tempC = prv_ReadApuTempC();
-
+        s_apuTempC = tempC;                 /* INVALID on I2C failure, on purpose */
+        s_apuTempMs = Stm_GetTimeMs();
+        g_ipcShared.sysmon.apuTempC = tempC;
+        g_ipcShared.sysmon.apuTempMs = s_apuTempMs;
         if (tempC != SYSMON_TEMP_INVALID)
         {
             if (s_i2cFailCount >= SYSMON_I2C_FAIL_LIMIT)

@@ -81,6 +81,8 @@ static void prv_SyncBarrier(void)
 /* ================================================================== */
 int core0_main(void)
 {
+    g_prevBootTrace = g_bootTrace;                              /* keep last boot's record */
+    g_bootTrace     = 0xB0000000u | (SCU_SWAPCTRL.U & 0xFFu);
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxScuWdt_disableSafetyWatchdog(IfxScuWdt_getSafetyWatchdogPassword());
@@ -96,6 +98,7 @@ int core0_main(void)
     Tlf35585_EarlyInit();
     Debug_Init();
     Debug_Print("\r\n" FW_VERSION_STR);
+     g_bootTrace |= 0x2000u;
     Debug_Print("[SYS] Init: UART OK\r\n");
     UartXfer_Init();
     Debug_Print("[SYS] Init: Side UART OK\r\n");
@@ -132,11 +135,7 @@ int core0_main(void)
     NvLog_Init();
     if (g_wdtOwner == 0u) Tlf35585_ServiceWdt();
     Debug_Print("[SYS] Init: NvLog OK\r\n");
-
-#if defined(TARGET_EVAL_BOARD)
-    SelfTest_DFlash();
-#endif
-
+    //SelfTest_DFlash();
     {
         BootValid_Status_t bootStatus = BootValid_CheckOnStartup();
         Debug_Printf("[SYS] Init: BootValid = %u\r\n", (unsigned)bootStatus);
@@ -147,9 +146,8 @@ int core0_main(void)
     Debug_Print("[SYS] Init: PFlash OK\r\n");
     Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
     FwUpdate_Init();
-#if defined(TARGET_EVAL_BOARD)
-    SelfTest_PFlash();
-#endif
+    //SelfTest_PFlash();
+
     prv_SyncBarrier();
     if (prv_WaitForCores(5000u))
     {

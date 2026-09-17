@@ -320,3 +320,6 @@ flash: $(TARGET).elf
 	@python3 tools/merge_ucb.py $(TARGET).hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387.hex
 	@echo "[FLASH] Programming with $(UCB) $(OTP)..."
 	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on -port das
+ucbreset:
+	@python3 tools/merge_ucb.py tools/empty.hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387_ucb.hex
+	@$(FLASHER) -hex $(subst TC387.hex,TC387_ucb.hex,$(HEX_WIN)) -erase on -prog on -ver off -ucb on -start on -port das

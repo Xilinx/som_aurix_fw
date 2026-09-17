@@ -25,6 +25,7 @@
 #include "IfxScuWdt.h"
 #include "IfxCpu.h"
 #include "Uart_Debug.h"
+#include "IfxScuRcu.h"
 
 
 #include "IfxScu_reg.h"
@@ -73,6 +74,9 @@ static uint8 readSwapIndex(void)
 {
     return (uint8)((SCU_STMEM1.U >> 4) & 0x0Fu);
 }
+
+
+
 
 /* ------------------------------------------------------------------ */
 /*  Private: write an 8-byte page to the UCB region                   */
@@ -231,31 +235,12 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank)
 
 void Swap_TriggerSystemReset(void)
 {
-    uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
-
     Debug_Print("[SWAP] Triggering system reset...\r\n");
+    Debug_FlushBlocking();                      /* flush the UART instead of a spin delay */
 
-    /* Small delay to let the UART finish transmitting */
-    {
-        volatile uint32 i;
-        for (i = 0u; i < 1000000u; i++) {}
-    }
+    IfxScuRcu_performReset(IfxScuRcu_ResetType_system, 0x01u);   /* sets RSTCON.SW, RSTCON2.USRINFO, SWRSTCON.SWRSTREQ */
 
-    /* Request a system reset via SCU_RSTCON.
-     * SW reset type 1 = system reset (evaluates SSW + UCB_SWAP).
-     * Application reset (type 0) would NOT re-evaluate UCB_SWAP.    */
-    IfxScuWdt_clearSafetyEndinit(pw);
-
-    /* SCU_RSTCON2.USRINFO = 0x01 (SW-initiated reset marker) */
-    *(volatile uint32 *)0xF0036048U = 0x00000001U;
-
-    /* SCU_SWRSTCON.SWRSTREQ = 1 triggers the reset */
-    *(volatile uint32 *)0xF0036060U = 0x00000002U;
-
-    IfxScuWdt_setSafetyEndinit(pw);
-
-    /* Should never reach here */
-    for (;;) {}
+    for (;;) {}                              /* not reached */
 }
 
 Swap_Status_t Swap_EraseAll(void)

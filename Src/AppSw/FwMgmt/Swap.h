@@ -98,7 +98,7 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank);
  *
  * Uses the SCU system reset request.  This function does not return.
  */
-void Swap_TriggerSystemReset(void);
+void Swap_TriggerSystemReset(void) __attribute__((noreturn));
 
 Swap_Status_t Swap_EraseAll(void);
 

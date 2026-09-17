@@ -57,8 +57,6 @@ uint32 SelfTest_NvLogStress(void);
 /** CLI dispatch — called from DebugCli when user types "selftest ..." */
 void SelfTest_CliDispatch(const char *args);
 
-#if defined(TARGET_EVAL_BOARD)
-
 /* Write/read/erase cycle on the SOTA metadata sector in DFlash.
  * Call after NvLog_Init(). Prints [DFLASH] PASSED/FAILED. */
 void SelfTest_DFlash(void);
@@ -66,8 +64,6 @@ void SelfTest_DFlash(void);
 /* Erase/write/verify one page in the inactive PFlash bank.
  * Call after PFlash_Init() + POST. Prints [PFLASH] PASSED/FAIL. */
 void SelfTest_PFlash(void);
-
-#endif /* TARGET_EVAL_BOARD */
 
 
 #endif /* SELFTEST_H */

@@ -52,16 +52,18 @@
  * (segment 8) addresses.                                            */
 #define PFLASH_PF0_BASE             0xA0000000U         /* Bank A     */
 #define PFLASH_PF1_BASE             0xA0300000U
-#define PFLASH_PF2_BASE             0xA0400000U         /* Bank B     */
-#define PFLASH_PF3_BASE             0xA0700000U
-#define PFLASH_PF4_BASE             0xA0800000U         /* no swap    */
+#define PFLASH_PF2_BASE             0xA0600000U         /* Bank B     */
+#define PFLASH_PF3_BASE             0xA0900000U
+#define PFLASH_END                  0xA0A00000U
+#define PFLASH_BANK_A_END           (PFLASH_BANK_A_BASE + PFLASH_BANK_A_SIZE)   /* 0xA0400000 */
+#define PFLASH_BANK_B_END           (PFLASH_BANK_B_BASE + PFLASH_BANK_B_SIZE)  
 
 #define PFLASH_BANK_A_BASE          PFLASH_PF0_BASE
 #define PFLASH_BANK_A_SIZE          (4U * 1024U * 1024U)  /* 4 MB    */
 #define PFLASH_BANK_B_BASE          PFLASH_PF2_BASE
 #define PFLASH_BANK_B_SIZE          (4U * 1024U * 1024U)  /* 4 MB    */
 
-#define PFLASH_STATUS_BUSY_MASK   0x00000079u
+#define PFLASH_STATUS_BUSY_MASK   0x0000003Cu
 
 /* ------------------------------------------------------------------ */
 /*  Return codes                                                      */

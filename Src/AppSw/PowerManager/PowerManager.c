@@ -54,6 +54,8 @@ static uint32  s_wakeStartMs         = 0u;     /* armed at each ON-bound trigger
 static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
+static boolean s_biosRevalidate = TRUE;
+
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -1421,36 +1423,43 @@ void PowerManager_Run(void)
             /* Latch-off: power cycle required. No retries remaining. */
             break;
         case PM_STATE_WARM_RESET:
-            /* Warm reset: KBRST_L asserted without dropping MAIN rails.
-            * Re-validate BIOS ROM, then release KBRST_L. */
+        {
+            uint32 t0 = Stm_GetTimeMs();
+
             Debug_Print("[PM] Warm reset: asserting KBRST_L...\r\n");
             prv_AssertKbrst();
-            //prv_AssertPltrst();
-
-            /* UART MUX to AURIX during reset for debug visibility */
             prv_UartClaimByAurix();
+            Stm_DelayMs(10u);
 
-            Stm_DelayMs(10u);   /* KBRST_L minimum assertion time */
             if (!prv_VerifyUpstreamPg(PM_STATE_RAMP_S0))
             {
-                Debug_Print("[PM] PG lost during warm reset — fault\r\n");
-                /* prv_VerifyUpstreamPg already called prv_OnPgFault */
+                Debug_Print("[PM] PG lost during warm reset - fault\r\n");
                 break;
             }
 
-            if (!prv_BiosRomValidate())
+            /* Re-validate the BIOS ROM only if something could have changed it
+             * since the last successful validation (BIOS update, prior failure).
+             * On a plain warm reset the ROM is unchanged and the check just
+             * lengthens the reboot while the APU sits in KBRST. */
+            if (s_biosRevalidate)
             {
-                Debug_Print("[PM] BIOS ROM validation FAILED — blocking boot\r\n");
-                s_pendingCause = PM_RESET_CAUSE_BIOS_FAIL;
-                prv_OnPgFault(NULL_PTR, 0u);
-                break;
+                if (!prv_BiosRomValidate())
+                {
+                    Debug_Print("[PM] BIOS ROM validation FAILED - blocking boot\r\n");
+                    s_pendingCause = PM_RESET_CAUSE_BIOS_FAIL;
+                    prv_OnPgFault(NULL_PTR, 0u);
+                    break;
+                }
+                s_biosRevalidate = FALSE;
+                Debug_Printf("[PM] BIOS ROM validated (%u ms)\r\n",
+                             (unsigned)(Stm_GetTimeMs() - t0));
             }
 
-            /* Release KBRST_L, hand UART back to SoC */
             prv_UartReleaseToSoc();
             prv_DeassertKbrst();
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             VoltMon_Enable();
+            Debug_Printf("[PM] Warm reset done in %u ms\r\n", (unsigned)(Stm_GetTimeMs() - t0));
 #if (FUSA_FEATURE_ENABLE == 1u)
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
                  COMHPC_WDT_DEFAULT_TIMEOUT_MS);
@@ -1458,11 +1467,11 @@ void PowerManager_Run(void)
             Debug_Print("[PM] Warm reset complete.\r\n");
             s_suppressResetDetect = TRUE;
             prv_SetState(PM_STATE_ON);
+        }
             break;
         default:
             break;
     }
-    
 }
 
 PM_ResetCause_t PowerManager_GetResetCause(void)
@@ -1477,17 +1486,16 @@ uint8 PowerManager_GetRetryCount(void)
 
 void PowerManager_RequestForcedOff(void)
 {
-    if (s_state == PM_STATE_OFF)
-    {
-        return;  /* Already off */
-    }
+    if (s_state == PM_STATE_OFF) { return; }
 
     Debug_Print("[PM] Forced off requested\r\n");
-    prv_AssertApuReset();
+    prv_AssertApuReset();          /* COLD_RST / SYS_RESET_L asserted, as at Init */
     prv_UartClaimByAurix();
     prv_DeassertPwrgd();
     VoltMon_Disable();
     ComHpcWdt_Disable();
+    prv_AssertRsmrst();            /* <- missing: back to the Init level */
+    prv_DeassertKbrst();           /* in case forceoff arrives mid warm-reset */
     prv_DisableAllRails();
     prv_SetState(PM_STATE_OFF);
 }

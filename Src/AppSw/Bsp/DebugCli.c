@@ -32,6 +32,8 @@
 #include "IfxI2c_reg.h"
 #include "I2c_Slave.h"
 #include "IfxFlash.h"
+#include "PFlash.h"
+
 
 static I2cSlave_Inst_t s_cliSlave;
 
@@ -215,7 +217,14 @@ static void prv_CmdStatus(void)
                      (bist.postResult == BIST_OK) ? "PASS" :
                      (bist.postResult == BIST_ERR_NO_META) ? "SKIP" : "FAIL");
     }
-
+    {
+        sint16 t   = g_ipcShared.sysmon.apuTempC;
+        uint32 age = Stm_GetTimeMs() - g_ipcShared.sysmon.apuTempMs;
+        if (t == SYSMON_TEMP_INVALID)
+            Debug_Print("  APU temp: n/a (APU not in S0 or SB-TSI unreachable)\r\n");
+        else
+            Debug_Printf("  APU temp: %d C (%u ms ago)\r\n", (int)t, (unsigned)age);
+    }
     Debug_Printf("  PROCHOT:  %u\r\n",
                  (unsigned)SysMonitor_IsThrottling());
     Debug_Printf("  SWAPEN:   %u  (PROCONTP=0x%08X)\r\n",
@@ -225,6 +234,8 @@ static void prv_CmdStatus(void)
                  (unsigned)SCU_SWAPCTRL.B.ADDRCFG,
                  (unsigned)SCU_SWAPCTRL.U);
     Debug_Print("=====================\r\n");
+    Debug_Printf("  BootTrace: this=0x%08X prev=0x%08X\r\n",
+                (unsigned)g_bootTrace, (unsigned)g_prevBootTrace);
 }
 
 static void prv_CmdPowerOn(void)
@@ -505,7 +516,7 @@ static void prv_CmdFwUpdate(void)
         if (st == FWUPDATE_DONE || st == FWUPDATE_ERROR)
             break;
 
-        if ((Stm_GetTimeMs() - startMs) > 600000u) 
+        if ((Stm_GetTimeMs() - startMs) > 900000u) 
             break;
     }
 
@@ -599,7 +610,9 @@ static void prv_CmdSwapTest(const char *args)
     dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, UCB_NUM_ENTRIES - 1u);
     dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, UCB_NUM_ENTRIES - 1u);
 
-    if (doReset) { Swap_TriggerSystemReset(); }
+    if (doReset) { 
+        Swap_TriggerSystemReset(); 
+    }
     Debug_Print("[SWAP] reset to apply\r\n");
 }
 
@@ -808,6 +821,24 @@ static void prv_CmdPin(void)
     }
 }
 
+
+static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
+{
+    uint32 a = (uint32)strtoul(args, NULL, 16);
+    Debug_Printf("[PF] pre  STATUS=%08X ERRSR=%08X\r\n", (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
+    PFlash_Status_t s = PFlash_EraseSector(a);
+    Debug_Printf("[PF] erase %08X -> %u  post STATUS=%08X ERRSR=%08X\r\n",
+                 (unsigned)a, (unsigned)s, (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
+}
+
+static void prv_CmdPfWrite(const char *args)       /* pfwrite <addr>: writes 0x5A-filled 256 B */
+{
+    static uint8 buf[256] __attribute__((aligned(4)));
+    memset(buf, 0x5A, sizeof(buf));
+    uint32 a = (uint32)strtoul(args, NULL, 16);
+    PFlash_Status_t s = PFlash_WritePage256(a, buf);
+    Debug_Printf("[PF] write %08X -> %u  ERRSR=%08X\r\n", (unsigned)a, (unsigned)s, (unsigned)DMU_HF_ERRSR.U);
+}
 
 static void prv_CmdI2cProbe(void)
 {
@@ -1398,14 +1429,24 @@ static void prv_CmdConfirm(const char *args)
     prv_PrintConfirm("HF_CONFIRM2", MODULE_DMU.HF_CONFIRM2.U, c2);
 }
 
+static void PFlash_WaitAllUnbusy(void)
+{
+    while ((DMU_HF_STATUS.U & PFLASH_STATUS_BUSY_MASK) != 0u)
+    {
+        /* spin — reads of DMU SFRs are always allowed while a
+         * physical bank is busy; only array reads of the busy
+         * bank are not.                                         */
+    }
+}
+
 static void prv_CmdPfDump(const char *args)
 {
     uint32 addr = (uint32)strtoul(args, NULL, 16) & ~0x1Fu;
     uint32 i;
 
     IfxFlash_clearStatus(0);
-    IfxFlash_verifyErasedPage(addr);                 /* PFlash pages are 32 bytes */
-    IfxFlash_waitUnbusy(0, IfxFlash_FlashType_P0);   /* P0..P3 by address; P0 is fine for a probe */
+    IfxFlash_verifyErasedPage(addr);
+    PFlash_WaitAllUnbusy();                          /* waits on PF0..PF3, whichever is busy */
     if (MODULE_DMU.HF_ERRSR.B.EVER == 0u)
     {
         Debug_Printf("[PF] %08X: erased\r\n", (unsigned)addr);
@@ -1478,7 +1519,7 @@ static void prv_Dispatch(const char *cmd)
     else if (((args = prv_StartsWith(cmd, "confirm")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdConfirm(args);
 
-    else if (((args = prv_StartsWith(cmd, "pdfdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+    else if (((args = prv_StartsWith(cmd, "pfdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdPfDump(args);
         
     else if (((args = prv_StartsWith(cmd, "pin")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
@@ -1495,7 +1536,13 @@ static void prv_Dispatch(const char *cmd)
 
     else if (((args = prv_StartsWith(cmd, "i2ctest")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdI2cTest(args);
-        
+
+    else if (((args = prv_StartsWith(cmd, "pferase")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPfErase(args);
+
+    else if (((args = prv_StartsWith(cmd, "pfwrite")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPfWrite(args);
+
     else if (prv_StrEq(cmd, "i2cstat"))
         prv_CmdI2cStat();
     else if (((args = prv_StartsWith(cmd, "i2creset")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
