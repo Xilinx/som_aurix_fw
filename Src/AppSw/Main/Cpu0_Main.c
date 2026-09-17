@@ -156,7 +156,7 @@ int core0_main(void)
         prv_HandoverTlfWdt();
     }
     //DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
-    Bist_RunPost(Tlf35585_ServiceWdt);
+    //Bist_RunPost(Tlf35585_ServiceWdt);
     Debug_Print("[SYS] Init: POST complete\r\n");
     /* ============================================================== */
     /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
@@ -178,9 +178,8 @@ int core0_main(void)
 
         NvLog_Run();
         FwUpdate_Run();
-        Bist_Run(NULL_PTR);              /* keep-alive not needed: either
-                                          * CPU2 owns the WDT, or the line
-                                          * below services it */
+        //Bist_Run(NULL_PTR);              /* keep-alive not needed: either
+
         if (g_wdtOwner == 0u)
         {
             Tlf35585_ServiceWdt();       /* only if CPU2 never came up */

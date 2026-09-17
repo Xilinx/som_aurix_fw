@@ -43,15 +43,20 @@
 /* ------------------------------------------------------------------ */
 typedef enum
 {
-    SWAP_OK             = 0,
-    SWAP_ERR_NOT_ENABLED = 1,   /* SWAPEN not set in UCB_OTP0        */
-    SWAP_ERR_INVALID_BANK = 2,  /* targetBank not 0x55 or 0xAA       */
-    SWAP_ERR_UCB_WRITE  = 3,    /* UCB write/erase failed            */
+    SWAP_OK               = 0,
+    SWAP_ERR_NOT_ENABLED  = 1,   /* SWAPEN not set in UCB_OTP0        */
+    SWAP_ERR_INVALID_BANK = 2,   /* targetBank not 0x55 or 0xAA       */
+    SWAP_ERR_UCB_WRITE    = 3,   /* UCB write/erase failed            */
+    SWAP_ERR_FULL         = 4,   /* all 16 swap entries used          */
 } Swap_Status_t;
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
 /* ------------------------------------------------------------------ */
+
+
+Swap_Status_t Swap_ChangeModeForce(uint8 targetBank);
+boolean       Swap_PageProgrammed(uint32 pageAddr);   /* wrapper for the CLI dump */
 
 /**
  * @brief  Get which bank is currently active.
@@ -96,5 +101,8 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank);
 void Swap_TriggerSystemReset(void);
 
 Swap_Status_t Swap_EraseAll(void);
+
+uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA / 0xFF */
+
 
 #endif /* SWAP_H */

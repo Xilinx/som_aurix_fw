@@ -26,11 +26,16 @@
 #include "IfxCpu.h"
 #include "Uart_Debug.h"
 
+
+#include "IfxScu_reg.h"
+
+
+
 /* ------------------------------------------------------------------ */
 /*  UCB addresses                                                     */
 /* ------------------------------------------------------------------ */
 #define UCB_SWAP_ORIG_BASE      0xAF402E00U
-#define UCB_SWAP_COPY_BASE      0xAF406E00U
+#define UCB_SWAP_COPY_BASE      0xAF403E00U
 #define UCB_ENTRY_SIZE          16U         /* bytes per entry        */
 
 /* Offsets within each 16-byte entry */
@@ -132,19 +137,26 @@ static boolean ucbEraseSector(uint32 sectorAddr)
 /*    Page 0: MARKERLx + MARKERHx                                     */
 /*    Page 1: CONFIRMATIONLx + CONFIRMATIONHx                         */
 /* ------------------------------------------------------------------ */
-static void writeEntry(uint32 ucbBase, uint32 index, uint32 markerVal)
+static boolean writeEntry(uint32 ucbBase, uint32 index, uint32 markerVal)
 {
-    uint32 entryAddr   = ucbBase + (index * UCB_ENTRY_SIZE);
-    uint32 markerLAddr = entryAddr + OFF_MARKERL;
+    uint32 entryAddr    = ucbBase + (index * UCB_ENTRY_SIZE);
+    uint32 markerLAddr  = entryAddr + OFF_MARKERL;
     uint32 confirmLAddr = entryAddr + OFF_CONFIRML;
 
-    /* Page 0: MARKERLx = swap mode, MARKERHx = address of MARKERLx */
-    ucbWritePage(markerLAddr, markerVal, markerLAddr);
-
-    /* Page 1: CONFIRMATIONLx = code, CONFIRMATIONHx = address of CONFIRMATIONLx */
-    ucbWritePage(confirmLAddr, SWAP_CONFIRMATION, confirmLAddr);
+    if (!ucbWritePage(markerLAddr, markerVal, markerLAddr))
+    {
+        return FALSE;
+    }
+    return ucbWritePage(confirmLAddr, SWAP_CONFIRMATION, confirmLAddr);
 }
 
+static boolean ucbPageProgrammed(uint32 pageAddr)
+{
+    IfxFlash_clearStatus(FLASH_MODULE);
+    IfxFlash_verifyErasedPage(pageAddr);
+    IfxFlash_waitUnbusy(FLASH_MODULE, IfxFlash_FlashType_D0);
+    return (MODULE_DMU.HF_ERRSR.B.EVER != 0u);   /* EVER set => not erased */
+}
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -152,17 +164,20 @@ static void writeEntry(uint32 ucbBase, uint32 index, uint32 markerVal)
 
 uint8 Swap_GetCurrentBank(void)
 {
-    uint8 cfg = readSwapCfg();
-    uint8 bank;
-    switch (cfg)
+    uint32 i, last = 0xFFFFFFFFu;
+
+    for (i = 0u; i < SWAP_NUM_ENTRIES; i++)
     {
-        case 0x01u: bank = SWAP_BANK_A; break;
-        case 0x02u: bank = SWAP_BANK_B; break;
-        default:    bank = 0xFFu; break;
+        uint32 e = UCB_SWAP_ORIG_BASE + i * UCB_ENTRY_SIZE;
+        if (!ucbPageProgrammed(e) || !ucbPageProgrammed(e + 8u)) { break; }
+        last = e;
     }
-    Debug_Printf("[SWAP] GetCurrentBank: cfg=%u -> bank=0x%02X\r\n",
-                 (unsigned)cfg, (unsigned)bank);
-    return bank;
+    if (last == 0xFFFFFFFFu) { return 0xFFu; }
+
+    uint32 marker  = *(volatile uint32 *)last;
+    uint32 confirm = *(volatile uint32 *)(last + OFF_CONFIRML);
+    if (confirm != SWAP_CONFIRMATION) { return 0xFFu; }
+    return (uint8)(marker & 0xFFu);
 }
 
 uint32 Swap_GetInactiveBase(void)
@@ -176,62 +191,41 @@ uint32 Swap_GetInactiveBase(void)
 
 Swap_Status_t Swap_ChangeMode(uint8 targetBank)
 {
-    uint8  currentIndex;
-    uint32 nextIndex;
-    boolean irqState;
+    uint32  next = 0u;
+    boolean irq, ok;
 
-    /* Validate target */
     if (targetBank != SWAP_BANK_A && targetBank != SWAP_BANK_B)
     {
         Debug_Printf("[SWAP] Invalid target bank: 0x%02X\r\n", (unsigned)targetBank);
         return SWAP_ERR_INVALID_BANK;
     }
 
-    /* Check if SWAP is enabled */
-    if (Swap_GetCurrentBank() == 0xFFu)
+    /* Next free slot = first entry whose MARKER page is erased.
+     * Derived from the UCB itself, not from STMEM1.                   */
+    while (next < SWAP_NUM_ENTRIES &&
+           ucbPageProgrammed(UCB_SWAP_ORIG_BASE + next * UCB_ENTRY_SIZE))
     {
-        Debug_Print("[SWAP] SWAP not enabled (SWAPEN not set)\r\n");
-        return SWAP_ERR_NOT_ENABLED;
+        next++;
+    }
+    if (next >= SWAP_NUM_ENTRIES)
+    {
+        Debug_Print("[SWAP] all 16 entries used - run Swap_EraseAll first\r\n");
+        return SWAP_ERR_FULL;
     }
 
-    currentIndex = readSwapIndex();
-    nextIndex    = (uint32)currentIndex + 1u;
+    Debug_Printf("[SWAP] writing entry %u = 0x%02X\r\n",
+                 (unsigned)next, (unsigned)targetBank);
 
-    Debug_Printf("[SWAP] Current entry index: %u, target bank: 0x%02X\r\n",
-                 (unsigned)currentIndex, (unsigned)targetBank);
+    irq = IfxCpu_disableInterrupts();
+    ok  = writeEntry(UCB_SWAP_COPY_BASE, next, (uint32)targetBank) &&
+          writeEntry(UCB_SWAP_ORIG_BASE, next, (uint32)targetBank);
+    IfxCpu_restoreInterrupts(irq);
 
-    irqState = IfxCpu_disableInterrupts();
-
-    if (nextIndex >= SWAP_NUM_ENTRIES)
+    if (!ok)
     {
-        /* All 16 slots used — must erase both UCB_SWAP blocks
-         * and start at index 0.
-         *
-         * CRITICAL: erase COPY first, then ORIG.  If power is
-         * lost between the two erases, ORIG is still valid and
-         * the device boots correctly.  On the next successful
-         * swap attempt both will be re-written.                     */
-        Debug_Print("[SWAP] All 16 entries used — erasing UCB_SWAP\r\n");
-
-        ucbEraseSector(UCB_SWAP_COPY_BASE);
-        ucbEraseSector(UCB_SWAP_ORIG_BASE);
-
-        nextIndex = 0u;
+        Debug_Print("[SWAP] UCB write failed\r\n");
+        return SWAP_ERR_UCB_WRITE;
     }
-
-    /* Write new entry — COPY first, then ORIG.
-     * If power is lost after COPY but before ORIG, the device
-     * will use ORIG's previous (now invalidated) state.  SSW
-     * falls through to COPY which has the new entry → device
-     * boots from the intended bank.                                 */
-    writeEntry(UCB_SWAP_COPY_BASE, nextIndex, (uint32)targetBank);
-    writeEntry(UCB_SWAP_ORIG_BASE, nextIndex, (uint32)targetBank);
-
-    IfxCpu_restoreInterrupts(irqState);
-
-    Debug_Printf("[SWAP] Wrote entry %u = 0x%02X to UCB_SWAP ORIG+COPY\r\n",
-                 (unsigned)nextIndex, (unsigned)targetBank);
-
     return SWAP_OK;
 }
 
@@ -266,21 +260,39 @@ void Swap_TriggerSystemReset(void)
 
 Swap_Status_t Swap_EraseAll(void)
 {
-    boolean irqState = IfxCpu_disableInterrupts();
+    boolean irq = IfxCpu_disableInterrupts();
+    boolean ok;
 
     Debug_Print("[SWAP] Erasing UCB_SWAP...\r\n");
-    boolean okCopy = ucbEraseSector(UCB_SWAP_COPY_BASE);
-    Debug_Printf("[SWAP] COPY erase: %s\r\n", okCopy ? "OK" : "FAILED");
+    ok = ucbEraseSector(UCB_SWAP_COPY_BASE) && ucbEraseSector(UCB_SWAP_ORIG_BASE);
+    if (ok)
+    {
+        ok = writeEntry(UCB_SWAP_COPY_BASE, 0u, (uint32)SWAP_BANK_A) &&
+             writeEntry(UCB_SWAP_ORIG_BASE, 0u, (uint32)SWAP_BANK_A);
+    }
 
-    boolean okOrig = ucbEraseSector(UCB_SWAP_ORIG_BASE);
-    Debug_Printf("[SWAP] ORIG erase: %s\r\n", okOrig ? "OK" : "FAILED");
+    IfxCpu_restoreInterrupts(irq);
+    Debug_Printf("[SWAP] UCB_SWAP reset: %s\r\n", ok ? "OK" : "FAILED");
+    return ok ? SWAP_OK : SWAP_ERR_UCB_WRITE;
+}
 
-    writeEntry(UCB_SWAP_COPY_BASE, 0u, (uint32)SWAP_BANK_A);
-    
-    writeEntry(UCB_SWAP_ORIG_BASE, 0u, (uint32)SWAP_BANK_A);
+boolean Swap_PageProgrammed(uint32 pageAddr)
+{
+    return ucbPageProgrammed(pageAddr);
+}
 
-    IfxCpu_restoreInterrupts(irqState);
+/* Kept for the CLI; identical behaviour now */
+Swap_Status_t Swap_ChangeModeForce(uint8 targetBank)
+{
+    return Swap_ChangeMode(targetBank);
+}
 
-    Debug_Print("[SWAP] UCB_SWAP reset complete\r\n");
-    return SWAP_OK;
+uint8 Swap_GetActiveBank(void)
+{
+    switch (SCU_SWAPCTRL.B.ADDRCFG)
+    {
+        case 1u: return SWAP_BANK_A;     /* standard map  */
+        case 2u: return SWAP_BANK_B;     /* alternate map */
+        default: return 0xFFu;
+    }
 }

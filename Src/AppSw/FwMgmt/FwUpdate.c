@@ -314,14 +314,6 @@ static void prv_HandleVerifying(void)
     Debug_Printf("[FWUP] Swap result: %u\r\n", (unsigned)ss);
     Debug_Print("[FWUP] Update complete — resetting...\r\n");
 
-    /* Trigger system reset to boot from new image */
-    {
-        uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
-        IfxScuWdt_clearSafetyEndinit(pw);
-        MODULE_SCU.RSTCON.B.SW = 1u;
-        IfxScuWdt_setSafetyEndinit(pw);
-        while(1) {}
-    }
 }
 
 /* ================================================================== */

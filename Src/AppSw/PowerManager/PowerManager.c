@@ -764,6 +764,7 @@ void PowerManager_RequestPowerOn(void)
 void PowerManager_RequestPowerOff(void)
 {
     s_powerOffReq = TRUE;
+    s_suppressResetDetect = TRUE;
 }
 
 void PowerManager_Run(void)
