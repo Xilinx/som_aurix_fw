@@ -71,6 +71,8 @@ static uint32                    s_wwdServiceCount    = 0u;
 static uint32                    s_wwdMissCount       = 0u;
 static uint8                     s_devctrlShadow      = 0u;
 static uint32                    s_wwdRecoveredCount = 0u;
+static uint32                    s_lastServiceMs = 0u;   
+static uint8                     s_statPoll      = 0u;   
 /* ================================================================== */
 /*  ISRs — must be above prv_SpiInit so they're visible               */
 /* ================================================================== */
@@ -559,6 +561,10 @@ Tlf35585_Status_t Tlf35585_Init(void)
 
 void Tlf35585_ServiceWdt(void)
 {
+    if (IfxCpu_getCoreIndex() != g_wdtOwner)
+    {
+        return;
+    }
     uint32 nowMs, elapsedMs;
     uint8  wwdCmd;
 
@@ -589,7 +595,22 @@ void Tlf35585_ServiceWdt(void)
             ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
         prv_ToggleWdi();
     }
-
+    {
+        uint32 now = Stm_GetTimeMs();
+        uint32 gap = now - s_lastServiceMs;
+        if ((s_lastServiceMs != 0u) && (gap > g_ipcShared.fusa.tlfMaxGapMs))
+        {
+            g_ipcShared.fusa.tlfMaxGapMs = gap;
+        }
+        s_lastServiceMs = now;
+        g_ipcShared.fusa.tlfLastServiceMs = now;
+    }
+    if ((++s_statPoll & 0x0Fu) == 0u)
+    {
+        uint8 v;
+        if (Tlf35585_ReadReg(TLF_R_WWDSTAT, &v) == TLF_OK) { g_ipcShared.fusa.tlfWwdStat = v; }
+        if (Tlf35585_ReadReg(TLF_RW_SYSSF,   &v) == TLF_OK) { g_ipcShared.fusa.tlfSysSf   = v; }
+    }
     /* ---- Heartbeat: INDEPENDENT of service outcome ---------------- */
     {
         static uint32 s_lastStatMs = 0u;

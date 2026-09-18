@@ -236,6 +236,11 @@ static void prv_CmdStatus(void)
     Debug_Print("=====================\r\n");
     Debug_Printf("  BootTrace: this=0x%08X prev=0x%08X\r\n",
                 (unsigned)g_bootTrace, (unsigned)g_prevBootTrace);
+    Debug_Printf("  TLF WWD:  errcnt=%u SYSSF=0x%02X  svc %u ms ago, max gap %u ms\r\n",
+                (unsigned)g_ipcShared.fusa.tlfWwdStat,
+                (unsigned)g_ipcShared.fusa.tlfSysSf,
+                (unsigned)(Stm_GetTimeMs() - g_ipcShared.fusa.tlfLastServiceMs),
+                (unsigned)g_ipcShared.fusa.tlfMaxGapMs);
 }
 
 static void prv_CmdPowerOn(void)

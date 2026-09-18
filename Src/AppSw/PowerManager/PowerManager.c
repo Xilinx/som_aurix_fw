@@ -55,7 +55,7 @@ static boolean s_retryDelayActive   = FALSE;
 static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
 static boolean s_biosRevalidate = TRUE;
-
+static uint32 s_onEntryMs = 0u;
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -1459,6 +1459,7 @@ void PowerManager_Run(void)
             prv_DeassertKbrst();
             PwrGood_MonArm(PM_RAILS_ALL_MON, PM_RAIL_ALL_MON_COUNT, prv_OnPgFault);
             VoltMon_Enable();
+            s_onEntryMs = Stm_GetTimeMs();
             Debug_Printf("[PM] Warm reset done in %u ms\r\n", (unsigned)(Stm_GetTimeMs() - t0));
 #if (FUSA_FEATURE_ENABLE == 1u)
             ComHpcWdt_Enable(COMHPC_WDT_DEFAULT_ENABLE_DELAY_S,
@@ -1534,4 +1535,11 @@ void PowerManager_ClearFault(void)
         Debug_Print("[PM] Fault cleared\r\n");
         prv_SetState(PM_STATE_OFF);
     }
+}
+
+boolean PowerManager_TransitionPending(void)
+{
+    if (s_state != PM_STATE_ON) { return TRUE; }
+    if (prv_SlpS5Active() || prv_SlpS3Active() || !prv_ReadSocResetL()) { return TRUE; }
+    return ((Stm_GetTimeMs() - s_onEntryMs) < 500u);
 }

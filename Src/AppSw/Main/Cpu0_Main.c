@@ -65,6 +65,11 @@ static void prv_SyncBarrier(void)
                  (unsigned)sync);
 }
 
+static void prv_FlashKeepAlive(void)
+{
+    if (g_wdtOwner == 0u) { Tlf35585_ServiceWdt(); }
+}
+
 /* ================================================================== */
 /*  Firmware version string                                           */
 /* ================================================================== */
@@ -142,7 +147,7 @@ int core0_main(void)
     }
 
     PFlash_Init();
-    PFlash_RegisterKeepAliveCb(Tlf35585_ServiceWdt);
+    PFlash_RegisterKeepAliveCb(prv_FlashKeepAlive);
     Debug_Print("[SYS] Init: PFlash OK\r\n");
     Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
     FwUpdate_Init();

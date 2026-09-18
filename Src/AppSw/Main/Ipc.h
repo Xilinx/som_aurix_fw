@@ -152,6 +152,10 @@ typedef struct
     volatile uint32 warnSeq;
     volatile uint32 warnChannel;
     volatile uint32 warnMv;
+    volatile uint8  tlfWwdStat;      /* TLF WWDSTAT register, refreshed by CPU2 */
+    volatile uint8  tlfSysSf;        /* TLF SYSSF (bit1 = WWD failure)          */
+    volatile uint32 tlfLastServiceMs;
+    volatile uint32 tlfMaxGapMs;     /* worst interval between services         */
 } Ipc_FusaStatus_t;
 
 

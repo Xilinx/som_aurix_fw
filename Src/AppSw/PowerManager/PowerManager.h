@@ -140,4 +140,11 @@ void PowerManager_RequestForcedOff(void);
  */
 void PowerManager_ClearFault(void);
 
+/**
+ * @brief  Shows pending transition into system
+ *
+ */
+boolean PowerManager_TransitionPending(void);
+
+
 #endif /* POWER_MANAGER_H */
