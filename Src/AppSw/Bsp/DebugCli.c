@@ -1025,7 +1025,7 @@ static void prv_CmdI2cSniff(const char *args)
     uint8  pkt[CLI_SNIFF_MAXPKT];
     uint8  ack[CLI_SNIFF_MAXPKT];
     uint32 n = 0u;
-    boolean inPkt = FALSE, aborted = FALSE;
+    boolean aborted = FALSE;
     uint32 sdaPrev, sclPrev;
     uint32 seen[16] = {0};                    /* bitmap of 7-bit addresses seen */
  
@@ -1465,6 +1465,24 @@ static void prv_CmdPfDump(const char *args)
     Debug_Print("\r\n");
 }
 
+static void prv_CmdFwSwap(const char *args)
+{
+    uint8 active = Swap_GetActiveBank();
+    uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
+
+    Debug_Printf("[FWSWAP] active=0x%02X, swapping to 0x%02X\r\n",
+                 (unsigned)active, (unsigned)target);
+    Swap_Status_t ss = Swap_ChangeMode(target);
+    if (ss != SWAP_OK)
+    {
+        Debug_Printf("[FWSWAP] failed: %u\r\n", (unsigned)ss);
+        return;
+    }
+    Debug_Print("[FWSWAP] entry written, resetting...\r\n");
+    Debug_FlushBlocking();
+    Swap_TriggerSystemReset();
+}
+
 /* ================================================================== */
 /*  Command dispatch                                                  */
 /* ================================================================== */
@@ -1520,6 +1538,9 @@ static void prv_Dispatch(const char *cmd)
 
     else if (((args = prv_StartsWith(cmd, "otpdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdOtpDump(args);
+
+    else if (((args = prv_StartsWith(cmd, "fwswap")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdFwSwap(args);
 
     else if (((args = prv_StartsWith(cmd, "confirm")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdConfirm(args);

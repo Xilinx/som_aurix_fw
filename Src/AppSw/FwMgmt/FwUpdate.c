@@ -263,15 +263,30 @@ static void prv_HandleReceiving(void)
     }
 }
 
+static uint32 prv_CrcFlash(uint32 baseAddr, uint32 size)
+{
+    uint32 crc = Crc32_Init();
+    uint32 off = 0u;
+
+    while (off < size)
+    {
+        uint32 n = (size - off > 4096u) ? 4096u : (size - off);
+        crc = Crc32_Update(crc, (const uint8 *)(baseAddr + off), n);
+        off += n;
+    }
+    return Crc32_Final(crc);
+}
+
 static void prv_HandleVerifying(void)
 {
-    uint32 finalCrc = Crc32_Final(s_runningCrc);
+    uint32 readBase = (Swap_GetActiveBank() == SWAP_BANK_A)
+                    ? PFLASH_BANK_B_BASE    /* running A, wrote B, read B at 0xA0600000 */
+                    : PFLASH_BANK_A_BASE;   /* running B, wrote A, read A at 0xA0600000 */
+    uint32 flashCrc = prv_CrcFlash(readBase, s_imageSize);
 
-    Debug_Printf("[FWUP] Verify: computed=0x%08X expected=0x%08X\r\n",
-                 (unsigned)finalCrc, (unsigned)s_imageCrc);
-
-    if (finalCrc != s_imageCrc)
+    if (flashCrc != s_imageCrc)
     {
+        Debug_Printf("[FWUP] Flash readback mismatch: 0x%08X\r\n", (unsigned)flashCrc);
         prv_SendNak(FWUPDATE_ERR_IMG_CRC);
         s_state = FWUPDATE_ERROR;
         return;

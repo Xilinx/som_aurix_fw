@@ -223,12 +223,13 @@ void PowerManager_OnVoltageFault(const VoltMon_ChCfg_t *ch,
                                   uint16 measuredMv,
                                   VoltMon_Severity_t severity)
 {
-    /* For now, treat any FAULT-level voltage event as a PG loss.
-     * This runs from main-loop context (VoltMon_Scan), not ISR. */
     if (severity >= VOLTMON_FAULT)
     {
         if ((s_state == PM_STATE_OFF) || (s_state == PM_STATE_FAULT))
-            return;   /* already shut down, ignore */
+            return;
+        if (PowerManager_TransitionPending())
+            return;
+        Debug_Printf("[PM] Voltage fault: %s = %umV\r\n", ch->name, (unsigned)measuredMv);
         s_pendingCause = PM_RESET_CAUSE_VOLTAGE;
         prv_OnPgFault(NULL_PTR, 0u);
     }

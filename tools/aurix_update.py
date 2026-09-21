@@ -43,7 +43,7 @@ SYNC_MAGIC  = 0x55AA55AA
 ACK_MAGIC   = 0x06060606
 NAK_MAGIC   = 0x15151515
 
-CHUNK_SIZE  = 1024       # PFlash burst size
+CHUNK_SIZE  = 256       # PFlash burst size
 HEADER_SIZE = 12        # imageSize(4) + imageCrc(4) + targetBank(4)
 DATA_FRAME_SIZE = 264   # seqNum(4) + chunkCrc(4) + data(256)
 

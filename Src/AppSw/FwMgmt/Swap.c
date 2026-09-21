@@ -59,25 +59,6 @@
 /*  SCU registers for swap status                                     */
 /* ------------------------------------------------------------------ */
 
-/** Read SCU_STMEM1.SWAP_CFG (bits 1:0)
- *  00 = no swap, 01 = Bank A, 10 = Bank B                          */
-static uint8 readSwapCfg(void)
-{
-    uint32 raw = SCU_STMEM1.U;
-    uint8  cfg = (uint8)(raw & 0x03u);
-    Debug_Printf("[SWAP] readSwapCfg: SCU_STMEM1=0x%08X, bits[1:0]=%u\r\n",
-                 (unsigned)raw, (unsigned)cfg);
-    return cfg;
-}
-
-static uint8 readSwapIndex(void)
-{
-    return (uint8)((SCU_STMEM1.U >> 4) & 0x0Fu);
-}
-
-
-
-
 /* ------------------------------------------------------------------ */
 /*  Private: write an 8-byte page to the UCB region                   */
 /*                                                                    */
