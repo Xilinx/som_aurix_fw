@@ -114,4 +114,6 @@ BootValid_Status_t BootValid_CommitUpdate(void);
  * @return BOOTVALID_OK on success, BOOTVALID_ERR_DFLASH on failure.
  */
 BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank, uint32 imageSize);
+
+BootValid_Status_t BootValid_ClearMeta(void);
 #endif /* BOOTVALID_H */

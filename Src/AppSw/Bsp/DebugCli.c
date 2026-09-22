@@ -1483,6 +1483,20 @@ static void prv_CmdFwSwap(const char *args)
     Swap_TriggerSystemReset();
 }
 
+/* DebugCli.c */
+static void prv_CmdSotaClear(const char *args)
+{
+    (void)args;
+    if (BootValid_ClearMeta() == BOOTVALID_OK)
+    {
+        Debug_Print("[SOTA] metadata cleared - next boot is a normal boot, no BIST\r\n");
+    }
+    else
+    {
+        Debug_Print("[SOTA] failed to clear metadata (DFlash write error)\r\n");
+    }
+}
+
 /* ================================================================== */
 /*  Command dispatch                                                  */
 /* ================================================================== */
@@ -1538,6 +1552,9 @@ static void prv_Dispatch(const char *cmd)
 
     else if (((args = prv_StartsWith(cmd, "otpdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdOtpDump(args);
+
+    else if (((args = prv_StartsWith(cmd, "sotaclear")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSotaClear(args);
 
     else if (((args = prv_StartsWith(cmd, "fwswap")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdFwSwap(args);
