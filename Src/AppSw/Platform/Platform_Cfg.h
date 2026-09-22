@@ -100,7 +100,7 @@
 #define PM_RAIL_VR3V3_COUNT     1u
 #define PM_PG_TIMEOUT_MS    5u
 #define PM_PWRBTN_HOLD_MS   4000u   /* 4s ACPI force-off convention */
-
+#define PM_WD_BYPASS_ENABLE     0u
 /* ---- FuSa feature-set gate -----------------------------------------------
  * Default OFF. Guards enabling the COM-HPC watchdog (ComHpcWdt_Enable),
  * both on cold boot (PM_STATE_RAMP_S0) and on re-arm after a warm reset

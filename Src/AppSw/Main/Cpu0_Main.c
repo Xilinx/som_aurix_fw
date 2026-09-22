@@ -141,10 +141,6 @@ int core0_main(void)
     if (g_wdtOwner == 0u) Tlf35585_ServiceWdt();
     Debug_Print("[SYS] Init: NvLog OK\r\n");
     //SelfTest_DFlash();
-    {
-        BootValid_Status_t bootStatus = BootValid_CheckOnStartup();
-        Debug_Printf("[SYS] Init: BootValid = %u\r\n", (unsigned)bootStatus);
-    }
 
     PFlash_Init();
     PFlash_RegisterKeepAliveCb(prv_FlashKeepAlive);
@@ -152,14 +148,22 @@ int core0_main(void)
     Debug_Printf("[SYS] Active bank: 0x%02X\r\n", (unsigned)(Swap_GetCurrentBank()));
     FwUpdate_Init();
     //SelfTest_PFlash();
-
+    BootValid_Status_t bootStatus = BootValid_CheckOnStartup();
+    Debug_Printf("[SYS] Init: BootValid = %u\r\n", (unsigned)bootStatus);
     prv_SyncBarrier();
     if (prv_WaitForCores(5000u))
     {
         prv_HandoverTlfWdt();
     }
-    //DFlash_EraseSectors(DFLASH_SOTA_ADDR, 1u);
-    Bist_RunPost(Tlf35585_ServiceWdt);
+    if (bootStatus == BOOTVALID_PENDING)
+    {
+        Bist_RunPost(prv_FlashKeepAlive);          /* only a freshly OTA'd, contiguous image */
+    }
+    else
+    {
+        Bist_SetSkipped();  /* status shows SKIP */
+        Debug_Print("[BIST] POST skipped (no pending update)\r\n");
+    }
     Debug_Print("[SYS] Init: POST complete\r\n");
     /* ============================================================== */
     /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
@@ -181,7 +185,6 @@ int core0_main(void)
 
         NvLog_Run();
         FwUpdate_Run();
-        Bist_Run(NULL_PTR);        
 
         if (g_wdtOwner == 0u)
         {

@@ -93,15 +93,14 @@ static const VoltMon_ChCfg_t s_chTable[] =
 //  { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
     { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
     { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_A",  1u, 2u, 2u, 900u, UV_WARN(900u), UV_FAULT(900u), OV_WARN(900u), OV_FAULT(900u), 1000u },
+    { "VDDIO_MEM_A",  1u, 2u, 2u, 1050u, UV_WARN(1050u), UV_FAULT(1050u), OV_WARN(1050u), OV_FAULT(1050u), 1000u },
 
     /* ---- Group 2: Memory channel B (S0) --------------------------------- */
 //  { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
 //  { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
     { "VDDIO_MEM_B",  2u, 2u, 2u, 900u, UV_WARN(900u), UV_FAULT(900u), OV_WARN(900u), OV_FAULT(900u), 1000u },
     { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_B",  2u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-
+    { "VDDIO_MEM_B",  2u, 2u, 2u, 1050u, UV_WARN(1050u), UV_FAULT(1050u), OV_WARN(1050u), OV_FAULT(1050u), 1000u },
     /* ---- Group 3: Misc / S5 rails --------------------------------------- */
     { "VDD_MISC",     3u, 0u, 0u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
     { "VDD_MISC_S5",  3u, 1u, 1u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
