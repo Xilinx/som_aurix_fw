@@ -47,6 +47,8 @@ static uint32 s_totalChunks  = 0u;
 static uint32 s_nextSeqNum   = 0u;
 static uint32 s_writeAddr    = 0u;
 static uint32 s_lastChunkMs  = 0u;
+static uint32 s_writeBase = 0u;   /* physical base of the bank being programmed */
+static uint32 s_readBase  = 0u;  
 
 /* CRC accumulator for full-image verify */
 static uint32 s_runningCrc   = 0xFFFFFFFFu;
@@ -178,31 +180,45 @@ static void prv_HandleHeader(void)
 
     s_imageSize  = prv_ReadU32(&hdrBuf[0]);
     s_imageCrc   = prv_ReadU32(&hdrBuf[4]);
-    s_targetBank = prv_ReadU32(&hdrBuf[8]);
+    s_targetBank = prv_ReadU32(&hdrBuf[8]);     /* host field: informational only */
 
-    Debug_Printf("[FWUP] HEADER: size=%u crc=0x%08X bank=%u\r\n",
+    Debug_Printf("[FWUP] HEADER: size=%u crc=0x%08X hostBank=%u\r\n",
                  (unsigned)s_imageSize, (unsigned)s_imageCrc,
                  (unsigned)s_targetBank);
 
-    /* Validate image size */
-    uint32 maxSize = (s_targetBank == 0u) ? PFLASH_BANK_A_SIZE : PFLASH_BANK_B_SIZE;
-    if (s_imageSize == 0u || s_imageSize > maxSize)
+    {
+        uint8 active = Swap_GetActiveBank();                /* SCU_SWAPCTRL.ADDRCFG */
+        if (active == 0xFFu)
+        {
+            Debug_Print("[FWUP] Active bank unknown (ADDRCFG) - refusing update\r\n");
+            prv_SendNak(FWUPDATE_ERR_BAD_HEADER);
+            s_state = FWUPDATE_ERROR;
+            return;
+        }
+
+        s_targetBank = (active == SWAP_BANK_A) ? 1u : 0u;   /* 1 = B, 0 = A */
+        s_writeBase = (active == SWAP_BANK_A) ? PFLASH_BANK_B_BASE    /* PF2 */
+                                              : PFLASH_BANK_A_BASE;   /* PF0 */
+        s_readBase  = PFLASH_BANK_B_BASE;
+
+        Debug_Printf("[FWUP] Running bank 0x%02X -> writing bank %s (phys 0x%08X)\r\n",
+                     (unsigned)active, (s_targetBank == 1u) ? "B" : "A",
+                     (unsigned)s_writeBase);
+    }
+
+    if ((s_imageSize == 0u) || (s_imageSize > PFLASH_BANK_B_SIZE))
     {
         prv_SendNak(FWUPDATE_ERR_IMG_TOO_BIG);
         s_state = FWUPDATE_ERROR;
         return;
     }
 
-    /* Calculate chunks */
     s_totalChunks = (s_imageSize + FWUPDATE_CHUNK_SIZE - 1u) / FWUPDATE_CHUNK_SIZE;
-
-    /* Erase the target bank */
     s_state = FWUPDATE_ERASING;
     Debug_Print("[FWUP] Erasing target bank...\r\n");
 
-    uint32 bankBase = (s_targetBank == 0u) ? PFLASH_BANK_A_BASE : PFLASH_BANK_B_BASE;
     prv_WdBypass(TRUE);
-    PFlash_Status_t ps = PFlash_EraseBank(bankBase);
+    PFlash_Status_t ps = PFlash_EraseBank(s_writeBase);
     if (ps != PFLASH_OK)
     {
         Debug_Printf("[FWUP] Erase failed: %u\r\n", (unsigned)ps);
@@ -215,7 +231,7 @@ static void prv_HandleHeader(void)
     prv_SendAck();
 
     s_nextSeqNum  = 0u;
-    s_writeAddr   = bankBase;
+    s_writeAddr   = s_writeBase;
     s_runningCrc  = Crc32_Init();
     s_lastChunkMs = Stm_GetTimeMs();
     s_state       = FWUPDATE_RECEIVING;

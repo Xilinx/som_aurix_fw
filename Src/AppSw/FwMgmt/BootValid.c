@@ -8,6 +8,7 @@
 #include "BootValid.h"
 #include "DFlash.h"
 #include "Uart_Debug.h"
+#include <string.h>
 
 /* Swap module — used for revert on failed boot.
  * On TARGET_EVAL_BOARD we still include the header for the
@@ -57,6 +58,13 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
         return BOOTVALID_OK;
     }
 
+    if ((uint8)meta.activeBank != Swap_GetActiveBank())
+    {
+        Debug_Printf("[BOOT] Pending update for bank 0x%02X but running 0x%02X - clearing\r\n",
+                     (unsigned)meta.activeBank, (unsigned)Swap_GetActiveBank());
+        (void)BootValid_ClearMeta();
+        return BOOTVALID_OK;               /* no counter, no BIST, no revert */
+    }
     /* ---- Update is pending — evaluate boot counter -------------- */
     meta.bootCounter++;
 
