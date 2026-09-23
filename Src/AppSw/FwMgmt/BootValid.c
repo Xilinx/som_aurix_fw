@@ -194,3 +194,10 @@ BootValid_Status_t BootValid_PrepareForUpdate(uint32 imageCrc, uint32 targetBank
 
     return BOOTVALID_OK;
 }
+
+BootValid_Status_t BootValid_ClearMeta(void)
+{
+    DFlash_SotaMeta_t meta;
+    memset(&meta, 0, sizeof(meta));       /* magic = 0 -> "no metadata" */
+    return (DFlash_WriteSotaMeta(&meta) == DFLASH_OK) ? BOOTVALID_OK : BOOTVALID_ERR_DFLASH;
+}

@@ -199,6 +199,7 @@ const AppPin_t PIN_DP3_HPD            = {13u,  3u};
 const AppPin_t PIN_DEBUG_TXD          = {14u,  0u};
 const AppPin_t PIN_DEBUG_RXD          = {14u,  1u};
 const AppPin_t PIN_UART_MUX_SEL       = {14u,  6u};
+const AppPin_t PIN_WD_BYPASS_ENABLE   = {14u,  7u};
 
 /* ==========================================================================
  * APU State Control (Port 15)

@@ -20,6 +20,18 @@
 #include "IfxScu_reg.h"
 #include "Crc32.h"
 
+#if (PM_WD_BYPASS_ENABLE == 1u)
+#include "AppPin.h"
+#include "Platform_PinCfg.h"
+#define WD_BYPASS_MAX_MS        120000u    
+#define PIN_PMIC_WD_EN_ACTIVE_LEVEL   IfxPort_State_low    /* TODO: confirm with HW */
+#define PIN_PMIC_WD_EN_BYPASS_LEVEL   IfxPort_State_high  
+/* hard ceiling: never leave it asserted longer */
+
+static uint32  s_wdBypassMs     = 0u;
+static boolean s_wdBypassActive = FALSE;
+#endif
+
 /* ================================================================== */
 /*  Internal state                                                    */
 /* ================================================================== */
@@ -86,6 +98,19 @@ static const uint32 s_crcTable[256] = {
 /*  Protocol helpers                                                  */
 /* ================================================================== */
 
+static void prv_WdBypass(boolean enable)
+{
+#if (PM_WD_BYPASS_ENABLE == 1u)
+    IfxPort_setPinState(AppPin_GetPort(PIN_WD_BYPASS_ENABLE.portIdx), PIN_WD_BYPASS_ENABLE.pinIdx,
+                        enable ? PIN_PMIC_WD_EN_BYPASS_LEVEL : PIN_PMIC_WD_EN_ACTIVE_LEVEL);
+    s_wdBypassActive = enable;
+    s_wdBypassMs     = enable ? Stm_GetTimeMs() : 0u;
+    Debug_Printf("[FWUP] PMIC WD bypass %s\r\n", enable ? "ON" : "OFF");
+#else
+    (void)enable;
+#endif
+}
+
 static void prv_SendAck(void)
 {
     uint32 magic = FWUPDATE_ACK_MAGIC;
@@ -99,6 +124,7 @@ static void prv_SendNak(FwUpdate_Error_t err)
     UartXfer_Write((const uint8 *)&magic, 4u);
     UartXfer_Write(&code, 1u);
     s_lastError = err;
+    prv_WdBypass(FALSE);
 }
 
 static uint32 prv_ReadU32(const uint8 *p)
@@ -175,6 +201,7 @@ static void prv_HandleHeader(void)
     Debug_Print("[FWUP] Erasing target bank...\r\n");
 
     uint32 bankBase = (s_targetBank == 0u) ? PFLASH_BANK_A_BASE : PFLASH_BANK_B_BASE;
+    prv_WdBypass(TRUE);
     PFlash_Status_t ps = PFlash_EraseBank(bankBase);
     if (ps != PFLASH_OK)
     {
@@ -263,15 +290,30 @@ static void prv_HandleReceiving(void)
     }
 }
 
+static uint32 prv_CrcFlash(uint32 baseAddr, uint32 size)
+{
+    uint32 crc = Crc32_Init();
+    uint32 off = 0u;
+
+    while (off < size)
+    {
+        uint32 n = (size - off > 4096u) ? 4096u : (size - off);
+        crc = Crc32_Update(crc, (const uint8 *)(baseAddr + off), n);
+        off += n;
+    }
+    return Crc32_Final(crc);
+}
+
 static void prv_HandleVerifying(void)
 {
-    uint32 finalCrc = Crc32_Final(s_runningCrc);
+    uint32 readBase = (Swap_GetActiveBank() == SWAP_BANK_A)
+                    ? PFLASH_BANK_B_BASE    /* running A, wrote B, read B at 0xA0600000 */
+                    : PFLASH_BANK_A_BASE;   /* running B, wrote A, read A at 0xA0600000 */
+    uint32 flashCrc = prv_CrcFlash(readBase, s_imageSize);
 
-    Debug_Printf("[FWUP] Verify: computed=0x%08X expected=0x%08X\r\n",
-                 (unsigned)finalCrc, (unsigned)s_imageCrc);
-
-    if (finalCrc != s_imageCrc)
+    if (flashCrc != s_imageCrc)
     {
+        Debug_Printf("[FWUP] Flash readback mismatch: 0x%08X\r\n", (unsigned)flashCrc);
         prv_SendNak(FWUPDATE_ERR_IMG_CRC);
         s_state = FWUPDATE_ERROR;
         return;
@@ -305,23 +347,13 @@ static void prv_HandleVerifying(void)
     NvLog_SealSlot(NVLOG_EVT_FWUPDATE_OK);
 
     prv_SendAck();
-
+    prv_WdBypass(FALSE);
     s_state = FWUPDATE_DONE;
     g_debugMuted = FALSE;
     uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
     Debug_Printf("[FWUP] Calling Swap_ChangeMode(0x%02X)...\r\n", (unsigned)newBank);
-    Swap_Status_t ss = Swap_ChangeMode(newBank);
-    Debug_Printf("[FWUP] Swap result: %u\r\n", (unsigned)ss);
     Debug_Print("[FWUP] Update complete — resetting...\r\n");
 
-    /* Trigger system reset to boot from new image */
-    {
-        uint16 pw = IfxScuWdt_getSafetyWatchdogPassword();
-        IfxScuWdt_clearSafetyEndinit(pw);
-        MODULE_SCU.RSTCON.B.SW = 1u;
-        IfxScuWdt_setSafetyEndinit(pw);
-        while(1) {}
-    }
 }
 
 /* ================================================================== */
@@ -336,6 +368,13 @@ void FwUpdate_Init(void)
 
 FwUpdate_State_t FwUpdate_Run(void)
 {
+#if (PM_WD_BYPASS_ENABLE == 1u)
+    if (s_wdBypassActive && ((Stm_GetTimeMs() - s_wdBypassMs) > WD_BYPASS_MAX_MS))
+    {
+        Debug_Print("[FWUP] PMIC WD bypass timeout - forcing OFF\r\n");
+        prv_WdBypass(FALSE);
+    }
+#endif
     switch (s_state)
     {
         case FWUPDATE_IDLE:
@@ -364,7 +403,10 @@ FwUpdate_State_t FwUpdate_Run(void)
 
         case FWUPDATE_DONE:
         case FWUPDATE_ERROR:
-            /* Terminal states — stay here until reset or abort */
+            /* release the UART back to the CLI; swap is a separate command */
+            UartXfer_FlushRx();
+            g_debugMuted = FALSE;
+            s_state = FWUPDATE_IDLE;
             break;
 
         default:
@@ -396,4 +438,5 @@ void FwUpdate_Abort(void)
     UartXfer_FlushRx();
     s_state     = FWUPDATE_IDLE;
     s_lastError = FWUPDATE_ERR_NONE;
+    prv_WdBypass(FALSE);
 }

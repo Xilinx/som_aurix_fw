@@ -32,6 +32,8 @@
 #include "IfxI2c_reg.h"
 #include "I2c_Slave.h"
 #include "IfxFlash.h"
+#include "PFlash.h"
+
 
 static I2cSlave_Inst_t s_cliSlave;
 
@@ -58,7 +60,7 @@ static uint32 s_snT[SNIFF_LOG];
 
 
 #define UCB_SWAP_ORIG_BASE   0xAF402E00U
-#define UCB_SWAP_COPY_BASE   0xAF406E00U
+#define UCB_SWAP_COPY_BASE   0xAF403E00U
 #define UCB_ENTRY_SIZE       16U
 #define UCB_NUM_ENTRIES      16U
 #define FLASH_MODULE         0
@@ -184,7 +186,7 @@ static void prv_CmdStatus(void)
     uint32 uptimeS = Stm_GetTimeMs() / 1000u;
 
     Debug_Print("=== System Status ===\r\n");
-    Debug_Printf("  FW: TC387 COM-HPC Controller v0.1\r\n");
+    Debug_Printf("  FW: TC387 COM-HPC Controller v0.2\r\n");
     Debug_Printf("  Uptime:   %u s\r\n", (unsigned)uptimeS);
     Debug_Printf("  PM state: %u\r\n",
                  (unsigned)g_ipcShared.pmc.pmState);
@@ -215,11 +217,30 @@ static void prv_CmdStatus(void)
                      (bist.postResult == BIST_OK) ? "PASS" :
                      (bist.postResult == BIST_ERR_NO_META) ? "SKIP" : "FAIL");
     }
-
+    {
+        sint16 t   = g_ipcShared.sysmon.apuTempC;
+        uint32 age = Stm_GetTimeMs() - g_ipcShared.sysmon.apuTempMs;
+        if (t == SYSMON_TEMP_INVALID)
+            Debug_Print("  APU temp: n/a (APU not in S0 or SB-TSI unreachable)\r\n");
+        else
+            Debug_Printf("  APU temp: %d C (%u ms ago)\r\n", (int)t, (unsigned)age);
+    }
     Debug_Printf("  PROCHOT:  %u\r\n",
                  (unsigned)SysMonitor_IsThrottling());
-
+    Debug_Printf("  SWAPEN:   %u  (PROCONTP=0x%08X)\r\n",
+                 (unsigned)MODULE_DMU.HF_PROCONTP.B.SWAPEN,
+                 (unsigned)MODULE_DMU.HF_PROCONTP.U);
+    Debug_Printf("  ADDRCFG:  %u  (SWAPCTRL=0x%08X)\r\n",
+                 (unsigned)SCU_SWAPCTRL.B.ADDRCFG,
+                 (unsigned)SCU_SWAPCTRL.U);
     Debug_Print("=====================\r\n");
+    Debug_Printf("  BootTrace: this=0x%08X prev=0x%08X\r\n",
+                (unsigned)g_bootTrace, (unsigned)g_prevBootTrace);
+    Debug_Printf("  TLF WWD:  errcnt=%u SYSSF=0x%02X  svc %u ms ago, max gap %u ms\r\n",
+                (unsigned)g_ipcShared.fusa.tlfWwdStat,
+                (unsigned)g_ipcShared.fusa.tlfSysSf,
+                (unsigned)(Stm_GetTimeMs() - g_ipcShared.fusa.tlfLastServiceMs),
+                (unsigned)g_ipcShared.fusa.tlfMaxGapMs);
 }
 
 static void prv_CmdPowerOn(void)
@@ -500,7 +521,7 @@ static void prv_CmdFwUpdate(void)
         if (st == FWUPDATE_DONE || st == FWUPDATE_ERROR)
             break;
 
-        if ((Stm_GetTimeMs() - startMs) > 600000u) 
+        if ((Stm_GetTimeMs() - startMs) > 900000u) 
             break;
     }
 
@@ -563,62 +584,41 @@ static void printStmem1(const char *tag)
  * swaptest reset   -> same, then trigger a system reset                    */
 static void prv_CmdSwapTest(const char *args)
 {
-    boolean doReset = (args != NULL) && (strncmp(args, "reset", 5) == 0);
-    uint8   current, target;
-    uint32  bootIndex, newIndex;
-    Swap_Status_t ss;
+    uint8   target  = 0u;
+    boolean doReset = FALSE;
 
-    Debug_Print("[SWAP] ---- swaptest ----\r\n");
+    if (args != NULL)
+    {
+        while (*args == ' ' || *args == '\t') { args++; }
+        if (*args == 'a' || *args == 'A') { target = SWAP_BANK_A; }
+        if (*args == 'b' || *args == 'B') { target = SWAP_BANK_B; }
+        doReset = (strstr(args, "reset") != NULL);
+    }
+
+    Debug_Print("[SWAP] ---- swaptest v2----\r\n");
     printStmem1("boot:");
 
-    current = Swap_GetCurrentBank();
-    if (current == SWAP_BANK_A)
+    /* Always dump, scanning every slot; the helper stops at the first erased entry */
+    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, UCB_NUM_ENTRIES - 1u);
+    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, UCB_NUM_ENTRIES - 1u);
+
+    if (target == 0u)
     {
-        target = SWAP_BANK_B;
-    }
-    else if (current == SWAP_BANK_B)
-    {
-        target = SWAP_BANK_A;
-    }
-    else
-    {
-        Debug_Print("[SWAP] SWAP not enabled (SWAPEN) - aborting\r\n");
+        Debug_Print("[SWAP] dump only ('swaptest a' or 'swaptest b' to write)\r\n");
         return;
     }
 
-    bootIndex = (SCU_STMEM1.U >> 4) & 0x0Fu;
-    newIndex  = bootIndex + 1u;
+    Swap_Status_t ss = Swap_ChangeModeForce(target);
+    Debug_Printf("[SWAP] Swap_ChangeModeForce(0x%02X) -> %u\r\n", (unsigned)target, (unsigned)ss);
+    if (ss != SWAP_OK) { return; }
 
-    Debug_Printf("[SWAP] current bank 0x%02X (entry %u) -> target 0x%02X (entry %u)\r\n",
-                 (unsigned)current, (unsigned)bootIndex,
-                 (unsigned)target,  (unsigned)newIndex);
+    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, UCB_NUM_ENTRIES - 1u);
+    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, UCB_NUM_ENTRIES - 1u);
 
-    /* State before touching anything */
-    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, bootIndex);
-    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, bootIndex);
-
-    ss = Swap_ChangeMode(target);
-    Debug_Printf("[SWAP] Swap_ChangeMode -> %u\r\n", (unsigned)ss);
-    if (ss != SWAP_OK)
-    {
-        Debug_Print("[SWAP] swap failed - not resetting\r\n");
-        return;
+    if (doReset) { 
+        Swap_TriggerSystemReset(); 
     }
-
-    /* Both blocks should now show entry newIndex */
-    dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, newIndex);
-    dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, newIndex);
-
-    Debug_Printf("[SWAP] expect after reset: SWAP_CFG=%u  SWAP_DW_INDEX=%u\r\n",
-                 (unsigned)((target == SWAP_BANK_A) ? 1u : 2u),
-                 (unsigned)newIndex);
-
-    if (doReset)
-    {
-        Swap_TriggerSystemReset();   /* does not return */
-    }
-
-    Debug_Print("[SWAP] Power cycle or 'swaptest reset' to verify\r\n");
+    Debug_Print("[SWAP] reset to apply\r\n");
 }
 
 static void prv_CmdFixOtpCopy(const char *args)
@@ -827,6 +827,24 @@ static void prv_CmdPin(void)
 }
 
 
+static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
+{
+    uint32 a = (uint32)strtoul(args, NULL, 16);
+    Debug_Printf("[PF] pre  STATUS=%08X ERRSR=%08X\r\n", (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
+    PFlash_Status_t s = PFlash_EraseSector(a);
+    Debug_Printf("[PF] erase %08X -> %u  post STATUS=%08X ERRSR=%08X\r\n",
+                 (unsigned)a, (unsigned)s, (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
+}
+
+static void prv_CmdPfWrite(const char *args)       /* pfwrite <addr>: writes 0x5A-filled 256 B */
+{
+    static uint8 buf[256] __attribute__((aligned(4)));
+    memset(buf, 0x5A, sizeof(buf));
+    uint32 a = (uint32)strtoul(args, NULL, 16);
+    PFlash_Status_t s = PFlash_WritePage256(a, buf);
+    Debug_Printf("[PF] write %08X -> %u  ERRSR=%08X\r\n", (unsigned)a, (unsigned)s, (unsigned)DMU_HF_ERRSR.U);
+}
+
 static void prv_CmdI2cProbe(void)
 {
     /* Temporarily read SDA/SCL as GPIO to check voltage level */
@@ -1007,7 +1025,7 @@ static void prv_CmdI2cSniff(const char *args)
     uint8  pkt[CLI_SNIFF_MAXPKT];
     uint8  ack[CLI_SNIFF_MAXPKT];
     uint32 n = 0u;
-    boolean inPkt = FALSE, aborted = FALSE;
+    boolean aborted = FALSE;
     uint32 sdaPrev, sclPrev;
     uint32 seen[16] = {0};                    /* bitmap of 7-bit addresses seen */
  
@@ -1346,6 +1364,139 @@ static void prv_CmdI2cTest(const char *args)
         if (s_cliSlave.regFile[i]) Debug_Printf(" [%02X]=%02X", (unsigned)i, (unsigned)s_cliSlave.regFile[i]);
     Debug_Print("\r\n");
 }
+
+static void prv_CmdOtpDump(const char *args)
+{
+    const uint32 offs[6] = {0x000u, 0x004u, 0x008u, 0x00Cu, 0x1F0u, 0x1F4u};
+    uint32 base = 0xAF400000U;
+
+    while (*args == ' ') { args++; }
+    if (*args != '\0') { base = (uint32)strtoul(args, NULL, 16) & ~0x1FFu; }
+
+    Debug_Print("[UCB] addr      +000     +004     +008     +00C     +1F0     +1F4\r\n");
+    for (; base < 0xAF406000U; base += 0x200U)
+    {
+        uint32  w[6], i;
+        boolean any = FALSE;
+
+        Debug_Printf("[UCB] %08X: ", (unsigned)base);      /* printed before any access */
+
+        for (i = 0u; i < 6u; i++)
+        {
+            uint32 a = base + offs[i];
+            if (Swap_PageProgrammed(a & ~7u)) { w[i] = *(volatile uint32 *)a; any = TRUE; }
+            else                              { w[i] = 0xEEEEEEEEu; }
+        }
+
+        if (any)
+        {
+            Debug_Printf("%08X %08X %08X %08X %08X %08X\r\n",
+                         (unsigned)w[0], (unsigned)w[1], (unsigned)w[2],
+                         (unsigned)w[3], (unsigned)w[4], (unsigned)w[5]);
+        }
+        else
+        {
+            Debug_Print("erased\r\n");
+        }
+        Tlf35585_ServiceWdt();
+    }
+    Debug_Print("[UCB] done\r\n");
+}
+
+
+static void prv_PrintConfirm(const char *name, uint32 reg, const char *const fields[16])
+{
+    uint32 i;
+    Debug_Printf("[CONFIRM] %s = 0x%08X\r\n", name, (unsigned)reg);
+    for (i = 0u; i < 16u; i++)
+    {
+        if (fields[i] != NULL)
+        {
+            Debug_Printf("[CONFIRM]   %-14s = %u\r\n", fields[i], (unsigned)((reg >> (2u * i)) & 3u));
+        }
+    }
+}
+
+static void prv_CmdConfirm(const char *args)
+{
+    static const char *const c0[16] = {
+        "BMHD0_ORIG","BMHD1_ORIG","BMHD2_ORIG","BMHD3_ORIG","SSW","USER","TEST","HSMCFG",
+        "BMHD0_COPY","BMHD1_COPY","BMHD2_COPY","BMHD3_COPY","REDSEC",NULL,NULL,"RETEST" };
+    static const char *const c1[16] = {
+        "PFLASH_ORIG","DFLASH_ORIG","DBG_ORIG","HSM_ORIG","HSMCOTP0_ORIG","HSMCOTP1_ORIG","ECPRIO_ORIG",NULL,
+        "PFLASH_COPY","DFLASH_COPY","DBG_COPY","HSM_COPY","HSMCOTP0_COPY","HSMCOTP1_COPY","ECPRIO_COPY",NULL };
+    static const char *const c2[16] = {
+        "OTP0_ORIG","OTP1_ORIG","OTP2_ORIG","OTP3_ORIG","OTP4_ORIG","OTP5_ORIG","OTP6_ORIG","OTP7_ORIG",
+        "OTP0_COPY","OTP1_COPY","OTP2_COPY","OTP3_COPY","OTP4_COPY","OTP5_COPY","OTP6_COPY","OTP7_COPY" };
+
+    prv_PrintConfirm("HF_CONFIRM0", MODULE_DMU.HF_CONFIRM0.U, c0);
+    prv_PrintConfirm("HF_CONFIRM1", MODULE_DMU.HF_CONFIRM1.U, c1);
+    prv_PrintConfirm("HF_CONFIRM2", MODULE_DMU.HF_CONFIRM2.U, c2);
+}
+
+static void PFlash_WaitAllUnbusy(void)
+{
+    while ((DMU_HF_STATUS.U & PFLASH_STATUS_BUSY_MASK) != 0u)
+    {
+        /* spin — reads of DMU SFRs are always allowed while a
+         * physical bank is busy; only array reads of the busy
+         * bank are not.                                         */
+    }
+}
+
+static void prv_CmdPfDump(const char *args)
+{
+    uint32 addr = (uint32)strtoul(args, NULL, 16) & ~0x1Fu;
+    uint32 i;
+
+    IfxFlash_clearStatus(0);
+    IfxFlash_verifyErasedPage(addr);
+    PFlash_WaitAllUnbusy();                          /* waits on PF0..PF3, whichever is busy */
+    if (MODULE_DMU.HF_ERRSR.B.EVER == 0u)
+    {
+        Debug_Printf("[PF] %08X: erased\r\n", (unsigned)addr);
+        return;
+    }
+    Debug_Printf("[PF] %08X:", (unsigned)addr);
+    for (i = 0u; i < 32u; i += 4u)
+    {
+        Debug_Printf(" %08X", (unsigned)*(volatile uint32 *)(addr + i));
+    }
+    Debug_Print("\r\n");
+}
+
+static void prv_CmdFwSwap(const char *args)
+{
+    uint8 active = Swap_GetActiveBank();
+    uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
+
+    Debug_Printf("[FWSWAP] active=0x%02X, swapping to 0x%02X\r\n",
+                 (unsigned)active, (unsigned)target);
+    Swap_Status_t ss = Swap_ChangeMode(target);
+    if (ss != SWAP_OK)
+    {
+        Debug_Printf("[FWSWAP] failed: %u\r\n", (unsigned)ss);
+        return;
+    }
+    Debug_Print("[FWSWAP] entry written, resetting...\r\n");
+    Debug_FlushBlocking();
+    Swap_TriggerSystemReset();
+}
+
+/* DebugCli.c */
+static void prv_CmdSotaClear(const char *args)
+{
+    (void)args;
+    if (BootValid_ClearMeta() == BOOTVALID_OK)
+    {
+        Debug_Print("[SOTA] metadata cleared - next boot is a normal boot, no BIST\r\n");
+    }
+    else
+    {
+        Debug_Print("[SOTA] failed to clear metadata (DFlash write error)\r\n");
+    }
+}
+
 /* ================================================================== */
 /*  Command dispatch                                                  */
 /* ================================================================== */
@@ -1399,6 +1550,21 @@ static void prv_Dispatch(const char *cmd)
     else if (((args = prv_StartsWith(cmd, "i2cread")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdI2cRead(args);
 
+    else if (((args = prv_StartsWith(cmd, "otpdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdOtpDump(args);
+
+    else if (((args = prv_StartsWith(cmd, "sotaclear")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSotaClear(args);
+
+    else if (((args = prv_StartsWith(cmd, "fwswap")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdFwSwap(args);
+
+    else if (((args = prv_StartsWith(cmd, "confirm")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdConfirm(args);
+
+    else if (((args = prv_StartsWith(cmd, "pfdump")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPfDump(args);
+        
     else if (((args = prv_StartsWith(cmd, "pin")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdPin();
 
@@ -1413,7 +1579,13 @@ static void prv_Dispatch(const char *cmd)
 
     else if (((args = prv_StartsWith(cmd, "i2ctest")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdI2cTest(args);
-        
+
+    else if (((args = prv_StartsWith(cmd, "pferase")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPfErase(args);
+
+    else if (((args = prv_StartsWith(cmd, "pfwrite")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdPfWrite(args);
+
     else if (prv_StrEq(cmd, "i2cstat"))
         prv_CmdI2cStat();
     else if (((args = prv_StartsWith(cmd, "i2creset")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))

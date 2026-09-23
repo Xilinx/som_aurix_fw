@@ -162,3 +162,20 @@ IfxAsclin_Asc *Debug_GetAscHandle(void)
 {
     return &s_ascHandle;
 }
+
+
+void Debug_FlushBlocking(void)
+{
+    Ifx_TickTime timeout = IfxStm_getTicksFromMilliseconds(BSP_DEFAULT_TIMER, 1000);
+    Ifx_TickTime deadline = IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
+
+    /* 1. CPU1/CPU2 rings -> ASC FIFO (bounded, in case the UART is wedged) */
+    while (((g_dbgRing1.head != g_dbgRing1.tail) || (g_dbgRing2.head != g_dbgRing2.tail))
+           && (IfxStm_get(BSP_DEFAULT_TIMER) < deadline))
+    {
+        Debug_DrainRings();
+    }
+
+    /* 2. ASC software FIFO + hardware shifter: iLLD waits for both */
+    (void)IfxAsclin_Asc_flushTx(&s_ascHandle, timeout);
+}

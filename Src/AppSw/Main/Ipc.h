@@ -152,20 +152,32 @@ typedef struct
     volatile uint32 warnSeq;
     volatile uint32 warnChannel;
     volatile uint32 warnMv;
+    volatile uint8  tlfWwdStat;      /* TLF WWDSTAT register, refreshed by CPU2 */
+    volatile uint8  tlfSysSf;        /* TLF SYSSF (bit1 = WWD failure)          */
+    volatile uint32 tlfLastServiceMs;
+    volatile uint32 tlfMaxGapMs;     /* worst interval between services         */
 } Ipc_FusaStatus_t;
+
+
+typedef struct
+{
+    volatile sint16 apuTempC;     /**< last SB-TSI reading, SYSMON_TEMP_INVALID if none */
+    volatile uint16 flags;        /**< bit0 = throttling (PROCHOT active), spare otherwise */
+    volatile uint32 apuTempMs;    /**< Stm_GetTimeMs() of last reading */
+} Ipc_SysmonStatus_t;
 
 /* ================================================================== */
 /*  Top-level shared memory block (placed in LMU via linker)          */
 /* ================================================================== */
-
 typedef struct
 {
-    Ipc_CmdMailbox_t  cmd;              /**< CPU0 → CPU1 commands */
-    Ipc_PmcStatus_t   pmc;             /**< CPU1 → all: PM status */
-    Ipc_FusaStatus_t  fusa;            /**< CPU2 → all: FuSa status */
-    volatile uint32   cpu1Ready;       /**< Set TRUE by CPU1 when init complete */
-    volatile uint32   cpu2Ready;       /**< Set TRUE by CPU2 when init complete */
-    volatile uint32 sysmonPause;
+    Ipc_CmdMailbox_t   cmd;
+    Ipc_PmcStatus_t    pmc;
+    Ipc_FusaStatus_t   fusa;
+    Ipc_SysmonStatus_t sysmon;         /**< CPU1 → all: SysMonitor status */
+    volatile uint32    cpu1Ready;
+    volatile uint32    cpu2Ready;
+    volatile uint32    sysmonPause;
 } Ipc_SharedMem_t;
 
 typedef struct {
@@ -187,7 +199,8 @@ extern volatile Ipc_SharedMem_t g_ipcShared __attribute__((section(".ipc_shared"
 extern volatile uint32 g_wdtOwner;
 extern volatile Ipc_DbgRing_t g_dbgRing1;   /* CPU1 writes */
 extern volatile Ipc_DbgRing_t g_dbgRing2;   /* CPU2 writes */
-
+extern volatile uint32 g_bootTrace;       /* written by this boot */
+extern volatile uint32 g_prevBootTrace;
 
 /* ================================================================== */
 /*  Public API                                                        */

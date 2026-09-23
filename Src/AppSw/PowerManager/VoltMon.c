@@ -15,6 +15,7 @@
 #include "Uart_Debug.h"
 #include "Stm_Timer.h"
 #include "IfxEvadc_Adc.h"
+#include <string.h>
 
 /* All analog inputs use the same sense topology:
  *
@@ -32,10 +33,10 @@
 #endif
 
 
-#define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
 
 static IfxEvadc_Adc          s_evadc;
 static boolean s_voltMonEnabled = FALSE;
+
 
 /* clang-format off */
 
@@ -129,9 +130,14 @@ static const VoltMon_ChCfg_t s_chTable[] =
  * TC387 has groups 0-11, but we only use 0-4. */
 #define VOLTMON_NUM_GROUPS   5u
 
+#define VOLTMON_FAULT_DEBOUNCE  3u
+
+#define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
+
 #endif
 
 static IfxEvadc_Adc_Group    s_groups[VOLTMON_NUM_GROUPS];
+static uint8 s_faultCount[VOLTMON_CH_COUNT];
 static IfxEvadc_Adc_Channel  s_channels[VOLTMON_CH_COUNT];
 
 /* Last measured values in mV */
@@ -226,9 +232,21 @@ static void prv_CheckThresholds(uint8 chIdx, uint16 measuredMv)
                      ch->name, (unsigned)measuredMv);
     }
 
-    if ((severity >= VOLTMON_FAULT) && (s_faultCb != NULL_PTR))
+    if (severity >= VOLTMON_FAULT)
     {
-        s_faultCb(ch, measuredMv, severity);
+        if (s_faultCount[chIdx] < 255u)
+        {
+            s_faultCount[chIdx]++;
+        }
+        /* act only after VOLTMON_FAULT_DEBOUNCE consecutive out-of-range scans */
+        if ((s_faultCount[chIdx] >= VOLTMON_FAULT_DEBOUNCE) && (s_faultCb != NULL_PTR))
+        {
+            s_faultCb(ch, measuredMv, severity);
+        }
+    }
+    else
+    {
+        s_faultCount[chIdx] = 0u;          /* back in range: restart the count */
     }
 }
 
@@ -299,6 +317,7 @@ void VoltMon_RegisterFaultCb(VoltMon_FaultCb_t cb)
 void VoltMon_Enable(void)
 {
     s_voltMonEnabled = TRUE;
+    memset(s_faultCount, 0, sizeof(s_faultCount));
     Debug_Print("[VMON] Monitoring enabled\r\n");
 }
 
@@ -312,6 +331,7 @@ void VoltMon_Disable(void)
 
 void VoltMon_Scan(void)
 {
+    if (!s_voltMonEnabled) { return; }
     uint8 i;
     uint8 g;
     Ifx_EVADC_G_RES convResult;

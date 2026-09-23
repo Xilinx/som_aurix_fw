@@ -308,12 +308,18 @@ setup:
 	fi
 	@echo "==============================="
 
+UCB ?= tools/ucb_swap_a.hex
+OTP ?= tools/ucb_otp0_en.hex
+
 flash: $(TARGET).elf
 	@if [ -z "$(FLASHER)" ] || [ ! -f "$(FLASHER)" ]; then \
 		echo "[ERROR] AURIXFlasher not found. Run 'make setup' or set FLASHER="; \
 		exit 1; \
 	fi
-	@cp $(TARGET).hex $(HEX_STAGING_DIR)/TC387.hex
-	@echo "[FLASH] Programming..."
+	@python3 tools/gen_ucb_otp0.py enable tools/ucb_otp0_en.hex
+	@python3 tools/merge_ucb.py $(TARGET).hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387.hex
+	@echo "[FLASH] Programming with $(UCB) $(OTP)..."
 	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on -port das
-
+ucbreset:
+	@python3 tools/merge_ucb.py tools/empty.hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387_ucb.hex
+	@$(FLASHER) -hex $(subst TC387.hex,TC387_ucb.hex,$(HEX_WIN)) -erase on -prog on -ver off -ucb on -start on -port das

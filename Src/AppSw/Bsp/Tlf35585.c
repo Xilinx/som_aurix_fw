@@ -70,7 +70,8 @@ static uint32                    s_lastFaultPollMs    = 0u;
 static uint32                    s_wwdServiceCount    = 0u;
 static uint32                    s_wwdMissCount       = 0u;
 static uint8                     s_devctrlShadow      = 0u;
-static uint32                    s_wwdRecoveredCount = 0u;
+static uint32                    s_lastServiceMs = 0u;   
+static uint8                     s_statPoll      = 0u;   
 /* ================================================================== */
 /*  ISRs — must be above prv_SpiInit so they're visible               */
 /* ================================================================== */
@@ -443,7 +444,6 @@ uint8 Tlf35585_GetDevState(void)
 
 void Tlf35585_EarlyInit(void)
 {
-    uint8 val;
 
     prv_SpiInit();
 
@@ -468,6 +468,7 @@ void Tlf35585_EarlyInit(void)
 Tlf35585_Status_t Tlf35585_Init(void)
 {
     Tlf35585_Status_t s;
+    uint8 devstat = 0u;
 
     Debug_Print("[TLF] Init: QSPI2...\r\n");
     s = prv_SpiInit();
@@ -490,6 +491,37 @@ Tlf35585_Status_t Tlf35585_Init(void)
         if (sysfail != 0u) Tlf35585_WriteReg(TLF_RW_SYSFAIL, TLF_CLEAR_STATUS);
     }
 
+    Tlf35585_ReadReg(TLF_R_DEVSTAT, &devstat);
+    if ((devstat & TLF_DEVSTAT_STATE_MASK) == TLF_STATE_NORMAL)
+    {
+        /* Software reset: TLF stayed in NORMAL with WWD running.
+         * Protected registers are already configured and locked.
+         * Skip the full init; just clear flags and take over servicing. */
+        Debug_Print("[TLF] Warm init: already in NORMAL, skipping protected config\r\n");
+
+        Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
+        Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
+
+        /* Immediate WWD service — the window has been free-running
+         * since the reset; service now to reset the counter. */
+        {
+            uint8 wwdCmd = 0u;
+            Tlf35585_ReadReg(TLF_RW_WWDSCMD, &wwdCmd);
+            Tlf35585_WriteReg(TLF_RW_WWDSCMD,
+                ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
+        }
+
+        /* Clear any WWD errors that accumulated between the reset
+         * and this point (CPU2 wasn't servicing yet). */
+        Tlf35585_WriteReg(TLF_R_WWDSTAT, TLF_CLEAR_STATUS);
+
+        s_wdtLastServiceMs = Stm_GetTimeMs();
+        s_lastFaultPollMs  = Stm_GetTimeMs();
+        s_initialised      = TRUE;
+        Tlf35585_LogEvent(TLF_EVT_INIT);
+        Debug_Print("[TLF] Warm init complete\r\n");
+        return TLF_OK;
+    }
     /* ---- Clear stale flags so post-lock checks see fresh state ---- */
     Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
     Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
@@ -559,6 +591,10 @@ Tlf35585_Status_t Tlf35585_Init(void)
 
 void Tlf35585_ServiceWdt(void)
 {
+    if (IfxCpu_getCoreIndex() != g_wdtOwner)
+    {
+        return;
+    }
     uint32 nowMs, elapsedMs;
     uint8  wwdCmd;
 
@@ -589,7 +625,22 @@ void Tlf35585_ServiceWdt(void)
             ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
         prv_ToggleWdi();
     }
-
+    {
+        uint32 now = Stm_GetTimeMs();
+        uint32 gap = now - s_lastServiceMs;
+        if ((s_lastServiceMs != 0u) && (gap > g_ipcShared.fusa.tlfMaxGapMs))
+        {
+            g_ipcShared.fusa.tlfMaxGapMs = gap;
+        }
+        s_lastServiceMs = now;
+        g_ipcShared.fusa.tlfLastServiceMs = now;
+    }
+    if ((++s_statPoll & 0x0Fu) == 0u)
+    {
+        uint8 v;
+        if (Tlf35585_ReadReg(TLF_R_WWDSTAT, &v) == TLF_OK) { g_ipcShared.fusa.tlfWwdStat = v; }
+        if (Tlf35585_ReadReg(TLF_RW_SYSSF,   &v) == TLF_OK) { g_ipcShared.fusa.tlfSysSf   = v; }
+    }
     /* ---- Heartbeat: INDEPENDENT of service outcome ---------------- */
     {
         static uint32 s_lastStatMs = 0u;

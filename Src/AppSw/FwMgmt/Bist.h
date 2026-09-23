@@ -93,4 +93,9 @@ void Bist_GetStats(Bist_Stats_t *pStats);
  */
 void Bist_DumpStatus(void);
 
+/**
+ * @brief  Skips BIST Validation
+ */
+void Bist_SetSkipped(void);
+
 #endif /* BIST_H */

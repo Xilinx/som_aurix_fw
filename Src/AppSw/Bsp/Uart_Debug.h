@@ -13,7 +13,7 @@
 #include "IfxAsclin_Asc.h"
 
 /** Baud rate for the debug UART. */
-#define UART_DEBUG_BAUD     115200u
+#define UART_DEBUG_BAUD     921600u
 
 /**
  * @brief Initialise ASCLIN0 for 115200 8N1 on P14.0/P14.1.
@@ -31,6 +31,11 @@ void Debug_Print(const char *str);
 void Debug_Printf(const char *fmt, ...);
 
 void Debug_DrainRings(void);
+
+void Debug_DrainRings(void);
+
+void Debug_FlushBlocking(void);
+
 
 IfxAsclin_Asc *Debug_GetAscHandle(void);
 

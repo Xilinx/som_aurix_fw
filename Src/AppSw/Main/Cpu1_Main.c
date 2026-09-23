@@ -83,8 +83,11 @@ static void prv_CheckFusaFaults(void)
     {
         case IPC_FAULT_UV:
         case IPC_FAULT_OV:
-            if (PowerManager_GetState() == PM_STATE_ON)
+            if ((PowerManager_GetState() == PM_STATE_ON) &&
+                !PowerManager_TransitionPending())          /* SLP_S3/S5 or APU_RESET_L active */
+            {
                 PowerManager_RequestForcedOff();
+            }
             break;
         case IPC_FAULT_PMIC:
         case IPC_FAULT_PMIC_SS:
@@ -143,8 +146,8 @@ void core1_main(void)
         uint32 loopStartMs = Stm_GetTimeMs();
 
         prv_ProcessCommands();
-        prv_CheckFusaFaults();
         PowerManager_Run();
+        prv_CheckFusaFaults();
 
 #if !defined(TARGET_EVAL_BOARD)
         UsbPd_Hpd_Run();

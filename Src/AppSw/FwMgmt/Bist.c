@@ -222,3 +222,8 @@ void Bist_DumpStatus(void)
                      (s_stats.lastBistResult == BIST_OK) ? "PASS" : "FAIL");
     }
 }
+
+void Bist_SetSkipped(void)
+{
+    s_stats.postResult = BIST_ERR_NO_META;
+}

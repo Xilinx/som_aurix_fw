@@ -25,6 +25,7 @@ import struct
 import sys
 import time
 import os
+from intelhex import IntelHex
 
 try:
     import serial
@@ -32,6 +33,8 @@ except ImportError:
     print("ERROR: pyserial not installed.  Run: pip install pyserial", file=sys.stderr)
     sys.exit(1)
 
+BANK_WINDOW = 0x400000           # 4 MB bank
+PF_MASK     = 0x0FFFFFFF         # 0x8000_0000 and 0xA000_0000 alias the same PFlash
 
 # ---------------------------------------------------------------------------
 #  Protocol constants — must match FwUpdate.h
@@ -142,6 +145,34 @@ def wait_response_cli(ser, timeout, cli_mode):
     else:
         return wait_response(ser, timeout)
 
+        
+def load_image(filepath: str) -> bytes:
+    if filepath.lower().endswith((".hex", ".ihex")):
+        ih = IntelHex(filepath)
+        data = {}
+        skipped = 0
+        for addr in ih.addresses():
+            seg = addr & 0xF0000000
+            if seg not in (0x80000000, 0xA0000000):
+                skipped += 1                       # UCB/BMHD records etc.
+                continue
+            off = addr & PF_MASK
+            if off >= BANK_WINDOW:
+                skipped += 1                       # PF4 and beyond: not part of the swap group
+                continue
+            data[off] = ih[addr]
+        if not data:
+            raise ValueError("no PFlash data in hex")
+        end = max(data) + 1
+        img = bytearray(b"\xFF" * end)             # gaps -> erased-pattern fill
+        for off, val in data.items():
+            img[off] = val
+        print(f"  HEX -> image: {len(data)} data bytes, {end} bytes span, "
+              f"{skipped} records outside bank skipped", file=sys.stderr)
+        return bytes(img)
+    with open(filepath, "rb") as f:
+        return f.read()
+
 # ---------------------------------------------------------------------------
 #  Progress bar
 # ---------------------------------------------------------------------------
@@ -191,23 +222,27 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
         print(f"ERROR: File not found: {filepath}", file=sys.stderr)
         return False
 
-    with open(filepath, "rb") as f:
-        image = f.read()
+    try:
+        image = load_image(filepath)
+    except Exception as e:
+        print(f"ERROR: Cannot load image: {e}", file=sys.stderr)
+        return False
 
-    image_size = len(image)
-    if image_size == 0:
+    if len(image) == 0:
         print("ERROR: Image file is empty", file=sys.stderr)
         return False
 
-    # Pad to CHUNK_SIZE boundary
-    pad_len = (CHUNK_SIZE - (image_size % CHUNK_SIZE)) % CHUNK_SIZE
+    # Pad to CHUNK_SIZE boundary; size and CRC describe the padded image,
+    # which is exactly what the AURIX writes and later BIST-checks.
+    pad_len = (CHUNK_SIZE - (len(image) % CHUNK_SIZE)) % CHUNK_SIZE
     if pad_len > 0:
-        image += b"\xFF" * pad_len   # 0xFF = erased PFlash state
+        image += b"\xFF" * pad_len
         if verbose:
             print(f"  Padded {pad_len} bytes to {len(image)} (0x{len(image):X})", file=sys.stderr)
 
-    total_chunks = len(image) // CHUNK_SIZE
-    image_crc = crc32(image)
+    image_size   = len(image)
+    total_chunks = image_size // CHUNK_SIZE
+    image_crc    = crc32(image)
 
     print(f"Image:  {filepath}", file=sys.stderr)
     print(f"  Size: {image_size} bytes ({image_size / 1024:.1f} KB)", file=sys.stderr)
@@ -288,8 +323,6 @@ def upload_firmware(port: str, baud: int, filepath: str, target_bank: int,
         chunk_crc = crc32(chunk)
 
         frame = struct.pack("<II", seq, chunk_crc) + chunk
-
-        time.sleep(0.005) 
 
         attempt = 0
         while attempt <= retries:

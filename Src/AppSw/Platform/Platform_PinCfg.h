@@ -88,6 +88,7 @@ extern const AppPin_t PIN_DP3_HPD;              /* P13.3 GPIO Out */
 extern const AppPin_t PIN_DEBUG_TXD;            /* P14.0 ASCLIN0 TX */
 extern const AppPin_t PIN_DEBUG_RXD;            /* P14.1 ASCLIN0 RX */
 extern const AppPin_t PIN_UART_MUX_SEL;         /* P14.6 GPIO Out   */
+extern const AppPin_t PIN_WD_BYPASS_ENABLE;         /* P14.7 GPIO Out   */
 
 /* ==========================================================================
  * APU State Control (Port 15)
