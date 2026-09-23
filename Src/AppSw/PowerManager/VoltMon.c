@@ -26,12 +26,6 @@
  *
  * Source: Sapphire SoM schematic, U54F ADC Groups sheet.
  */
-#define UV_WARN(nom)    ((uint16)((nom) * 92u / 100u))
-#define UV_FAULT(nom)   ((uint16)((nom) * 90u / 100u))
-#define OV_WARN(nom)    ((uint16)((nom) * 108u / 100u))
-#define OV_FAULT(nom)   ((uint16)((nom) * 110u / 100u))
-
-
 
 #ifndef IFXEVADC_QUEUE_REFILL
 #define IFXEVADC_QUEUE_REFILL  (1u)
@@ -76,45 +70,57 @@ static const VoltMon_ChCfg_t s_chTable[] =
 
 #else /* TARGET_GP_SOM */
 
+/*
+ * Per-rail channel table.  Each row is a VoltMon_ChCfg_t:
+ *
+ *   { name, evadcGroup, evadcChannel, resultReg, nominalMv,
+ *     uvWarnMv, uvFaultMv, ovWarnMv, ovFaultMv, dividerScale }
+ *
+ *   name          - rail name for logging
+ *   evadcGroup    - EVADC group index (0-4)
+ *   evadcChannel  - channel within group (0-15)
+ *   resultReg     - result register index
+ *   nominalMv     - nominal rail voltage, mV (reference only, not used
+ *                   to derive the thresholds below — informational)
+ *   uvWarnMv      - undervoltage warning threshold, mV
+ *   uvFaultMv     - undervoltage fault threshold, mV
+ *   ovWarnMv      - overvoltage warning threshold, mV
+ *   ovFaultMv     - overvoltage fault threshold, mV
+ *   dividerScale  - sense divider scale x1000 (e.g. 2:1 divider = 2000)
+ *
+ * UV/OV thresholds are independent literals per rail — update each field
+ * directly; there is no relationship enforced between nominalMv and the
+ * threshold columns.
+ */
 static const VoltMon_ChCfg_t s_chTable[] =
 {
     /* ---- Group 0: VID rails (S0) ---------------------------------------- */
-//  { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR",       0u, 0u, 0u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
-    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
-    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1220u), OV_FAULT(1240u), 1000u },
-    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(600u),  UV_FAULT(550u),  OV_WARN(1020u), OV_FAULT(1090u), 1000u },
+    { "VDDCR",       0u, 0u, 0u, 1100u,    0u,   0u,  1695u, 1700u, 1000u },
+    { "VDDCR_CCD",   0u, 1u, 1u, 1100u,    0u,   0u,  1695u, 1700u, 1000u },
+    { "VDDCR_SOC",   0u, 2u, 2u, 1000u,    0u,   0u,  1190u, 1350u, 1000u },
+    { "VDDCR_SR",    0u, 3u, 3u,  950u,  600u, 550u,  1020u, 1070u, 1000u },
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
-//  { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
-    { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_A",  1u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_A",    1u, 0u, 0u,  780u,  618u, 568u,   997u, 1047u, 1000u },
+    { "VDD_MEMQ_A",   1u, 1u, 1u,  500u,  470u, 420u,   570u,  620u, 1000u },
+    { "VDDIO_MEM_A",  1u, 2u, 2u, 1050u, 1010u, 960u,  1120u, 1170u, 1000u },
 
     /* ---- Group 2: Memory channel B (S0) --------------------------------- */
-//  { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
-    { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_B",  2u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_B",    2u, 0u, 0u,  780u,  618u, 568u,   997u, 1047u, 1000u },
+    { "VDD_MEMQ_B",   2u, 1u, 1u,  500u,  470u, 420u,   570u,  620u, 1000u },
+    { "VDDIO_MEM_B",  2u, 2u, 2u, 1050u, 1010u, 960u,  1120u, 1170u, 1000u },
 
     /* ---- Group 3: Misc / S5 rails --------------------------------------- */
-    { "VDD_MISC",     3u, 0u, 0u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
-    { "VDD_MISC_S5",  3u, 1u, 1u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
-    { "VDD_1V2",      3u, 2u, 2u, 1200u, UV_WARN(1200u), UV_FAULT(1200u), OV_WARN(1200u), OV_FAULT(1200u), 1000u },
-    { "VDD_1V2_S5",   3u, 3u, 3u, 1200u, UV_WARN(1200u), UV_FAULT(1200u), OV_WARN(1200u), OV_FAULT(1200u), 1000u },
-    { "VDD_1V8",      3u, 4u, 4u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
-    { "VDD_1V8_S5",   3u, 5u, 5u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+    { "VDD_MISC",     3u, 0u, 0u,  750u,  675u, 625u,   825u,  875u, 1000u },
+    { "VDD_MISC_S5",  3u, 1u, 1u,  750u,  675u, 625u,   825u,  875u, 1000u },
+    { "VDD_1V2",      3u, 2u, 2u, 1200u, 1164u, 1114u, 1236u, 1286u, 1000u },
+    { "VDD_1V2_S5",   3u, 3u, 3u, 1200u, 1164u, 1114u, 1236u, 1286u, 1000u },
+    { "VDD_1V8",      3u, 4u, 4u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
+    { "VDD_1V8_S5",   3u, 5u, 5u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
 
     /* ---- Group 4: I/O rails --------------------------------------------- */
-    { "VDDIO_3V3",    4u, 0u, 0u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_3V3_S5", 4u, 1u, 1u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-//  { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
-//  { "VDDIO_MEM_VAA",4u, 3u, 3u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+    { "VDDIO_3V3",    4u, 0u, 0u, 3300u, 3135u, 3085u, 3465u, 3515u, 1000u },
+    { "VDDIO_3V3_S5", 4u, 1u, 1u, 3300u, 3135u, 3085u, 3465u, 3515u, 1000u },
+    { "VDDIO_AUDIO",  4u, 2u, 2u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
 };
 /* clang-format on */
 
