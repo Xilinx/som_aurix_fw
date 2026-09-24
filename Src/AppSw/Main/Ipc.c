@@ -99,6 +99,8 @@ void Ipc_Init(void)
         g_dbgRing1.tail = 0u;
         g_dbgRing2.head = 0u;  
         g_dbgRing2.tail = 0u;
+        g_ipcShared.voltMon.reqSeq = 0u;
+        g_ipcShared.voltMon.ackSeq = 0u;
         __dsync();
     }
 }

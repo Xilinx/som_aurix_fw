@@ -521,7 +521,7 @@ static void prv_GoToS5(void)
     prv_DeassertPwrgd();
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
-    VoltMon_Disable();
+    VoltMon_DisableNoWait();
 #if (FUSA_FEATURE_ENABLE == 1u)
     ComHpcWdt_Disable();
 #endif
@@ -572,7 +572,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
     prv_DeassertPwrgd();
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
-    VoltMon_Disable();
+    VoltMon_DisableNoWait();
     ComHpcWdt_Disable();     /* WDT could also fire during rail-down */
     prv_DisableAllRails();
 
@@ -707,7 +707,7 @@ static void prv_EmergencyShutdown(PM_ResetCause_t cause)
     prv_DeassertPwrgd();
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
-    VoltMon_Disable();
+    VoltMon_DisableNoWait();
     ComHpcWdt_Disable();
     prv_DisableAllRails();
     prv_SetState(PM_STATE_OFF);

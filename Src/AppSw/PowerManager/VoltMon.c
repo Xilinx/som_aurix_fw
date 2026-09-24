@@ -249,7 +249,7 @@ static void prv_ClearSamples(void)
 
     for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
     {
-        s_lastMv[i] = 0u;
+        s_lastMv[i]     = 0u;
     }
 #if (VOLTMON_SMA_ENABLE == 1u)
     for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
@@ -326,18 +326,23 @@ void VoltMon_Disable(void)
 {
     s_voltMonEnabled = FALSE;
 
-    /* Block (bounded) until CPU2 confirms it has actually stopped
-     * scanning before returning — so PowerManager doesn't start
-     * disabling rail groups while CPU2 is mid-conversion. */
+    /* Bounded wait for CPU2 to confirm it has stopped and cleared its cache.
+     * CPU2 does the clearing itself, so a timeout here can't race a scan. */
     if (!Ipc_RequestVoltMonStopWait(VOLTMON_STOP_ACK_TIMEOUT_MS))
     {
         Debug_Print("[VMON] WARN: CPU2 did not ack scan stop\r\n");
     }
-
-    /* Safe now — CPU2 has acked, so no in-flight scan can clobber this. */
-    prv_ClearSamples();
-
     Debug_Print("[VMON] Monitoring disabled\r\n");
+}
+
+/* Emergency paths (PG fault, VIN loss, THERMTRIP): request the stop but
+ * don't wait - rails must come down immediately. CPU2 clears and acks
+ * on its next pass. */
+void VoltMon_DisableNoWait(void)
+{
+    s_voltMonEnabled = FALSE;
+    g_ipcShared.voltMon.reqSeq++;
+    __dsync();
 }
 
 
@@ -345,9 +350,13 @@ void VoltMon_Disable(void)
 void VoltMon_Scan(void)
 {
     if (!s_initialised || !s_voltMonEnabled ||
-    (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
+        (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
     {
-        Ipc_AckVoltMonStop();
+        if (g_ipcShared.voltMon.ackSeq != g_ipcShared.voltMon.reqSeq)
+        {
+            prv_ClearSamples();        /* owner core clears its own data */
+            Ipc_AckVoltMonStop();
+        }
         return;
     }
 

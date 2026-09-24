@@ -122,6 +122,12 @@ void VoltMon_SetSmaTaps(uint8 taps);
  */
 boolean VoltMon_AnyFaultActive(void);
 
+
+/**
+ * @brief Disables with no timeout
+ */
+void VoltMon_DisableNoWait(void);
+
 #if defined(TARGET_EVAL_BOARD)
 void VoltMon_PrintReport(void);
 #endif
