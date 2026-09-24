@@ -33,6 +33,10 @@
 #define IFXEVADC_QUEUE_REFILL  (1u)
 #endif
 
+/* Bounded wait for CPU2 to ack a scan-stop request before PowerManager
+ * (CPU1) proceeds with rail teardown — must never block indefinitely. */
+#define VOLTMON_STOP_ACK_TIMEOUT_MS   50u
+
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
 
@@ -234,6 +238,28 @@ static void prv_CheckThresholds(uint8 chIdx, uint16 measuredMv)
     }
 }
 
+/* ---- Sample state reset -------------------------------------------------- */
+
+/* Clears cached readings and SMA filter history so a stale/latched value
+ * can't be reported as an active fault while scanning is gated off, and
+ * so the filter doesn't blend post-restart samples with pre-outage ones. */
+static void prv_ClearSamples(void)
+{
+    uint8 i;
+
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        s_lastMv[i] = 0u;
+    }
+#if (VOLTMON_SMA_ENABLE == 1u)
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        s_smaFilter[i].idx   = 0u;
+        s_smaFilter[i].count = 0u;
+    }
+#endif
+}
+
 /* ---- Public API --------------------------------------------------------- */
 
 void VoltMon_Init(void)
@@ -278,16 +304,8 @@ void VoltMon_Init(void)
         chCfg.resultRegister = (IfxEvadc_ChannelResult)s_chTable[i].resultReg;
 
         IfxEvadc_Adc_initChannel(&s_channels[i], &chCfg);
-
-        s_lastMv[i] = 0u;
     }
-#if (VOLTMON_SMA_ENABLE == 1u)
-    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
-    {
-        s_smaFilter[i].idx   = 0u;
-        s_smaFilter[i].count = 0u;
-    }
-#endif
+    prv_ClearSamples();
     s_initialised = TRUE;
     Debug_Printf("[VMON] Init complete: %u channels across %u groups.\r\n",
                  (unsigned)VOLTMON_CH_COUNT, (unsigned)VOLTMON_NUM_GROUPS);
@@ -307,6 +325,18 @@ void VoltMon_Enable(void)
 void VoltMon_Disable(void)
 {
     s_voltMonEnabled = FALSE;
+
+    /* Block (bounded) until CPU2 confirms it has actually stopped
+     * scanning before returning — so PowerManager doesn't start
+     * disabling rail groups while CPU2 is mid-conversion. */
+    if (!Ipc_RequestVoltMonStopWait(VOLTMON_STOP_ACK_TIMEOUT_MS))
+    {
+        Debug_Print("[VMON] WARN: CPU2 did not ack scan stop\r\n");
+    }
+
+    /* Safe now — CPU2 has acked, so no in-flight scan can clobber this. */
+    prv_ClearSamples();
+
     Debug_Print("[VMON] Monitoring disabled\r\n");
 }
 
@@ -317,6 +347,7 @@ void VoltMon_Scan(void)
     if (!s_initialised || !s_voltMonEnabled ||
     (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
     {
+        Ipc_AckVoltMonStop();
         return;
     }
 

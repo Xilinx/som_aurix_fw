@@ -205,3 +205,28 @@ void Ipc_SignalWarning(uint32 channel, uint32 mv)
     g_ipcShared.fusa.warnSeq++;
     __dsync();
 }
+
+boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs)
+{
+    uint32 startMs;
+
+    if (!g_ipcShared.cpu2Ready)
+        return FALSE;              /* consumer not up — nothing to wait for */
+
+    g_ipcShared.voltMon.reqSeq++;
+    __dsync();
+
+    startMs = Stm_GetTimeMs();
+    while (g_ipcShared.voltMon.ackSeq != g_ipcShared.voltMon.reqSeq)
+    {
+        if ((Stm_GetTimeMs() - startMs) > timeoutMs)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+void Ipc_AckVoltMonStop(void)              /* CPU2 only */
+{
+    g_ipcShared.voltMon.ackSeq = g_ipcShared.voltMon.reqSeq;
+    __dsync();
+}

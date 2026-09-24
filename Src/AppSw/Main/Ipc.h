@@ -101,6 +101,23 @@ typedef struct
 } Ipc_CmdMailbox_t;
 
 /* ================================================================== */
+/*  Shared mailbox: CPU1 → CPU2 (VoltMon scan-stop handshake)         */
+/*  Writer (reqSeq): CPU1 only.  Writer (ackSeq): CPU2 only.          */
+/*                                                                    */
+/*  CPU1 bumps reqSeq before tearing down rail groups; CPU2's         */
+/*  VoltMon_Scan() sets ackSeq = reqSeq the first iteration it        */
+/*  observes scanning is gated off.  Since VoltMon_Scan() runs to     */
+/*  completion synchronously, that ack guarantees no conversion is    */
+/*  left in flight and no further scan will occur until re-enabled.   */
+/* ================================================================== */
+
+typedef struct
+{
+    volatile uint32 reqSeq;     /**< Incremented by CPU1 to request a stop */
+    volatile uint32 ackSeq;     /**< Set to reqSeq by CPU2 once stopped */
+} Ipc_VoltMonCtrl_t;
+
+/* ================================================================== */
 /*  Shared mailbox: CPU1 → all (PM status)                            */
 /*  Writer: CPU1 only.  Readers: CPU0, CPU2.                          */
 /* ================================================================== */
@@ -175,6 +192,7 @@ typedef struct
     Ipc_PmcStatus_t    pmc;
     Ipc_FusaStatus_t   fusa;
     Ipc_SysmonStatus_t sysmon;         /**< CPU1 → all: SysMonitor status */
+    Ipc_VoltMonCtrl_t  voltMon;        /**< CPU1 <-> CPU2: scan-stop handshake */
     volatile uint32    cpu1Ready;
     volatile uint32    cpu2Ready;
     volatile uint32    sysmonPause;
@@ -281,5 +299,21 @@ void Ipc_UpdateTlfStatus(uint32 devstat, uint32 syssf, uint32 wdstat,
 void Ipc_ClearFaultActive(void);
 
 void Ipc_SignalWarning(uint32 channel, uint32 mv);
+
+/**
+ * @brief  CPU1: request CPU2 stop VoltMon scanning and block (bounded)
+ *         until CPU2 acknowledges no scan is in flight or left running.
+ *
+ * @param  timeoutMs  Max time to wait for the acknowledgment.
+ * @return TRUE if acknowledged within timeoutMs, FALSE on timeout
+ *         (caller must not treat FALSE as a reason to block indefinitely).
+ */
+boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs);
+
+/**
+ * @brief  CPU2: acknowledge the current VoltMon scan-stop request.
+ *         Called from VoltMon_Scan() whenever scanning is gated off.
+ */
+void Ipc_AckVoltMonStop(void);
 
 #endif /* IPC_H */
