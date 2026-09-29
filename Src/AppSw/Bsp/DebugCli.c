@@ -105,6 +105,7 @@ static boolean prv_StrEq(const char *a, const char *b)
     return (*a == *b);
 }
 
+
 /** Check if s starts with prefix, return pointer past prefix or NULL */
 static const char *prv_StartsWith(const char *s, const char *prefix)
 {
@@ -1467,11 +1468,24 @@ static void prv_CmdPfDump(const char *args)
 
 static void prv_CmdFwSwap(const char *args)
 {
+    DFlash_SotaMeta_t meta;
     uint8 active = Swap_GetActiveBank();
     uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
 
-    Debug_Printf("[FWSWAP] active=0x%02X, swapping to 0x%02X\r\n",
-                 (unsigned)active, (unsigned)target);
+    if (active == 0xFFu) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
+
+    if ((DFlash_ReadSotaMeta(&meta) != DFLASH_OK) || (meta.magic != DFLASH_SOTA_MAGIC) ||
+        (meta.pendingUpdate != 1u) || ((uint8)meta.activeBank != target))
+    {
+        Debug_Print("[FWSWAP] no verified update staged in the other bank - refusing\r\n");
+        return;
+    }
+    /* inactive bank is always readable at 0xA0600000 */
+    if (FwUpdate_CrcFlash(PFLASH_BANK_B_BASE, meta.reserved0) != meta.imageCrc)
+    {
+        Debug_Print("[FWSWAP] staged image CRC mismatch - refusing\r\n");
+        return;
+    }
     Swap_Status_t ss = Swap_ChangeMode(target);
     if (ss != SWAP_OK)
     {

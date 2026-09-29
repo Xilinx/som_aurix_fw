@@ -27,7 +27,6 @@ extern IfxCpu_syncEvent g_cpuSyncEvent;
 
 void core3_main(void)
 {
-    *(volatile uint32 *)0xB0050008u = 0xC3C3C3C3u;
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxCpu_emitEvent(&g_cpuSyncEvent);
     while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}

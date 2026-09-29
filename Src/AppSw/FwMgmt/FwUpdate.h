@@ -116,4 +116,10 @@ FwUpdate_Error_t FwUpdate_GetError(void);
  */
 void FwUpdate_Abort(void);
 
+/**
+ * @brief  Updates CRC computation for Flash
+ */
+uint32 FwUpdate_CrcFlash(uint32 baseAddr, uint32 size);
+
+
 #endif /* FWUPDATE_H */

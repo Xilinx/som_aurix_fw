@@ -218,6 +218,7 @@ static void prv_HandleHeader(void)
     Debug_Print("[FWUP] Erasing target bank...\r\n");
 
     prv_WdBypass(TRUE);
+    (void)BootValid_ClearMeta();
     PFlash_Status_t ps = PFlash_EraseBank(s_writeBase);
     if (ps != PFLASH_OK)
     {
@@ -455,4 +456,18 @@ void FwUpdate_Abort(void)
     s_state     = FWUPDATE_IDLE;
     s_lastError = FWUPDATE_ERR_NONE;
     prv_WdBypass(FALSE);
+}
+
+uint32 FwUpdate_CrcFlash(uint32 baseAddr, uint32 size)
+{
+    uint32 crc = Crc32_Init();
+    uint32 off = 0u;
+
+    while (off < size)
+    {
+        uint32 n = (size - off > 4096u) ? 4096u : (size - off);
+        crc = Crc32_Update(crc, (const uint8 *)(baseAddr + off), n);
+        off += n;
+    }
+    return Crc32_Final(crc);
 }

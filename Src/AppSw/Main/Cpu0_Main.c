@@ -43,7 +43,7 @@
 #include "SysMonitor.h"
 #include "SelfTest.h"
 
-
+#define SOTA_TEST_NO_COMMIT 0
 
 /* ================================================================== */
 /*  Multicore sync                                                    */
@@ -193,7 +193,9 @@ int core0_main(void)
         Debug_DrainRings();
         DebugCli_Run();
         DebugCli_Poll();
+    #if !defined(SOTA_TEST_NO_COMMIT)
         prv_CommitSotaOnce();
+    #endif
         prv_ForwardVoltageFaults();
         prv_ForwardVoltageWarnings();
         prv_ForwardTlfEvents();
