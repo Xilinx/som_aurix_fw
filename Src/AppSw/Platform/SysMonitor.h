@@ -1,28 +1,4 @@
 /**
- * Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
  * @file    SysMonitor.h
  * @brief   Platform signal monitoring and default drive interface.
  *
@@ -44,6 +20,7 @@
 #define SYS_MONITOR_H
 
 #include "Ifx_Types.h"
+#include "AppPin.h"
 
 
 #define SYSMON_POLL_INTERVAL_MS     5u   /* main-loop poll rate for PROCHOT# */
@@ -64,6 +41,7 @@
 #define SBTSI_REG_CPU_TEMP_DEC  0x10u
 
 #define SYSMON_I2C_FAIL_LIMIT   5u
+#define SYSMON_I2C_FAIL_ASSERTS_PROCHOT   0u
 
 #define SYSMON_PROCHOT_CLEAR_POLLS   3u
 
@@ -104,7 +82,7 @@ void SysMonitor_DeassertCaterr(void);
 typedef void (*SysMonitor_ShutdownCb_t)(void);
 void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
 
-#define SYSMON_CARRIER_HOT_ENABLE   0u
+#define SYSMON_CARRIER_HOT_ENABLE   1u
 
 #if (SYSMON_CARRIER_HOT_ENABLE == 1u)
 #define SYSMON_CARRIER_DWELL_MS     1000u
@@ -115,5 +93,7 @@ void SysMonitor_RegisterShutdownCb(SysMonitor_ShutdownCb_t cb);
  *        (thermal throttle or carrier hot).
  */
 boolean SysMonitor_IsThrottling(void);
+
+boolean prv_ReadPin(const AppPin_t *pin);
 
 #endif /* SYS_MONITOR_H */

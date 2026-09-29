@@ -1,28 +1,4 @@
 /**
- * Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
  * @file    Platform_PinCfg.c
  * @brief   AppPin_t constant definitions for all board GPIO signals.
  *
@@ -109,10 +85,10 @@ const AppPin_t PIN_APU_PROCHOT_L        = {11u, 10u};  /* P11.10 */
 const AppPin_t PIN_APML_ALERT           = {11u, 11u};  /* P11.11 */
 
 /* TLF35585 PMIC GPIO (directly toggle — no physical TLF on eval kit) */
-const AppPin_t PIN_TLF_ERR              = {14u,  2u};  /* P14.2 */
-const AppPin_t PIN_TLF_SS               = {14u,  3u};  /* P14.3 */
-const AppPin_t PIN_TLF_WAKE             = {14u,  4u};  /* P14.4 */
-const AppPin_t PIN_TLF_WDI              = {14u,  5u};  /* P14.5 */
+const AppPin_t PIN_TLF_WDI              = {14u,  3u};  /* P14.3 — WDI input to TLF    */
+const AppPin_t PIN_TLF_ERR              = {33u,  8u};  /* P33.8 — SMU_FSP0 / ERR      */
+const AppPin_t PIN_TLF_SS               = {33u,  9u};  /* P33.9 — Safe State 1 output */
+const AppPin_t PIN_TLF_WAKE             = {33u, 10u};  /* P33.10 — Wake/Inhibit       */
 
 /* Fan Control */
 const AppPin_t PIN_FAN_TACHIN           = {11u, 12u};  /* P11.12 */
@@ -223,6 +199,7 @@ const AppPin_t PIN_DP3_HPD            = {13u,  3u};
 const AppPin_t PIN_DEBUG_TXD          = {14u,  0u};
 const AppPin_t PIN_DEBUG_RXD          = {14u,  1u};
 const AppPin_t PIN_UART_MUX_SEL       = {14u,  6u};
+const AppPin_t PIN_WD_BYPASS_ENABLE   = {14u,  7u};
 
 /* ==========================================================================
  * APU State Control (Port 15)

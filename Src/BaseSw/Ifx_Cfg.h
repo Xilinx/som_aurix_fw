@@ -18,12 +18,21 @@
 #define DEVICE_TC38X    1
 #endif
 
-#ifndef IFX_PIN_PACKAGE_516
-#if defined(TARGET_EVAL_BOARD)
+#ifndef IFX_PIN_PACKAGE_LFBGA292
 #define IFX_PIN_PACKAGE_LFBGA292    1
-#else
-#define IFX_PIN_PACKAGE_516    1
 #endif
+
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE0
+#define IFX_CFG_SSW_ENABLE_TRICORE0   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE1
+#define IFX_CFG_SSW_ENABLE_TRICORE1   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE2
+#define IFX_CFG_SSW_ENABLE_TRICORE2   (1U)
+#endif
+#ifndef IFX_CFG_SSW_ENABLE_TRICORE3
+#define IFX_CFG_SSW_ENABLE_TRICORE3   (1U)
 #endif
 
 /* ---- External oscillator ------------------------------------------------ */

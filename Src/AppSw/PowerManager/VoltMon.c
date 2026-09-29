@@ -1,28 +1,4 @@
 /**
- * Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
  * @file    VoltMon.c
  * @brief   EVADC voltage monitoring — scan, threshold check, fault report.
  *
@@ -38,6 +14,8 @@
 #include "VoltMon.h"
 #include "Uart_Debug.h"
 #include "Stm_Timer.h"
+#include "PowerManager.h"
+#include "Ipc.h"
 #include "IfxEvadc_Adc.h"
 
 /* All analog inputs use the same sense topology:
@@ -50,16 +28,14 @@
  *
  * Source: Sapphire SoM schematic, U54F ADC Groups sheet.
  */
-#define UV_WARN(nom)    ((uint16)((nom) * 92u / 100u))
-#define UV_FAULT(nom)   ((uint16)((nom) * 90u / 100u))
-#define OV_WARN(nom)    ((uint16)((nom) * 108u / 100u))
-#define OV_FAULT(nom)   ((uint16)((nom) * 110u / 100u))
-
-
 
 #ifndef IFXEVADC_QUEUE_REFILL
 #define IFXEVADC_QUEUE_REFILL  (1u)
 #endif
+
+/* Bounded wait for CPU2 to ack a scan-stop request before PowerManager
+ * (CPU1) proceeds with rail teardown — must never block indefinitely. */
+#define VOLTMON_STOP_ACK_TIMEOUT_MS   50u
 
 
 #define VOLTMON_CH_COUNT  (sizeof(s_chTable) / sizeof(s_chTable[0]))
@@ -100,45 +76,57 @@ static const VoltMon_ChCfg_t s_chTable[] =
 
 #else /* TARGET_GP_SOM */
 
+/*
+ * Per-rail channel table.  Each row is a VoltMon_ChCfg_t:
+ *
+ *   { name, evadcGroup, evadcChannel, resultReg, nominalMv,
+ *     uvWarnMv, uvFaultMv, ovWarnMv, ovFaultMv, dividerScale }
+ *
+ *   name          - rail name for logging
+ *   evadcGroup    - EVADC group index (0-4)
+ *   evadcChannel  - channel within group (0-15)
+ *   resultReg     - result register index
+ *   nominalMv     - nominal rail voltage, mV (reference only, not used
+ *                   to derive the thresholds below — informational)
+ *   uvWarnMv      - undervoltage warning threshold, mV
+ *   uvFaultMv     - undervoltage fault threshold, mV
+ *   ovWarnMv      - overvoltage warning threshold, mV
+ *   ovFaultMv     - overvoltage fault threshold, mV
+ *   dividerScale  - sense divider scale x1000 (e.g. 2:1 divider = 2000)
+ *
+ * UV/OV thresholds are independent literals per rail — update each field
+ * directly; there is no relationship enforced between nominalMv and the
+ * threshold columns.
+ */
 static const VoltMon_ChCfg_t s_chTable[] =
 {
     /* ---- Group 0: VID rails (S0) ---------------------------------------- */
-//  { "VDDCR",       0u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_CCD",   0u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDDCR",       0u, 0u, 0u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
-    { "VDDCR_CCD",   0u, 1u, 1u, 1100u, 0u,             0u,              OV_WARN(1570u), OV_FAULT(1590u), 1000u },
-    { "VDDCR_SOC",   0u, 2u, 2u, 1100u, UV_WARN(580u),  UV_FAULT(560u),  OV_WARN(1220u), OV_FAULT(1240u), 1000u },
-    { "VDDCR_SR",    0u, 3u, 3u, 1100u, UV_WARN(600u),  UV_FAULT(550u),  OV_WARN(1020u), OV_FAULT(1090u), 1000u },
+    { "VDDCR",       0u, 0u, 0u, 1100u,    0u,   0u,  1695u, 1700u, 1000u },
+    { "VDDCR_CCD",   0u, 1u, 1u, 1100u,    0u,   0u,  1695u, 1700u, 1000u },
+    { "VDDCR_SOC",   0u, 2u, 2u, 1000u,    0u,   0u,  1190u, 1350u, 1000u },
+    { "VDDCR_SR",    0u, 3u, 3u,  950u,  600u, 550u,  1020u, 1070u, 1000u },
     /* ---- Group 1: Memory channel A (S0) --------------------------------- */
-//  { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEM_A",    1u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
-    { "VDD_MEMQ_A",   1u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_A",  1u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_A",    1u, 0u, 0u,  780u,  618u, 568u,   997u, 1047u, 1000u },
+    { "VDD_MEMQ_A",   1u, 1u, 1u,  500u,  470u, 420u,   570u,  620u, 1000u },
+    { "VDDIO_MEM_A",  1u, 2u, 2u, 1050u, 1010u, 960u,  1120u, 1170u, 1000u },
 
     /* ---- Group 2: Memory channel B (S0) --------------------------------- */
-//  { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-//  { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
-    { "VDD_MEM_B",    2u, 0u, 0u, 1100u, UV_WARN(650u),  UV_FAULT(650u),  OV_WARN(950u),  OV_FAULT(950u),  1000u },
-    { "VDD_MEMQ_B",   2u, 1u, 1u, 1100u, UV_WARN(500u),  UV_FAULT(500u),  OV_WARN(500u),  OV_FAULT(500u),  1000u },
-    { "VDDIO_MEM_B",  2u, 2u, 2u, 1100u, UV_WARN(1100u), UV_FAULT(1100u), OV_WARN(1100u), OV_FAULT(1100u), 1000u },
+    { "VDD_MEM_B",    2u, 0u, 0u,  780u,  618u, 568u,   997u, 1047u, 1000u },
+    { "VDD_MEMQ_B",   2u, 1u, 1u,  500u,  470u, 420u,   570u,  620u, 1000u },
+    { "VDDIO_MEM_B",  2u, 2u, 2u, 1050u, 1010u, 960u,  1120u, 1170u, 1000u },
 
     /* ---- Group 3: Misc / S5 rails --------------------------------------- */
-    { "VDD_MISC",     3u, 0u, 0u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
-    { "VDD_MISC_S5",  3u, 1u, 1u,  750u, UV_WARN( 750u), UV_FAULT( 750u), OV_WARN( 750u), OV_FAULT( 750u), 1000u },
-    { "VDD_1V2",      3u, 2u, 2u, 1200u, UV_WARN(1200u), UV_FAULT(1200u), OV_WARN(1200u), OV_FAULT(1200u), 1000u },
-    { "VDD_1V2_S5",   3u, 3u, 3u, 1200u, UV_WARN(1200u), UV_FAULT(1200u), OV_WARN(1200u), OV_FAULT(1200u), 1000u },
-    { "VDD_1V8",      3u, 4u, 4u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
-    { "VDD_1V8_S5",   3u, 5u, 5u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+    { "VDD_MISC",     3u, 0u, 0u,  750u,  675u, 625u,   825u,  875u, 1000u },
+    { "VDD_MISC_S5",  3u, 1u, 1u,  750u,  675u, 625u,   825u,  875u, 1000u },
+    { "VDD_1V2",      3u, 2u, 2u, 1200u, 1164u, 1114u, 1236u, 1286u, 1000u },
+    { "VDD_1V2_S5",   3u, 3u, 3u, 1200u, 1164u, 1114u, 1236u, 1286u, 1000u },
+    { "VDD_1V8",      3u, 4u, 4u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
+    { "VDD_1V8_S5",   3u, 5u, 5u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
 
     /* ---- Group 4: I/O rails --------------------------------------------- */
-    { "VDDIO_3V3",    4u, 0u, 0u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_3V3_S5", 4u, 1u, 1u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-//  { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(3300u), UV_FAULT(3300u), OV_WARN(3300u), OV_FAULT(3300u), 1000u },
-    { "VDDIO_AUDIO",  4u, 2u, 2u, 3300u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
-//  { "VDDIO_MEM_VAA",4u, 3u, 3u, 1800u, UV_WARN(1800u), UV_FAULT(1800u), OV_WARN(1800u), OV_FAULT(1800u), 1000u },
+    { "VDDIO_3V3",    4u, 0u, 0u, 3300u, 3135u, 3085u, 3465u, 3515u, 1000u },
+    { "VDDIO_3V3_S5", 4u, 1u, 1u, 3300u, 3135u, 3085u, 3465u, 3515u, 1000u },
+    { "VDDIO_AUDIO",  4u, 2u, 2u, 1800u, 1710u, 1660u, 1890u, 1940u, 1000u },
 };
 /* clang-format on */
 
@@ -250,6 +238,28 @@ static void prv_CheckThresholds(uint8 chIdx, uint16 measuredMv)
     }
 }
 
+/* ---- Sample state reset -------------------------------------------------- */
+
+/* Clears cached readings and SMA filter history so a stale/latched value
+ * can't be reported as an active fault while scanning is gated off, and
+ * so the filter doesn't blend post-restart samples with pre-outage ones. */
+static void prv_ClearSamples(void)
+{
+    uint8 i;
+
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        s_lastMv[i]     = 0u;
+    }
+#if (VOLTMON_SMA_ENABLE == 1u)
+    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
+    {
+        s_smaFilter[i].idx   = 0u;
+        s_smaFilter[i].count = 0u;
+    }
+#endif
+}
+
 /* ---- Public API --------------------------------------------------------- */
 
 void VoltMon_Init(void)
@@ -294,16 +304,8 @@ void VoltMon_Init(void)
         chCfg.resultRegister = (IfxEvadc_ChannelResult)s_chTable[i].resultReg;
 
         IfxEvadc_Adc_initChannel(&s_channels[i], &chCfg);
-
-        s_lastMv[i] = 0u;
     }
-#if (VOLTMON_SMA_ENABLE == 1u)
-    for (i = 0u; i < (uint8)VOLTMON_CH_COUNT; i++)
-    {
-        s_smaFilter[i].idx   = 0u;
-        s_smaFilter[i].count = 0u;
-    }
-#endif
+    prv_ClearSamples();
     s_initialised = TRUE;
     Debug_Printf("[VMON] Init complete: %u channels across %u groups.\r\n",
                  (unsigned)VOLTMON_CH_COUNT, (unsigned)VOLTMON_NUM_GROUPS);
@@ -323,13 +325,41 @@ void VoltMon_Enable(void)
 void VoltMon_Disable(void)
 {
     s_voltMonEnabled = FALSE;
+
+    /* Bounded wait for CPU2 to confirm it has stopped and cleared its cache.
+     * CPU2 does the clearing itself, so a timeout here can't race a scan. */
+    if (!Ipc_RequestVoltMonStopWait(VOLTMON_STOP_ACK_TIMEOUT_MS))
+    {
+        Debug_Print("[VMON] WARN: CPU2 did not ack scan stop\r\n");
+    }
     Debug_Print("[VMON] Monitoring disabled\r\n");
+}
+
+/* Emergency paths (PG fault, VIN loss, THERMTRIP): request the stop but
+ * don't wait - rails must come down immediately. CPU2 clears and acks
+ * on its next pass. */
+void VoltMon_DisableNoWait(void)
+{
+    s_voltMonEnabled = FALSE;
+    g_ipcShared.voltMon.reqSeq++;
+    __dsync();
 }
 
 
 
 void VoltMon_Scan(void)
 {
+    if (!s_initialised || !s_voltMonEnabled ||
+        (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
+    {
+        if (g_ipcShared.voltMon.ackSeq != g_ipcShared.voltMon.reqSeq)
+        {
+            prv_ClearSamples();        /* owner core clears its own data */
+            Ipc_AckVoltMonStop();
+        }
+        return;
+    }
+
     uint8 i;
     uint8 g;
     Ifx_EVADC_G_RES convResult;
@@ -457,3 +487,20 @@ void VoltMon_PrintReport(void)
     Debug_Print("[VMON] -----------------\r\n");
 }
 #endif
+
+boolean VoltMon_AnyFaultActive(void)
+{
+    uint32 ch;
+    for (ch = 0u; ch < (uint32)VOLTMON_CH_COUNT; ch++)
+    {
+        if (s_lastMv[ch] == 0u)
+            continue;  /* Unconfigured channel */
+
+        if (s_lastMv[ch] < s_chTable[ch].uvFaultMv ||
+            s_lastMv[ch] > s_chTable[ch].ovFaultMv)
+        {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}

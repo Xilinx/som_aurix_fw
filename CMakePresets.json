@@ -9,8 +9,7 @@
             "generator":   "Ninja",
             "toolchainFile": "${sourceDir}/cmake/tricore-gcc.cmake",
             "cacheVariables": {
-                "CPU": "tc38xx",
-                "TC_PREFIX": "${sourceDir}/tools/toolchain/tricore_494_linux/bin/tricore-elf-"
+                "CPU": "tc38xx"
             }
         },
 

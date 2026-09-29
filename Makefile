@@ -63,7 +63,8 @@ APP_SRC_DIRS := \
 	Src/AppSw/Bsp           \
 	Src/AppSw/Platform      \
 	Src/AppSw/PowerManager  \
-	Src/AppSw/UsbPd
+	Src/AppSw/UsbPd         \
+	Src/AppSw/FwMgmt
 
 # -----------------------------------------------------------------------------
 # iLLD source directories
@@ -90,9 +91,11 @@ ILLD_SRC_DIRS := \
 	$(ILLD_ROOT)/Scu/Std                          \
 	$(ILLD_ROOT)/Stm/Std                          \
 	$(ILLD_ROOT)/Src/Std                          \
+	$(ILLD_ROOT)/Qspi/SpiSlave				      \
 	$(ILLD_ROOT)/Dma/Std                          \
 	$(ILLD_ROOT)/Dma/Dma                          \
 	$(ILLD_ROOT)/Pms/Std                          \
+	$(ILLD_ROOT)/Flash/Std						  \
 	$(ILLD_ROOT)/Service/CpuGeneric/StdIf         \
 	$(ILLD_ROOT)/Service/CpuGeneric/SysSe/Bsp     \
 	$(ILLD_ROOT)/Service/CpuGeneric/SysSe/Comm    \
@@ -105,22 +108,12 @@ ILLD_SRC_DIRS := \
 # Collect .c files from application and iLLD directories
 APP_SRCS    := $(foreach d, $(APP_SRC_DIRS),  $(wildcard $(d)/*.c))
 ILLD_SRCS   := $(foreach d, $(ILLD_SRC_DIRS), $(wildcard $(d)/*.c))
-
-ifeq ($(BOARD),eval)
-    ILLD_SRCS += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_LFBGA292.c)
-else
-    ILLD_SRCS += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_516.c)
-endif
+ILLD_SRCS   += $(wildcard $(ILLD_ROOT)/_PinMap/*_TC38x_LFBGA292.c)
 
 BOARD ?= som
 
 ifeq ($(BOARD),eval)
     BOARD_DEFINE += -DTARGET_EVAL_BOARD=1
-    APP_SRCS := $(filter-out \
-        Src/AppSw/UsbPd/UsbPd_Manager.c \
-        Src/AppSw/UsbPd/UsbPd_Cfg.c \
-        Src/AppSw/UsbPd/Cypd6129_Drv.c, \
-        $(APP_SRCS))
 else
     BOARD_DEFINE += -DTARGET_GP_SOM=1
 endif
@@ -146,6 +139,7 @@ INCLUDES := \
 	-I Src/AppSw/Platform       \
 	-I Src/AppSw/PowerManager   \
 	-I Src/AppSw/UsbPd          \
+	-I Src/AppSw/FwMgmt         \
 	-I Src/BaseSw               \
 	-I $(ILLD_ROOT)             \
 	-I $(ILLD_ROOT)/Infra/Platform  \
@@ -155,6 +149,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/_Impl       \
 	-I $(ILLD_ROOT)/_Impl/TC38x \
 	-I $(ILLD_ROOT)/_PinMap \
+	-I $(ILLD_ROOT)/_PinMap/TC38x \
 	-I $(ILLD_ROOT)/Cpu/Std     \
 	-I $(ILLD_ROOT)/Scu/Std     \
 	-I $(ILLD_ROOT)/Port/Std    \
@@ -165,6 +160,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/I2c/I2c     \
 	-I $(ILLD_ROOT)/Qspi/Std    \
 	-I $(ILLD_ROOT)/Qspi/SpiMaster \
+	-I $(ILLD_ROOT)/Qspi/SpiSlave   \
 	-I $(ILLD_ROOT)/Dma/Std             \
 	-I $(ILLD_ROOT)/Dma/Dma             \
 	-I $(ILLD_ROOT)/Evadc/Std         \
@@ -173,6 +169,7 @@ INCLUDES := \
 	-I $(ILLD_ROOT)/Cpu/Trap    \
 	-I $(ILLD_ROOT)/Src/Std		\
 	-I $(ILLD_ROOT)/Pms/Std     \
+	-I $(ILLD_ROOT)/Flash/Std   \
 	-I $(ILLD_ROOT)/_Lib/DataHandling \
 	-I $(ILLD_ROOT)/_Lib/InternalMux \
 	-I $(ILLD_ROOT)/Service/CpuGeneric/_Utilities \
@@ -182,8 +179,10 @@ INCLUDES := \
 # Preprocessor defines
 # -----------------------------------------------------------------------------
 DEFINES_COMMON := \
-	-DIFX_CFG_TC3XX_DEVICE=IFX_CFG_TC38XA
-
+	-DIFX_CFG_TC3XX_DEVICE=IFX_CFG_TC38XA \
+	-DDEVICE_TC38X \
+	-DIFX_PIN_PACKAGE_LFBGA292
+	
 DEFINES_DBG := $(DEFINES_COMMON) -DCFG_DEBUG=1
 DEFINES_REL := $(DEFINES_COMMON) -DNDEBUG
 
@@ -269,7 +268,7 @@ $(BIN_DIR):
 	@mkdir -p $@
 
 clean:
-	rm -rf Build/
+	rm -rf Build/ build/
 
 size: $(TARGET).elf
 	$(SIZE) --format=berkeley $<
@@ -309,12 +308,18 @@ setup:
 	fi
 	@echo "==============================="
 
+UCB ?= tools/ucb_swap_a.hex
+OTP ?= tools/ucb_otp0_en.hex
+
 flash: $(TARGET).elf
 	@if [ -z "$(FLASHER)" ] || [ ! -f "$(FLASHER)" ]; then \
 		echo "[ERROR] AURIXFlasher not found. Run 'make setup' or set FLASHER="; \
 		exit 1; \
 	fi
-	@cp $(TARGET).hex $(HEX_STAGING_DIR)/TC387.hex
-	@echo "[FLASH] Programming..."
-	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on
-
+	@python3 tools/gen_ucb_otp0.py enable tools/ucb_otp0_en.hex
+	@python3 tools/merge_ucb.py $(TARGET).hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387.hex
+	@echo "[FLASH] Programming with $(UCB) $(OTP)..."
+	@$(FLASHER) -hex $(HEX_WIN) -erase on -prog on -ver on -ucb on -start on -port das
+ucbreset:
+	@python3 tools/merge_ucb.py tools/empty.hex $(UCB) $(OTP) $(HEX_STAGING_DIR)/TC387_ucb.hex
+	@$(FLASHER) -hex $(subst TC387.hex,TC387_ucb.hex,$(HEX_WIN)) -erase on -prog on -ver off -ucb on -start on -port das

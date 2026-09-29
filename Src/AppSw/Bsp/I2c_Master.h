@@ -1,28 +1,4 @@
 /**
- * Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
  * @file    I2c_Master.h
  * @brief   Polling I2C master wrapper over iLLD IfxI2c.
  *
@@ -86,11 +62,17 @@ I2c_Status_t I2cMaster_WriteReg16_Bus(uint8 busIdx, uint8 addr7bit,
  */
 I2c_Status_t I2cMaster_ApmlReadByte(uint8 addr7bit, uint8 regAddr, uint8 *pData);
 
-
+/**
+ * @brief Reads bytes from 8-bit register with bus index
+ */
+I2c_Status_t I2cMaster_ReadReg8_Bus(uint8 busIdx, uint8 addr7bit,
+                                    uint8 regAddr, uint8 *pData);
 /**
  * @brief Reinitialise an I2C peripheral to recover from a stuck bus.
  * @param busIdx  0 = I2C0 (CYPD/HPI), 1 = I2C1 (APML/SB-TSI)
  */
 void I2cMaster_ReinitBus(uint8 busIdx);
+
+uint32 I2cMaster_GetRawBusStatus(uint8 busIdx);
 
 #endif /* I2C_MASTER_H */

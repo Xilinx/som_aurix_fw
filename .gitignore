@@ -8,6 +8,10 @@ Build/
 *.d
 *.o
 
+Makefile
+
+tools/flasher/
+
 !Image/*.elf
 
 # Eclipse / ADS workspace metadata (do NOT commit these — they are machine-local)

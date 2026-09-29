@@ -1,28 +1,4 @@
 /**
- * Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved.
- *
- * SPDX-License-Identifier: MIT
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
  * @file    Tlf35585.c
  * @brief   TLF35585/TLF35585 PMIC driver — 16-bit SPI protocol
  *
@@ -50,6 +26,8 @@
 #include "IfxPort.h"
 #include "IfxQspi_SpiMaster.h"
 #include "IfxCpu_Irq.h"
+#include "NvLog.h"
+#include "Ipc.h"
 
 /* ================================================================== */
 /*  SPI configuration constants                                       */
@@ -92,7 +70,8 @@ static uint32                    s_lastFaultPollMs    = 0u;
 static uint32                    s_wwdServiceCount    = 0u;
 static uint32                    s_wwdMissCount       = 0u;
 static uint8                     s_devctrlShadow      = 0u;
-static uint32                    s_wwdRecoveredCount = 0u;
+static uint32                    s_lastServiceMs = 0u;   
+static uint8                     s_statPoll      = 0u;   
 /* ================================================================== */
 /*  ISRs — must be above prv_SpiInit so they're visible               */
 /* ================================================================== */
@@ -465,7 +444,6 @@ uint8 Tlf35585_GetDevState(void)
 
 void Tlf35585_EarlyInit(void)
 {
-    uint8 val;
 
     prv_SpiInit();
 
@@ -490,6 +468,7 @@ void Tlf35585_EarlyInit(void)
 Tlf35585_Status_t Tlf35585_Init(void)
 {
     Tlf35585_Status_t s;
+    uint8 devstat = 0u;
 
     Debug_Print("[TLF] Init: QSPI2...\r\n");
     s = prv_SpiInit();
@@ -512,6 +491,37 @@ Tlf35585_Status_t Tlf35585_Init(void)
         if (sysfail != 0u) Tlf35585_WriteReg(TLF_RW_SYSFAIL, TLF_CLEAR_STATUS);
     }
 
+    Tlf35585_ReadReg(TLF_R_DEVSTAT, &devstat);
+    if ((devstat & TLF_DEVSTAT_STATE_MASK) == TLF_STATE_NORMAL)
+    {
+        /* Software reset: TLF stayed in NORMAL with WWD running.
+         * Protected registers are already configured and locked.
+         * Skip the full init; just clear flags and take over servicing. */
+        Debug_Print("[TLF] Warm init: already in NORMAL, skipping protected config\r\n");
+
+        Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
+        Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
+
+        /* Immediate WWD service — the window has been free-running
+         * since the reset; service now to reset the counter. */
+        {
+            uint8 wwdCmd = 0u;
+            Tlf35585_ReadReg(TLF_RW_WWDSCMD, &wwdCmd);
+            Tlf35585_WriteReg(TLF_RW_WWDSCMD,
+                ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
+        }
+
+        /* Clear any WWD errors that accumulated between the reset
+         * and this point (CPU2 wasn't servicing yet). */
+        Tlf35585_WriteReg(TLF_R_WWDSTAT, TLF_CLEAR_STATUS);
+
+        s_wdtLastServiceMs = Stm_GetTimeMs();
+        s_lastFaultPollMs  = Stm_GetTimeMs();
+        s_initialised      = TRUE;
+        Tlf35585_LogEvent(TLF_EVT_INIT);
+        Debug_Print("[TLF] Warm init complete\r\n");
+        return TLF_OK;
+    }
     /* ---- Clear stale flags so post-lock checks see fresh state ---- */
     Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
     Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
@@ -581,6 +591,10 @@ Tlf35585_Status_t Tlf35585_Init(void)
 
 void Tlf35585_ServiceWdt(void)
 {
+    if (IfxCpu_getCoreIndex() != g_wdtOwner)
+    {
+        return;
+    }
     uint32 nowMs, elapsedMs;
     uint8  wwdCmd;
 
@@ -611,7 +625,22 @@ void Tlf35585_ServiceWdt(void)
             ((wwdCmd & TLF_WWDSCMD_TRIG_STATUS) != 0u) ? 0x00u : TLF_WWDSCMD_TRIG);
         prv_ToggleWdi();
     }
-
+    {
+        uint32 now = Stm_GetTimeMs();
+        uint32 gap = now - s_lastServiceMs;
+        if ((s_lastServiceMs != 0u) && (gap > g_ipcShared.fusa.tlfMaxGapMs))
+        {
+            g_ipcShared.fusa.tlfMaxGapMs = gap;
+        }
+        s_lastServiceMs = now;
+        g_ipcShared.fusa.tlfLastServiceMs = now;
+    }
+    if ((++s_statPoll & 0x0Fu) == 0u)
+    {
+        uint8 v;
+        if (Tlf35585_ReadReg(TLF_R_WWDSTAT, &v) == TLF_OK) { g_ipcShared.fusa.tlfWwdStat = v; }
+        if (Tlf35585_ReadReg(TLF_RW_SYSSF,   &v) == TLF_OK) { g_ipcShared.fusa.tlfSysSf   = v; }
+    }
     /* ---- Heartbeat: INDEPENDENT of service outcome ---------------- */
     {
         static uint32 s_lastStatMs = 0u;
@@ -779,17 +808,17 @@ void Tlf35585_LogEvent(uint8 eventType)
                  (unsigned)evt.errPin, (unsigned)evt.ssPin);
         uint32 pmicData[4] = { (uint32)evt.syssf, (uint32)evt.monsf1,
                             (uint32)evt.wwdstat, (uint32)evt.devstat };
-        //NvLog_Write(NVLOG_EVT_PMIC_FAULT, NVLOG_SRC_PMIC, NVLOG_SEV_ERROR, pmicData);
+        NvLog_Write(NVLOG_EVT_PMIC_FAULT, NVLOG_SRC_PMIC, NVLOG_SEV_ERROR, pmicData);
     }
     else
     {
-        //g_ipcShared.fusa.tlfEvtData[0] = (uint32)evt.syssf;
-        //g_ipcShared.fusa.tlfEvtData[1] = (uint32)evt.monsf1;
-        //g_ipcShared.fusa.tlfEvtData[2] = (uint32)evt.wwdstat;
-        //g_ipcShared.fusa.tlfEvtData[3] = (uint32)evt.devstat;
-        //__dsync();
-        //g_ipcShared.fusa.tlfEvtSeq++;
-        //__dsync();
+        g_ipcShared.fusa.tlfEvtData[0] = (uint32)evt.syssf;
+        g_ipcShared.fusa.tlfEvtData[1] = (uint32)evt.monsf1;
+        g_ipcShared.fusa.tlfEvtData[2] = (uint32)evt.wwdstat;
+        g_ipcShared.fusa.tlfEvtData[3] = (uint32)evt.devstat;
+        __dsync();
+        g_ipcShared.fusa.tlfEvtSeq++;
+        __dsync();
     }
 }
 
@@ -829,17 +858,17 @@ void Tlf35585_EnableIsrMode(void)
 void Tlf35585_PublishRegSnapshot(void)          /* CPU2, ~1 Hz */
 {
     uint8 v;
-    Tlf35585_ReadReg(TLF_R_DEVSTAT,  &v); //g_ipcShared.fusa.tlfRegs[0]  = v;
-    Tlf35585_ReadReg(TLF_RW_SYSSF,   &v); //g_ipcShared.fusa.tlfRegs[1]  = v;
-    Tlf35585_ReadReg(TLF_RW_SPISF,   &v); //g_ipcShared.fusa.tlfRegs[2]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF0,   &v); //g_ipcShared.fusa.tlfRegs[3]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF1,   &v); //g_ipcShared.fusa.tlfRegs[4]  = v;
-    Tlf35585_ReadReg(TLF_R_MONSF2,   &v); //g_ipcShared.fusa.tlfRegs[5]  = v;
-    Tlf35585_ReadReg(TLF_RW_INITERR, &v); //g_ipcShared.fusa.tlfRegs[6]  = v;
-    Tlf35585_ReadReg(TLF_R_WDCFG0,  &v); //g_ipcShared.fusa.tlfRegs[7]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDCFG0, &v); //g_ipcShared.fusa.tlfRegs[8]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDCFG1, &v); //g_ipcShared.fusa.tlfRegs[9]  = v;
-    Tlf35585_ReadReg(TLF_R_WWDSTAT,  &v); // g_ipcShared.fusa.tlfRegs[10] = v;
+    Tlf35585_ReadReg(TLF_R_DEVSTAT,  &v); g_ipcShared.fusa.tlfRegs[0]  = v;
+    Tlf35585_ReadReg(TLF_RW_SYSSF,   &v); g_ipcShared.fusa.tlfRegs[1]  = v;
+    Tlf35585_ReadReg(TLF_RW_SPISF,   &v); g_ipcShared.fusa.tlfRegs[2]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF0,   &v); g_ipcShared.fusa.tlfRegs[3]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF1,   &v); g_ipcShared.fusa.tlfRegs[4]  = v;
+    Tlf35585_ReadReg(TLF_R_MONSF2,   &v); g_ipcShared.fusa.tlfRegs[5]  = v;
+    Tlf35585_ReadReg(TLF_RW_INITERR, &v); g_ipcShared.fusa.tlfRegs[6]  = v;
+    Tlf35585_ReadReg(TLF_R_WDCFG0,  &v); g_ipcShared.fusa.tlfRegs[7]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDCFG0, &v); g_ipcShared.fusa.tlfRegs[8]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDCFG1, &v); g_ipcShared.fusa.tlfRegs[9]  = v;
+    Tlf35585_ReadReg(TLF_R_WWDSTAT,  &v); g_ipcShared.fusa.tlfRegs[10] = v;
     __dsync();
-    //g_ipcShared.fusa.tlfRegsSeq++;
+    g_ipcShared.fusa.tlfRegsSeq++;
 }
