@@ -60,10 +60,9 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
 
     if ((uint8)meta.activeBank != Swap_GetActiveBank())
     {
-        Debug_Printf("[BOOT] Pending update for bank 0x%02X but running 0x%02X - clearing\r\n",
+        Debug_Printf("[BOOT] Update staged for bank 0x%02X (running 0x%02X) - run fwswap to apply\r\n",
                      (unsigned)meta.activeBank, (unsigned)Swap_GetActiveBank());
-        (void)BootValid_ClearMeta();
-        return BOOTVALID_OK;               /* no counter, no BIST, no revert */
+        return BOOTVALID_OK;               /* no counter, no BIST, metadata kept */
     }
     /* ---- Update is pending — evaluate boot counter -------------- */
     meta.bootCounter++;
@@ -151,8 +150,10 @@ BootValid_Status_t BootValid_CommitUpdate(void)
         return BOOTVALID_ERR_DFLASH;
     }
 
-    /* Nothing to commit if metadata is absent or already committed */
-    if (!isMetaValid(&meta) || meta.pendingUpdate == 0u)
+    /* Nothing to commit if metadata is absent, already committed,
+     * or describes the other (staged, not yet swapped-in) bank */
+    if (!isMetaValid(&meta) || (meta.pendingUpdate == 0u) ||
+        ((uint8)meta.activeBank != Swap_GetActiveBank()))
     {
         return BOOTVALID_OK;
     }

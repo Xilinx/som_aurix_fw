@@ -394,7 +394,7 @@ static void prv_CmdUptime(void)
 
 static void prv_CmdVersion(void)
 {
-    Debug_Printf("  TC387 COM-HPC Controller v0.1\r\n");
+    Debug_Printf("  TC387 COM-HPC Controller v0.2\r\n");
 }
 
 static void prv_CmdUsbPd(void)
