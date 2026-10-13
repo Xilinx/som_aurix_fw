@@ -147,6 +147,10 @@ void core1_main(void)
 
         prv_ProcessCommands();
         PowerManager_Run();
+        /* Publish PM state before APML.  If SysMonitor ever blocks again,
+         * CLI `status` still shows the sequencer's real state (7), not a
+         * stale IPC 6.  A second publish at the end refreshes temp/PROCHOT. */
+        prv_PublishStatus();
         prv_CheckFusaFaults();
 
 #if !defined(TARGET_EVAL_BOARD)
@@ -156,9 +160,11 @@ void core1_main(void)
         ComHpcWdt_Run();
 #endif
 
+        /* Always run SysMonitor so leave-S0 resets the APML dwell.
+         * APML itself is gated on PM_STATE_ON + dwell + TransitionPending. */
+        SysMonitor_Run();
         if (PowerManager_GetState() == PM_STATE_ON)
         {
-            SysMonitor_Run();
 #if (USBPD_FEATURE_ENABLE == 1u)
             UsbPdManager_Run();
 #endif
