@@ -71,7 +71,7 @@ void    I2cSlave_Poll  (I2cSlave_Inst_t *s);        /* call in a loop; services 
 /* legacy I2C1 / APU proxy API (unchanged behaviour) */
 void    I2cSlave_Init   (I2cSlave_ReadCb_t readCb);
 boolean I2cSlave_IsBusy (void);
-void    I2cSlave_Suspend(void);
-void    I2cSlave_Resume (void);
+void    I2cSlave_Suspend(void);  /* park slave, master FIFO — call around I2C1 APML */
+void    I2cSlave_Resume (void);  /* restore 0x54/0x58 listen after APML / enter-S0 */
 
 #endif

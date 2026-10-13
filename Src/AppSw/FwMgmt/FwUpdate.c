@@ -367,10 +367,8 @@ static void prv_HandleVerifying(void)
     prv_WdBypass(FALSE);
     s_state = FWUPDATE_DONE;
     g_debugMuted = FALSE;
-    uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
-    Debug_Printf("[FWUP] Calling Swap_ChangeMode(0x%02X)...\r\n", (unsigned)newBank);
-    Debug_Print("[FWUP] Update complete — resetting...\r\n");
-
+    //uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
+    Debug_Print("[FWUP] Update staged - run fwswap to apply\r\n");
 }
 
 /* ================================================================== */

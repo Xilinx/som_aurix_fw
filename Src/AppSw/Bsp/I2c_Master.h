@@ -17,9 +17,12 @@
 /** I2C bus frequency — 400 kHz Fast Mode. */
 #define I2C_MASTER_FREQ_HZ      400000u
 
-/* Note: iLLD 1.20.0 write2/read2 are blocking internally.
- * I2C_MASTER_TIMEOUT_MS is retained for potential future use. */
+/** Bound for "bus idle before START" (and one reinit retry). */
 #define I2C_MASTER_TIMEOUT_MS   10u
+
+/** Bound for each RIS / TX_END wait inside a transfer.
+ *  iLLD 1.20.0 write2/read2 spin forever on RIS==0; we never call those. */
+#define I2C_XFER_TIMEOUT_MS     20u
 
 typedef enum
 {
@@ -72,6 +75,25 @@ I2c_Status_t I2cMaster_ReadReg8_Bus(uint8 busIdx, uint8 addr7bit,
  * @param busIdx  0 = I2C0 (CYPD/HPI), 1 = I2C1 (APML/SB-TSI)
  */
 void I2cMaster_ReinitBus(uint8 busIdx);
+
+/**
+ * @brief Abort an in-flight master transfer: stop kernel, clear FIFOs,
+ *        re-init the module.  Does not call iLLD releaseBus (that waits
+ *        forever for TX_END — the same hang we are escaping).
+ */
+void I2cMaster_AbortBus(uint8 busIdx);
+
+/**
+ * @brief Leave-S0 hygiene: park I2C1 slave, abort/reinit I2C1 master.
+ *        Call from PowerManager on S0→S5 / S0i3 / fault / forced-off.
+ */
+void I2cMaster_OnLeaveS0(void);
+
+/**
+ * @brief Re-enter-S0 hygiene: reinit I2C1 master, restore I2C1 slave.
+ *        Call from PowerManager when entering PM_STATE_ON.
+ */
+void I2cMaster_OnEnterS0(void);
 
 uint32 I2cMaster_GetRawBusStatus(uint8 busIdx);
 

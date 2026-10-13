@@ -19,6 +19,7 @@
 #include "IfxPort.h"
 #include "ComHpcWdt.h"
 #include "IfxCpu.h"
+#include "I2c_Master.h"
 
 /* ---- Private state ------------------------------------------------------- */
 
@@ -522,6 +523,7 @@ static void prv_GoToS5(void)
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_DisableNoWait();
+    I2cMaster_OnLeaveS0();
 #if (FUSA_FEATURE_ENABLE == 1u)
     ComHpcWdt_Disable();
 #endif
@@ -573,6 +575,7 @@ static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx)
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_DisableNoWait();
+    I2cMaster_OnLeaveS0();
     ComHpcWdt_Disable();     /* WDT could also fire during rail-down */
     prv_DisableAllRails();
 
@@ -708,6 +711,7 @@ static void prv_EmergencyShutdown(PM_ResetCause_t cause)
     //prv_AssertPltrst();
     PwrGood_MonDisarm();
     VoltMon_DisableNoWait();
+    I2cMaster_OnLeaveS0();
     ComHpcWdt_Disable();
     prv_DisableAllRails();
     prv_SetState(PM_STATE_OFF);
@@ -1060,6 +1064,8 @@ void PowerManager_Run(void)
 #endif
             s_retryCount = 0u;
             VoltMon_Enable();
+            s_onEntryMs = Stm_GetTimeMs();
+            I2cMaster_OnEnterS0();
             //prv_DeassertPltrst();
             prv_SetState(PM_STATE_ON);
             Debug_Printf("[PM] System ON. (%ums since wake)\r\n",
@@ -1115,6 +1121,7 @@ void PowerManager_Run(void)
                 //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
+                I2cMaster_OnLeaveS0();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
                 break; 
@@ -1131,6 +1138,7 @@ void PowerManager_Run(void)
                 //prv_AssertPltrst();
                 PwrGood_MonDisarm();
                 VoltMon_Disable();
+                I2cMaster_OnLeaveS0();
                 ComHpcWdt_Disable();
                 prv_SetState(PM_STATE_DN_S0_S3);
                 break;
@@ -1468,6 +1476,7 @@ void PowerManager_Run(void)
 #endif
             Debug_Print("[PM] Warm reset complete.\r\n");
             s_suppressResetDetect = TRUE;
+            I2cMaster_OnEnterS0();
             prv_SetState(PM_STATE_ON);
         }
             break;
@@ -1495,6 +1504,7 @@ void PowerManager_RequestForcedOff(void)
     prv_UartClaimByAurix();
     prv_DeassertPwrgd();
     VoltMon_Disable();
+    I2cMaster_OnLeaveS0();
     ComHpcWdt_Disable();
     prv_AssertRsmrst();            /* <- missing: back to the Init level */
     prv_DeassertKbrst();           /* in case forceoff arrives mid warm-reset */
@@ -1517,6 +1527,7 @@ void PowerManager_RequestColdReset(void)
     {
         Debug_Print("[PM] Cold reset requested\r\n");
         VoltMon_Disable();        /* ADD: suppress faults during teardown + re-ramp */
+        I2cMaster_OnLeaveS0();
         ComHpcWdt_Disable();      /* ADD: suppress WDT during reset cycle */
         prv_AssertApuReset();
         prv_UartClaimByAurix();

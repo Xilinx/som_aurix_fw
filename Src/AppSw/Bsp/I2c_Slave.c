@@ -9,8 +9,10 @@
  *
  * Dual-role operation:
  *   - Default: slave mode (MNS=0), listening for APU reads
- *   - During APML transactions: I2cSlave_Suspend() sets MNS=1,
- *     I2cMaster does its transaction, I2cSlave_Resume() restores
+ *   - During APML transactions: I2cSlave_Suspend() parks the slave
+ *     (MNS=1, master FIFO, SOPE=1), I2cMaster does its transaction,
+ *     I2cSlave_Resume() restores slave ADDR/FIFO via I2cSlave_Start().
+ *   I2cMaster_ApmlReadByte / any I2C1 master helper must call these.
  *
  * The TC3xx I2C peripheral has two address registers (ADDR1, ADDR2)
  * in some variants, or can use 10-bit mode tricks.  For simplicity,
@@ -140,6 +142,7 @@ void I2cSlave_Poll(I2cSlave_Inst_t *s) { prv_Service(s); }
 /* ---------------------------------------------------------------- */
 static I2cSlave_Inst_t s_apu;
 static volatile boolean s_suspended = FALSE;
+static boolean s_inited = FALSE;
 
 static boolean prv_ApuReadCb(uint8 portIdx, uint8 regAddr, uint8 *pData)
 {
@@ -163,13 +166,48 @@ void I2cSlave_Init(I2cSlave_ReadCb_t readCb)
     IfxScuWdt_setCpuEndinit(pw);
     IfxCpu_Irq_installInterruptHandler(&i2c1SlaveISR, I2C1_SLAVE_ISR_PRIO);
     s_suspended = FALSE;
+    s_inited = TRUE;
     Debug_Printf("[I2C_SLV] I2C1 slave @0x%02X\r\n", (unsigned)I2C_SLV_USBC0_ADDR);
 }
 
 boolean I2cSlave_IsBusy(void) { return s_apu.busy; }
-void I2cSlave_Suspend(void) { if (!s_suspended) { MODULE_I2C1.ADDRCFG.B.MNS = 1u; s_suspended = TRUE; } }
-void I2cSlave_Resume(void)  { if (s_suspended)  { MODULE_I2C1.ADDRCFG.B.MNS = 0u;
-                              MODULE_I2C1.ADDRCFG.B.ADR = I2C_SLV_USBC0_ADDR; s_suspended = FALSE; } }
+
+void I2cSlave_Suspend(void)
+{
+    Ifx_I2C *i2c = &MODULE_I2C1;
+
+    if (s_inited == FALSE)
+    {
+        return;
+    }
+    /* RUN=0 required to write ADDRCFG/FIFOCFG.  Park as master-only with
+     * 1-word byte FIFO so APML cannot inherit the slave burst-8 setting. */
+    i2c->RUNCTRL.B.RUN  = 0u;
+    i2c->ADDRCFG.B.MNS  = 1u;
+    i2c->ADDRCFG.B.SOPE = 1u;
+    i2c->ADDRCFG.B.SONA = 1u;
+    i2c->FIFOCFG.B.RXFA = 0u;
+    i2c->FIFOCFG.B.TXFA = 0u;
+    i2c->FIFOCFG.B.RXFC = 1u;
+    i2c->FIFOCFG.B.TXFC = 1u;
+    i2c->FIFOCFG.B.RXBS = 0u;
+    i2c->FIFOCFG.B.TXBS = 0u;
+    i2c->PIRQSC.U = 0xFFFFFFFFu;
+    i2c->ERRIRQSC.U = 0xFFFFFFFFu;
+    i2c->ICR.U = 0xFFFFFFFFu;
+    i2c->RUNCTRL.B.RUN = 1u;
+    s_suspended = TRUE;
+}
+
+void I2cSlave_Resume(void)
+{
+    if (s_inited == FALSE)
+    {
+        return;
+    }
+    I2cSlave_Start(&s_apu);
+    s_suspended = FALSE;
+}
 
 #else
 void    I2cSlave_Setup(I2cSlave_Inst_t *s, Ifx_I2C *m, uint8 a, uint8 sh, I2cSlave_ReadCb_t cb) {(void)s;(void)m;(void)a;(void)sh;(void)cb;}
