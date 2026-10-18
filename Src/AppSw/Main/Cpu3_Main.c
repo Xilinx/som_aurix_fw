@@ -1,6 +1,6 @@
 /**
  * @file    Cpu3_Main.c
- * @brief   CPU3 — USB-PD core (Wes v39)
+ * @brief   CPU3 — USB-PD core
  *
  * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager on I2C0 (CYPD).
  * Reads: g_ipcShared.pmc.pmState (published by CPU1) to gate HPI polling.
