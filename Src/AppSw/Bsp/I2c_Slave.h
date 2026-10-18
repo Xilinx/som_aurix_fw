@@ -20,6 +20,12 @@
  * IMPORTANT: On the eval board (TARGET_EVAL_BOARD), this is
  * compiled but I2C1 has no APU connected.  The slave address
  * match will simply never fire.
+ *
+ * Production SoM (schematic): I2C1 is SB-TSI only; the APU is
+ * never I2C master on that bus.  Do not call I2cSlave_Init() unless
+ * I2C1_APU_SLAVE_ENABLE is 1 — leaving MNS=0 is the PM-state-6 hang.
+ * If that flag is turned on, I2cSlave_Suspend()/Resume() MUST wrap
+ * every I2C1 master transfer (already done in I2c_Master).
  */
 
 #ifndef I2C_SLAVE_H
@@ -29,6 +35,12 @@
 
 #ifndef I2C_SLAVE_FEATURE_ENABLE
 #define I2C_SLAVE_FEATURE_ENABLE 1u
+#endif
+
+/* 0 = do not put I2C1 into slave mode (default; I2C1 is APML/SB-TSI).
+ * 1 = listen at 0x54/0x58.  Requires Suspend/Resume around APML. */
+#ifndef I2C1_APU_SLAVE_ENABLE
+#define I2C1_APU_SLAVE_ENABLE    0u
 #endif
 
 #define I2C_SLV_USBC0_ADDR   0x54u

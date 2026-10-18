@@ -128,7 +128,7 @@ void I2cMaster_OnLeaveS0(void)
 void I2cMaster_OnEnterS0(void)
 {
     I2cMaster_ReinitBus(1u);
-    I2cSlave_Resume();
+    I2cSlave_Resume();   /* no-op unless I2cSlave_Init ran (I2C1_APU_SLAVE_ENABLE) */
 }
 
 static boolean prv_WaitBusIdle(uint8 busIdx, uint32 timeoutMs)

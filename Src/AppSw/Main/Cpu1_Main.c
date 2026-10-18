@@ -128,7 +128,15 @@ void core1_main(void)
 #endif
 
 #if (USBPD_FEATURE_ENABLE == 1u)
+#if (I2C1_APU_SLAVE_ENABLE == 1u)
     I2cSlave_Init(NULL_PTR);
+#else
+    /* Schematic: I2C1 = SB-TSI only. APU never masters this bus.
+     * I2cSlave_Init leaves MNS=0 and is the PM-state-6 hang (log1).
+     * USB-PD HPI stays on I2C0. Re-enable only with I2C1_APU_SLAVE_ENABLE
+     * and the existing Suspend/Resume around APML. */
+    Debug_Print("[CPU1] I2C1 slave 0x54 not started (SB-TSI only)\r\n");
+#endif
     UsbPd_Hpd_Init();
     UsbPd_ApuProxy_Init();
     UsbPdManager_Init();
