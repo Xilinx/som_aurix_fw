@@ -215,9 +215,8 @@ boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs)
 {
     uint32 startMs;
 
-    if (!g_ipcShared.cpu2Ready)
-        return FALSE;              /* consumer not up — nothing to wait for */
-
+    /* Scanner is CPU0. Do not gate this on cpu2Ready: CPU2 no longer
+     * runs VoltMon, and a missing CPU2 must not skip the stop handshake. */
     g_ipcShared.voltMon.reqSeq++;
     __dsync();
 
@@ -230,7 +229,7 @@ boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs)
     return TRUE;
 }
 
-void Ipc_AckVoltMonStop(void)              /* CPU2 only */
+void Ipc_AckVoltMonStop(void)              /* CPU0 scanner */
 {
     g_ipcShared.voltMon.ackSeq = g_ipcShared.voltMon.reqSeq;
     __dsync();

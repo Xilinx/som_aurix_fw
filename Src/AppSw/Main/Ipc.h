@@ -3,11 +3,11 @@
  * @brief   Inter-core communication infrastructure for TC387
  *
  * Multicore partitioning:
- *   CPU0 → Startup, OTA update, NV storage, config, boot orchestration,
- *          Debug CLI, UART
- *   CPU1 → PMC: PowerManager, SysMonitor, UsbPd, ComHpcWdt, I2C0/I2C1
- *   CPU2 → FuSa: VoltMon (EVADC), TLF35585 (QSPI2), FusaSpi (QSPI3),
- *          FUSA GPIO/Alert
+ *   CPU0 → Startup, OTA, NV, Debug CLI, UART, and FuSa
+ *          (VoltMon, TLF35585 service, FusaSpi). TLF watchdog owner stays 0.
+ *   CPU1 → PMC: PowerManager, SysMonitor, ComHpcWdt, I2C1 APML
+ *   CPU2 → running, no peripherals in this step.
+ *   CPU3 → USB-PD on I2C0
  *
  * Shared data lives in LMU SRAM (0xB0000000, accessible from all cores
  * via the SRI crossbar).  Each field has a single writer (producer)
@@ -21,9 +21,10 @@
  *   3. CPU1 ISR reads command, processes it, writes ackNum = seqNum
  *
  * Peripheral ownership (each peripheral assigned to exactly one core):
- *   CPU0: ASCLIN0 (debug UART), ASCLIN1/4 (transfer UART), DFlash, PFlash
- *   CPU1: I2C0 (USB PD), I2C1 (APML), ASCLIN for APU sideband
- *   CPU2: EVADC (FuSa groups), QSPI2 (TLF35585), QSPI3 (FuSa SPI slave)
+ *   CPU0: ASCLIN0 (debug UART), ASCLIN1/4 (transfer UART), DFlash, PFlash,
+ *         EVADC (FuSa groups), QSPI2 (TLF35585), QSPI3 (FuSa SPI slave)
+ *   CPU1: I2C1 (APML)
+ *   CPU3: I2C0 (USB-PD)
  */
 
 #ifndef IPC_H
@@ -101,10 +102,10 @@ typedef struct
 } Ipc_CmdMailbox_t;
 
 /* ================================================================== */
-/*  Shared mailbox: CPU1 → CPU2 (VoltMon scan-stop handshake)         */
-/*  Writer (reqSeq): CPU1 only.  Writer (ackSeq): CPU2 only.          */
+/*  Shared mailbox: CPU1 → CPU0 (VoltMon scan-stop handshake)         */
+/*  Writer (reqSeq): CPU1 only.  Writer (ackSeq): CPU0 only.          */
 /*                                                                    */
-/*  CPU1 bumps reqSeq before tearing down rail groups; CPU2's         */
+/*  CPU1 bumps reqSeq before tearing down rail groups; CPU0's         */
 /*  VoltMon_Scan() sets ackSeq = reqSeq the first iteration it        */
 /*  observes scanning is gated off.  Since VoltMon_Scan() runs to     */
 /*  completion synchronously, that ack guarantees no conversion is    */
@@ -114,7 +115,7 @@ typedef struct
 typedef struct
 {
     volatile uint32 reqSeq;     /**< Incremented by CPU1 to request a stop */
-    volatile uint32 ackSeq;     /**< Set to reqSeq by CPU2 once stopped */
+    volatile uint32 ackSeq;     /**< Set to reqSeq by CPU0 once stopped */
 } Ipc_VoltMonCtrl_t;
 
 /* ================================================================== */
@@ -279,9 +280,9 @@ void Ipc_UpdatePmcStatus(uint32 pmState, uint32 resetCause,
                          uint32 prochotActive);
 
 /**
- * @brief  Update FuSa voltage data from CPU2.
+ * @brief  Update FuSa voltage data from CPU0.
  *
- * Called after each VoltMon_Scan() on CPU2 to publish
+ * Called after each VoltMon_Scan() on CPU0 to publish
  * channel values to the shared memory block.
  *
  * @param  pChannelMv  Array of 24 uint16 millivolt values.
@@ -292,7 +293,7 @@ void Ipc_UpdateVoltages(const uint16 *pChannelMv, uint32 uvFlags,
                         uint32 ovFlags);
 
 /**
- * @brief  Update TLF PMIC status from CPU2.
+ * @brief  Update TLF PMIC status from CPU0.
  */
 void Ipc_UpdateTlfStatus(uint32 devstat, uint32 syssf, uint32 wdstat,
                          uint32 state, uint32 wdtSvc, uint32 wdtMiss,
@@ -303,8 +304,8 @@ void Ipc_ClearFaultActive(void);
 void Ipc_SignalWarning(uint32 channel, uint32 mv);
 
 /**
- * @brief  CPU1: request CPU2 stop VoltMon scanning and block (bounded)
- *         until CPU2 acknowledges no scan is in flight or left running.
+ * @brief  CPU1: request CPU0 stop VoltMon scanning and block (bounded)
+ *         until CPU0 acknowledges no scan is in flight or left running.
  *
  * @param  timeoutMs  Max time to wait for the acknowledgment.
  * @return TRUE if acknowledged within timeoutMs, FALSE on timeout
@@ -313,7 +314,7 @@ void Ipc_SignalWarning(uint32 channel, uint32 mv);
 boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs);
 
 /**
- * @brief  CPU2: acknowledge the current VoltMon scan-stop request.
+ * @brief  CPU0: acknowledge the current VoltMon scan-stop request.
  *         Called from VoltMon_Scan() whenever scanning is gated off.
  */
 void Ipc_AckVoltMonStop(void);

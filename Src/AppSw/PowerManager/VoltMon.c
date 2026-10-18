@@ -326,17 +326,17 @@ void VoltMon_Disable(void)
 {
     s_voltMonEnabled = FALSE;
 
-    /* Bounded wait for CPU2 to confirm it has stopped and cleared its cache.
-     * CPU2 does the clearing itself, so a timeout here can't race a scan. */
+    /* Bounded wait for CPU0 to confirm it has stopped and cleared its cache.
+     * CPU0 does the clearing itself, so a timeout here can't race a scan. */
     if (!Ipc_RequestVoltMonStopWait(VOLTMON_STOP_ACK_TIMEOUT_MS))
     {
-        Debug_Print("[VMON] WARN: CPU2 did not ack scan stop\r\n");
+        Debug_Print("[VMON] WARN: scan stop not acked\r\n");
     }
     Debug_Print("[VMON] Monitoring disabled\r\n");
 }
 
 /* Emergency paths (PG fault, VIN loss, THERMTRIP): request the stop but
- * don't wait - rails must come down immediately. CPU2 clears and acks
+ * don't wait - rails must come down immediately. CPU0 clears and acks
  * on its next pass. */
 void VoltMon_DisableNoWait(void)
 {

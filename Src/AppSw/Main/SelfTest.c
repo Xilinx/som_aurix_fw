@@ -30,6 +30,7 @@
 #include "UsbPd_Manager.h"
 #include "UsbPd_Hpd.h"
 #include "UsbPd_Cfg.h"
+#include "Platform_Cfg.h"
 
 
 static const char *prv_Result(uint32 err)
@@ -176,7 +177,7 @@ boolean prv_WaitForCores(uint32 timeoutMs)
             }
             if (!g_ipcShared.cpu2Ready)
             {
-                Debug_Print("[SYS]   CPU2 (FuSa) not ready\r\n");
+                Debug_Print("[SYS]   CPU2 not ready\r\n");
             }
             if (!g_ipcShared.cpu3Ready)
             {
@@ -188,18 +189,6 @@ boolean prv_WaitForCores(uint32 timeoutMs)
     return TRUE;
 }
 
-/* Transfer TLF window-watchdog ownership to CPU2. One final service
- * as owner, then publish. CPU2 spins on g_wdtOwner == 2 before its
- * first service, so there is no overlap and a bounded (µs) gap. */
-void prv_HandoverTlfWdt(void)
-{
-    Tlf35585_ServiceWdt();          /* final service as owner */
-    __dsync();
-    g_wdtOwner = 2u;
-    __dsync();
-    Debug_Print("[SYS] All cores running\r\n");
-    Debug_Print("[SYS] TLF WDT -> CPU2\r\n");
-}
 
 /* ================================================================== */
 /*  Local helpers — main loop                                         */
@@ -287,16 +276,17 @@ void prv_ForwardTlfEvents(void)
     }
 }
 
-/* 20 Hz loop pacing with rate-limited overrun reporting. */
+/* CPU0 loop pacing. FuSa runs every pass (5 ms). Firmware-management
+ * work is called once per 10 passes by the caller, so it stays ~50 ms. */
 void prv_PaceLoop(uint32 loopStartMs)
 {
     static uint32 s_lastOverrunLogMs = 0u;
 
     uint32 elapsedMs = Stm_GetTimeMs() - loopStartMs;
 
-    if (elapsedMs < 50u)
+    if (elapsedMs < MAIN_LOOP_PERIOD_MS)
     {
-        Stm_DelayMs(50u - elapsedMs);
+        Stm_DelayMs(MAIN_LOOP_PERIOD_MS - elapsedMs);
     }
     else
     {

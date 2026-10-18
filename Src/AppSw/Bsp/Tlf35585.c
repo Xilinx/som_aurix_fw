@@ -844,8 +844,8 @@ void Tlf35585_DumpStatus(const char *context)
 
 void Tlf35585_EnableIsrMode(void)
 {
-    /* Clear any SRR left over from CPU0's last polled transfer, so
-     * CPU2 doesn't take a spurious interrupt the moment SRE goes on */
+    /* Clear any SRR left over from the last polled transfer before
+     * the QSPI2 service requests are enabled. The ISRs run on CPU0. */
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_TX);
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_RX);
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_ERR);
