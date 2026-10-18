@@ -2,7 +2,8 @@
  * @file    Cpu1_Main.c
  * @brief   CPU1 — Power Management Controller core
  *
- * Owns: PowerManager, SysMonitor, ComHpcWdt, UsbPd, ERU callbacks
+ * Owns: PowerManager, SysMonitor, ComHpcWdt, ERU callbacks
+ * USB-PD (I2C0) lives on CPU3. I2C1 slave stays off (SB-TSI only).
  * Reads: g_ipcShared.cmd (commands from CPU0)
  *        g_ipcShared.fusa (voltage/PMIC faults from CPU2)
  * Writes: g_ipcShared.pmc (PM state, temp, PROCHOT)
@@ -19,11 +20,7 @@
 #include "Platform_Cfg.h"
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
-#include "UsbPd_Manager.h"
-#include "UsbPd_Hpd.h"
-#include "UsbPd_ApuProxy.h"
 #include "I2c_Slave.h"
-#include "UsbPd_Cfg.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -127,20 +124,13 @@ void core1_main(void)
     Debug_Print("[CPU1] Init: ComHpcWdt OK\r\n");
 #endif
 
-#if (USBPD_FEATURE_ENABLE == 1u)
 #if (I2C1_APU_SLAVE_ENABLE == 1u)
     I2cSlave_Init(NULL_PTR);
 #else
     /* Schematic: I2C1 = SB-TSI only. APU never masters this bus.
-     * I2cSlave_Init leaves MNS=0 and is the PM-state-6 hang (log1).
-     * USB-PD HPI stays on I2C0. Re-enable only with I2C1_APU_SLAVE_ENABLE
-     * and the existing Suspend/Resume around APML. */
+     * I2cSlave_Init leaves MNS=0 and is the PM-state-6 hang.
+     * USB-PD HPI is I2C0 on CPU3. */
     Debug_Print("[CPU1] I2C1 slave 0x54 not started (SB-TSI only)\r\n");
-#endif
-    UsbPd_Hpd_Init();
-    UsbPd_ApuProxy_Init();
-    UsbPdManager_Init();
-    Debug_Print("[CPU1] Init: UsbPd OK\r\n");
 #endif
 #endif
 
@@ -162,8 +152,6 @@ void core1_main(void)
         prv_CheckFusaFaults();
 
 #if !defined(TARGET_EVAL_BOARD)
-        UsbPd_Hpd_Run();
-
 #if (SYSMON_CARRIER_WD_ENABLE == 1u)
         ComHpcWdt_Run();
 #endif
@@ -171,12 +159,6 @@ void core1_main(void)
         /* Always run SysMonitor so leave-S0 resets the APML dwell.
          * APML itself is gated on PM_STATE_ON + dwell + TransitionPending. */
         SysMonitor_Run();
-        if (PowerManager_GetState() == PM_STATE_ON)
-        {
-#if (USBPD_FEATURE_ENABLE == 1u)
-            UsbPdManager_Run();
-#endif
-        }
 #endif
 
         prv_PublishStatus();

@@ -152,14 +152,14 @@ void SelfTest_PFlash(void)
 /*  Local helpers — Phase 3 (core release / WDT handover)             */
 /* ================================================================== */
 
-/* Wait for CPU1/CPU2 ready flags, servicing the TLF WDT while CPU0
+/* Wait for CPU1/CPU2/CPU3 ready flags, servicing the TLF WDT while CPU0
  * still owns it and draining core log rings so init output appears
- * live. Returns TRUE if both cores came up within timeoutMs. */
+ * live. Returns TRUE if all three came up within timeoutMs. */
 boolean prv_WaitForCores(uint32 timeoutMs)
 {
     uint32 waitStart = Stm_GetTimeMs();
 
-    while (!g_ipcShared.cpu1Ready || !g_ipcShared.cpu2Ready)
+    while (!g_ipcShared.cpu1Ready || !g_ipcShared.cpu2Ready || !g_ipcShared.cpu3Ready)
     {
         if (g_wdtOwner == 0u)
         {
@@ -177,6 +177,10 @@ boolean prv_WaitForCores(uint32 timeoutMs)
             if (!g_ipcShared.cpu2Ready)
             {
                 Debug_Print("[SYS]   CPU2 (FuSa) not ready\r\n");
+            }
+            if (!g_ipcShared.cpu3Ready)
+            {
+                Debug_Print("[SYS]   CPU3 (USB-PD) not ready\r\n");
             }
             return FALSE;
         }

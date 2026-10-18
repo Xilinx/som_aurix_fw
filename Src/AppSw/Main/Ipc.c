@@ -17,6 +17,7 @@ volatile Ipc_SharedMem_t g_ipcShared __attribute__((section(".ipc_shared")));
 volatile uint32 g_wdtOwner __attribute__((section(".ipc_shared"))) = 0u;
 volatile Ipc_DbgRing_t g_dbgRing1 __attribute__((section(".ipc_shared")));
 volatile Ipc_DbgRing_t g_dbgRing2 __attribute__((section(".ipc_shared")));
+volatile Ipc_DbgRing_t g_dbgRing3 __attribute__((section(".ipc_shared")));
 volatile uint32 g_bootTrace     __attribute__((section(".ipc_shared")));
 volatile uint32 g_prevBootTrace __attribute__((section(".ipc_shared")));
 /* ================================================================== */
@@ -99,6 +100,8 @@ void Ipc_Init(void)
         g_dbgRing1.tail = 0u;
         g_dbgRing2.head = 0u;  
         g_dbgRing2.tail = 0u;
+        g_dbgRing3.head = 0u;
+        g_dbgRing3.tail = 0u;
         g_ipcShared.voltMon.reqSeq = 0u;
         g_ipcShared.voltMon.ackSeq = 0u;
         __dsync();

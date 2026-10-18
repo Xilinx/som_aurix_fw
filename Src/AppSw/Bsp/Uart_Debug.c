@@ -108,9 +108,9 @@ static void prv_RingPut(volatile Ipc_DbgRing_t *r, const char *s)
 
 void Debug_DrainRings(void)
 {
-    volatile Ipc_DbgRing_t *rings[2] = { &g_dbgRing1, &g_dbgRing2 };
+    volatile Ipc_DbgRing_t *rings[3] = { &g_dbgRing1, &g_dbgRing2, &g_dbgRing3 };
     uint32 i;
-    for (i = 0u; i < 2u; i++)
+    for (i = 0u; i < 3u; i++)
     {
         uint32 t = rings[i]->tail;
         uint32 h = rings[i]->head;
@@ -139,7 +139,8 @@ void Debug_Print(const char *str)
     {
         case 1:  prv_RingPut(&g_dbgRing1, str); return;
         case 2:  prv_RingPut(&g_dbgRing2, str); return;
-        default: break;                          /* CPU0, CPU3 fall through */
+        case 3:  prv_RingPut(&g_dbgRing3, str); return;
+        default: break;                          /* CPU0 falls through */
     }
 
     {
@@ -170,7 +171,8 @@ void Debug_FlushBlocking(void)
     Ifx_TickTime deadline = IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
 
     /* 1. CPU1/CPU2 rings -> ASC FIFO (bounded, in case the UART is wedged) */
-    while (((g_dbgRing1.head != g_dbgRing1.tail) || (g_dbgRing2.head != g_dbgRing2.tail))
+    while (((g_dbgRing1.head != g_dbgRing1.tail) || (g_dbgRing2.head != g_dbgRing2.tail) ||
+            (g_dbgRing3.head != g_dbgRing3.tail))
            && (IfxStm_get(BSP_DEFAULT_TIMER) < deadline))
     {
         Debug_DrainRings();

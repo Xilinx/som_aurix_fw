@@ -1,34 +1,74 @@
 /**
  * @file    Cpu3_Main.c
- * @brief   CPU3 — IDLE Core
+ * @brief   CPU3 — USB-PD core (Wes v39)
  *
- * Owns: Nothing, set to IDLE
+ * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager on I2C0 (CYPD).
+ * Reads: g_ipcShared.pmc.pmState (published by CPU1) to gate HPI polling.
+ * Does not touch I2C1. The 0x54 slave stays disabled on CPU1.
  *
- * Design: minimal shared data flow, CPU2 writes only, others read.
- * Peripheral access is exclusive — no other core touches EVADC/QSPI2/QSPI3.
+ * Loop is 50 ms. USB-PD is not a 5 ms safety task.
  */
-
 
 #include "Ifx_Types.h"
 #include "IfxCpu.h"
 #include "IfxScuWdt.h"
-#include "IfxPort.h"
 #include "Ipc.h"
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
-#include "VoltMon.h"
-#include "Tlf35585.h"
-#include "FusaSpi.h"
-#include "Platform_Cfg.h"
-#include "Platform_PinCfg.h"
-#include "AppPin.h"
+#include "PowerManager.h"
+#include "UsbPd_Manager.h"
+#include "UsbPd_Hpd.h"
+#include "UsbPd_ApuProxy.h"
+#include "UsbPd_Cfg.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
+
+#ifndef USBPD_LOOP_PERIOD_MS
+#define USBPD_LOOP_PERIOD_MS    50u
+#endif
 
 void core3_main(void)
 {
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
+    IfxCpu_enableInterrupts();
+
     IfxCpu_emitEvent(&g_cpuSyncEvent);
     while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}
-    for (;;) { __nop(); }
+
+#if !defined(TARGET_EVAL_BOARD) && (USBPD_FEATURE_ENABLE == 1u)
+    Debug_Print("[CPU3] Init: UsbPd...\r\n");
+    UsbPd_Hpd_Init();
+    UsbPd_ApuProxy_Init();
+    UsbPdManager_Init();
+    Debug_Print("[CPU3] Init: UsbPd OK\r\n");
+#else
+    Debug_Print("[CPU3] UsbPd skipped\r\n");
+#endif
+
+    Debug_Print("[CPU3] Ready\r\n");
+    g_ipcShared.cpu3Ready = TRUE;
+    __dsync();
+
+    for (;;)
+    {
+        uint32 loopStartMs = Stm_GetTimeMs();
+
+#if !defined(TARGET_EVAL_BOARD) && (USBPD_FEATURE_ENABLE == 1u)
+        UsbPd_Hpd_Run();
+        /* ON is CPU1's sequencer state, published into LMU before APML.
+         * Do not call PowerManager_GetState() — that static lives with CPU1. */
+        if (g_ipcShared.pmc.pmState == (uint32)PM_STATE_ON)
+        {
+            UsbPdManager_Run();
+        }
+#endif
+
+        {
+            uint32 elapsed = Stm_GetTimeMs() - loopStartMs;
+            if (elapsed < USBPD_LOOP_PERIOD_MS)
+            {
+                Stm_DelayMs(USBPD_LOOP_PERIOD_MS - elapsed);
+            }
+        }
+    }
 }

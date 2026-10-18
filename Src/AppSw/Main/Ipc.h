@@ -195,6 +195,7 @@ typedef struct
     Ipc_VoltMonCtrl_t  voltMon;        /**< CPU1 <-> CPU2: scan-stop handshake */
     volatile uint32    cpu1Ready;
     volatile uint32    cpu2Ready;
+    volatile uint32    cpu3Ready;       /**< CPU3 USB-PD init done */
     volatile uint32    sysmonPause;
 } Ipc_SharedMem_t;
 
@@ -217,6 +218,7 @@ extern volatile Ipc_SharedMem_t g_ipcShared __attribute__((section(".ipc_shared"
 extern volatile uint32 g_wdtOwner;
 extern volatile Ipc_DbgRing_t g_dbgRing1;   /* CPU1 writes */
 extern volatile Ipc_DbgRing_t g_dbgRing2;   /* CPU2 writes */
+extern volatile Ipc_DbgRing_t g_dbgRing3;   /* CPU3 writes */
 extern volatile uint32 g_bootTrace;       /* written by this boot */
 extern volatile uint32 g_prevBootTrace;
 
