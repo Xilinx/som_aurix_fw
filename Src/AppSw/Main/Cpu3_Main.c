@@ -2,9 +2,11 @@
  * @file    Cpu3_Main.c
  * @brief   CPU3 — USB-PD core
  *
- * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager on I2C0 (CYPD).
+ * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager, and the I2C0
+ * sideband slave at 0x54. CYPD master and that slave share MODULE_I2C0;
+ * master transfers park the slave and restore it.
  * Reads: g_ipcShared.pmc.pmState (published by CPU1) to gate HPI polling.
- * Does not touch I2C1. The 0x54 slave stays disabled on CPU1.
+ * Does not touch I2C1 (APML, CPU1, master only).
  *
  * Loop is 50 ms. USB-PD is not a 5 ms safety task.
  */
@@ -20,6 +22,7 @@
 #include "UsbPd_Hpd.h"
 #include "UsbPd_ApuProxy.h"
 #include "UsbPd_Cfg.h"
+#include "I2c_Slave.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -39,6 +42,7 @@ void core3_main(void)
     Debug_Print("[CPU3] Init: UsbPd...\r\n");
     UsbPd_Hpd_Init();
     UsbPd_ApuProxy_Init();
+    I2cSlave_Init(NULL_PTR);
     UsbPdManager_Init();
     Debug_Print("[CPU3] Init: UsbPd OK\r\n");
 #else

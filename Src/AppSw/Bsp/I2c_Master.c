@@ -121,14 +121,13 @@ void I2cMaster_AbortBus(uint8 busIdx)
 
 void I2cMaster_OnLeaveS0(void)
 {
-    I2cSlave_Suspend();
+    /* I2C1 is master-only. Do not park the I2C0 sideband slave from CPU1. */
     I2cMaster_AbortBus(1u);
 }
 
 void I2cMaster_OnEnterS0(void)
 {
     I2cMaster_ReinitBus(1u);
-    I2cSlave_Resume();   /* no-op unless I2cSlave_Init ran (I2C1_APU_SLAVE_ENABLE) */
 }
 
 static boolean prv_WaitBusIdle(uint8 busIdx, uint32 timeoutMs)
@@ -223,7 +222,8 @@ static void prv_PrepareMasterXfer(IfxI2c_I2c_Device *dev)
 
 static void prv_LockBusForMaster(uint8 busIdx, IfxI2c_I2c_Device *dev)
 {
-    if (busIdx == 1u)
+    /* CYPD master and the 0x54 slave share MODULE_I2C0. */
+    if (busIdx == 0u)
     {
         I2cSlave_Suspend();
     }
@@ -232,7 +232,7 @@ static void prv_LockBusForMaster(uint8 busIdx, IfxI2c_I2c_Device *dev)
 
 static void prv_UnlockBus(uint8 busIdx)
 {
-    if (busIdx == 1u)
+    if (busIdx == 0u)
     {
         I2cSlave_Resume();
     }

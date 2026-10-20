@@ -1,29 +1,13 @@
 /**
  * @file    I2c_Slave.c
- * @brief   Raw-register I2C1 slave driver
+ * @brief   Raw-register I2C0 slave for the Ryzen USB-C sideband
  *
- * The TC3xx I2C module supports slave mode via ADDRCFG.MNS=0.
- * This driver configures I2C1 to respond to two 7-bit addresses
- * (0x54 and 0x58) and serves the APU proxy register map from
- * the ISR.
+ * MODULE_I2C0 is dual-role on CPU3:
+ *   - Slave (MNS=0) at 0x54, serving UsbPd_ApuProxy from the ISR
+ *   - Master to the carrier CYPD controllers between Suspend/Resume
  *
- * Dual-role operation:
- *   - Default: slave mode (MNS=0), listening for APU reads
- *   - During APML transactions: I2cSlave_Suspend() parks the slave
- *     (MNS=1, master FIFO, SOPE=1), I2cMaster does its transaction,
- *     I2cSlave_Resume() restores slave ADDR/FIFO via I2cSlave_Start().
- *   I2cMaster_ApmlReadByte / any I2C1 master helper must call these.
- *
- * The TC3xx I2C peripheral has two address registers (ADDR1, ADDR2)
- * in some variants, or can use 10-bit mode tricks.  For simplicity,
- * we use a single address register and detect which port the APU
- * addressed by checking the received address byte in the ISR.
- *
- * NOTE: This is a simplified implementation.  The TC387 I2C module
- * behavior under simultaneous master/slave may require additional
- * bus arbitration logic on the production SoM.  For v0.2, the APML
- * reads are infrequent (every 500ms) and the APU polls are also
- * infrequent, so collisions are statistically rare.
+ * I2C1 is not touched. APML stays a master-only bus.
+ * ADDRCFG.ADR is a single field, so only 0x54 is armed.
  */
 
 #include "I2c_Slave.h"
@@ -31,6 +15,8 @@
 #include "UsbPd_ApuProxy.h"
 #include "IfxCpu_Irq.h"
 #include "IfxScuWdt.h"
+#include "IfxI2c.h"
+#include "IfxSrc.h"
 #include "Uart_Debug.h"
 #include "Stm_Timer.h"
 
@@ -138,10 +124,9 @@ void I2cSlave_Stop(I2cSlave_Inst_t *s)
 void I2cSlave_Poll(I2cSlave_Inst_t *s) { prv_Service(s); }
 
 /* ---------------------------------------------------------------- */
-/*  Legacy I2C1 / APU proxy path (ISR driven)                        */
+/*  APU sideband on MODULE_I2C0, ISR on CPU3                         */
 /* ---------------------------------------------------------------- */
 static I2cSlave_Inst_t s_apu;
-static volatile boolean s_suspended = FALSE;
 static boolean s_inited = FALSE;
 
 static boolean prv_ApuReadCb(uint8 portIdx, uint8 regAddr, uint8 *pData)
@@ -153,35 +138,71 @@ static boolean prv_ApuReadCb(uint8 portIdx, uint8 regAddr, uint8 *pData)
     return TRUE;
 }
 
-IFX_INTERRUPT(i2c1SlaveISR, 0, I2C1_SLAVE_ISR_PRIO) { prv_Service(&s_apu); }
+static void prv_ArmSlaveIrq(Ifx_I2C *i2c)
+{
+    /* 1 = source enabled (iLLD PIRQSM / IMSC). A zero mask never fires. */
+    IfxI2c_enableProtocolInterruptSource(i2c, IfxI2c_ProtocolInterruptSource_addressMatch);
+    IfxI2c_enableProtocolInterruptSource(i2c, IfxI2c_ProtocolInterruptSource_notAcknowledgeReceived);
+    IfxI2c_enableProtocolInterruptSource(i2c, IfxI2c_ProtocolInterruptSource_arbitrationLost);
+    IfxI2c_enableProtocolInterruptSource(i2c, IfxI2c_ProtocolInterruptSource_transmissionEnd);
+    IfxI2c_enableProtocolInterruptSource(i2c, IfxI2c_ProtocolInterruptSource_receiveMode);
+    IfxI2c_enableProtocolInterruptFlag(i2c);
+    IfxI2c_enableDtrInterruptSource(i2c, IfxI2c_DtrInterruptSource_lastSingleRequest);
+    IfxI2c_enableDtrInterruptSource(i2c, IfxI2c_DtrInterruptSource_singleRequest);
+    IfxI2c_enableDtrInterruptSource(i2c, IfxI2c_DtrInterruptSource_lastBurstRequest);
+    IfxI2c_enableDtrInterruptSource(i2c, IfxI2c_DtrInterruptSource_burstRequest);
+}
+
+static void prv_SetSlaveSrc(Ifx_I2C *i2c, boolean enable)
+{
+    volatile Ifx_SRC_SRCR *pSrc = IfxI2c_getProtocolSrcPointer(i2c);
+    volatile Ifx_SRC_SRCR *dSrc = IfxI2c_getDtrSrcPointer(i2c);
+
+    if (enable == FALSE)
+    {
+        IfxSrc_disable(pSrc);
+        IfxSrc_disable(dSrc);
+        return;
+    }
+    /* Same SRPN: protocol match and FIFO requests enter one CPU3 handler. */
+    IfxSrc_init(pSrc, IfxSrc_Tos_cpu3, I2C0_SLAVE_ISR_PRIO);
+    IfxSrc_init(dSrc, IfxSrc_Tos_cpu3, I2C0_SLAVE_ISR_PRIO);
+    IfxSrc_enable(pSrc);
+    IfxSrc_enable(dSrc);
+}
+
+IFX_INTERRUPT(i2c0SlaveISR, 3, I2C0_SLAVE_ISR_PRIO) { prv_Service(&s_apu); }
 
 void I2cSlave_Init(I2cSlave_ReadCb_t readCb)
 {
     uint16 pw = IfxScuWdt_getCpuWatchdogPassword();
-    I2cSlave_Setup(&s_apu, &MODULE_I2C1, I2C_SLV_USBC0_ADDR, 0u,
+    I2cSlave_Setup(&s_apu, &MODULE_I2C0, I2C_SLV_USBC0_ADDR, 0u,
                    (readCb != NULL_PTR) ? readCb : prv_ApuReadCb);
     IfxScuWdt_clearCpuEndinit(pw);
     I2cSlave_Start(&s_apu);
-    MODULE_I2C1.PIRQSM.U = 0u;                    /* verify polarity in regdef: 0 = unmasked */
+    prv_ArmSlaveIrq(&MODULE_I2C0);
     IfxScuWdt_setCpuEndinit(pw);
-    IfxCpu_Irq_installInterruptHandler(&i2c1SlaveISR, I2C1_SLAVE_ISR_PRIO);
-    s_suspended = FALSE;
+    /* Must run on CPU3: the handler is installed in the calling core's table. */
+    IfxCpu_Irq_installInterruptHandler(&i2c0SlaveISR, I2C0_SLAVE_ISR_PRIO);
+    prv_SetSlaveSrc(&MODULE_I2C0, TRUE);
     s_inited = TRUE;
-    Debug_Printf("[I2C_SLV] I2C1 slave @0x%02X\r\n", (unsigned)I2C_SLV_USBC0_ADDR);
+    Debug_Printf("[I2C_SLV] I2C0 slave @0x%02X on CPU3\r\n",
+                 (unsigned)I2C_SLV_USBC0_ADDR);
 }
 
 boolean I2cSlave_IsBusy(void) { return s_apu.busy; }
 
 void I2cSlave_Suspend(void)
 {
-    Ifx_I2C *i2c = &MODULE_I2C1;
+    Ifx_I2C *i2c;
 
     if (s_inited == FALSE)
     {
         return;
     }
-    /* RUN=0 required to write ADDRCFG/FIFOCFG.  Park as master-only with
-     * 1-word byte FIFO so APML cannot inherit the slave burst-8 setting. */
+    i2c = s_apu.mod;
+    /* Drop the CPU3 IRQ before rewriting ADDRCFG, or the ISR races the master. */
+    prv_SetSlaveSrc(i2c, FALSE);
     i2c->RUNCTRL.B.RUN  = 0u;
     i2c->ADDRCFG.B.MNS  = 1u;
     i2c->ADDRCFG.B.SOPE = 1u;
@@ -196,7 +217,6 @@ void I2cSlave_Suspend(void)
     i2c->ERRIRQSC.U = 0xFFFFFFFFu;
     i2c->ICR.U = 0xFFFFFFFFu;
     i2c->RUNCTRL.B.RUN = 1u;
-    s_suspended = TRUE;
 }
 
 void I2cSlave_Resume(void)
@@ -206,7 +226,8 @@ void I2cSlave_Resume(void)
         return;
     }
     I2cSlave_Start(&s_apu);
-    s_suspended = FALSE;
+    prv_ArmSlaveIrq(s_apu.mod);
+    prv_SetSlaveSrc(s_apu.mod, TRUE);
 }
 
 #else

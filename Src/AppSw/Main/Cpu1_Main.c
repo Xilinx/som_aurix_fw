@@ -3,7 +3,8 @@
  * @brief   CPU1 — Power Management Controller core
  *
  * Owns: PowerManager, SysMonitor, ComHpcWdt, ERU callbacks
- * USB-PD (I2C0) lives on CPU3. I2C1 slave stays off (SB-TSI only).
+ * USB-PD (I2C0 master + 0x54 sideband slave) lives on CPU3.
+ * I2C1 is APML / SB-TSI, master only.
  * Reads: g_ipcShared.cmd (commands from CPU0)
  *        g_ipcShared.fusa (voltage/PMIC faults from CPU2)
  * Writes: g_ipcShared.pmc (PM state, temp, PROCHOT)
@@ -20,7 +21,6 @@
 #include "Platform_Cfg.h"
 #include "SysMonitor.h"
 #include "ComHpcWdt.h"
-#include "I2c_Slave.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -124,14 +124,6 @@ void core1_main(void)
     Debug_Print("[CPU1] Init: ComHpcWdt OK\r\n");
 #endif
 
-#if (I2C1_APU_SLAVE_ENABLE == 1u)
-    I2cSlave_Init(NULL_PTR);
-#else
-    /* Schematic: I2C1 = SB-TSI only. APU never masters this bus.
-     * I2cSlave_Init leaves MNS=0 and is the PM-state-6 hang.
-     * USB-PD HPI is I2C0 on CPU3. */
-    Debug_Print("[CPU1] I2C1 slave 0x54 not started (SB-TSI only)\r\n");
-#endif
 #endif
 
     s_lastAckedSeq = g_ipcShared.cmd.seqNum;

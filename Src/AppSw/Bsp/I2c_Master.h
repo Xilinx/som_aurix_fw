@@ -84,13 +84,14 @@ void I2cMaster_ReinitBus(uint8 busIdx);
 void I2cMaster_AbortBus(uint8 busIdx);
 
 /**
- * @brief Leave-S0 hygiene: park I2C1 slave, abort/reinit I2C1 master.
+ * @brief Leave-S0 hygiene: abort/reinit the I2C1 APML master.
  *        Call from PowerManager on S0→S5 / S0i3 / fault / forced-off.
+ *        Does not touch the I2C0 sideband slave.
  */
 void I2cMaster_OnLeaveS0(void);
 
 /**
- * @brief Re-enter-S0 hygiene: reinit I2C1 master, restore I2C1 slave.
+ * @brief Re-enter-S0 hygiene: reinit the I2C1 APML master.
  *        Call from PowerManager when entering PM_STATE_ON.
  */
 void I2cMaster_OnEnterS0(void);
