@@ -81,6 +81,7 @@ void ComHpcWdt_Enable(uint16 enableDelayS, uint32 timeoutMs)
     s_enableDelayEndMs = Stm_GetTimeMs() + (delayS * 1000u);
     s_strobeReceived   = FALSE;
     g_state            = WDT_STATE_ENABLE_DELAY;
+    __dsync();
 
     Debug_Printf("[WDT] Enabled: %us delay, %ums timeout.\r\n",
                  (unsigned)delayS, (unsigned)timeoutMs);
@@ -94,6 +95,7 @@ void ComHpcWdt_Disable(void)
     }
     prv_DeassertWdOut();
     g_state = WDT_STATE_IDLE;
+    __dsync();
     Debug_Print("[WDT] Disabled.\r\n");
 }
 
@@ -103,6 +105,7 @@ void ComHpcWdt_OnStrobeIsr(void)
      * Stm_GetTimeMs() is safe to call from ISR (reads STM counter). */
     s_lastStrobeMs   = Stm_GetTimeMs();
     s_strobeReceived = TRUE;
+    __dsync();
 }
 
 void ComHpcWdt_Run(void)

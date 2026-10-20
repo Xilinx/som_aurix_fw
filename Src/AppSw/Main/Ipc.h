@@ -3,11 +3,11 @@
  * @brief   Inter-core communication infrastructure for TC387
  *
  * Multicore partitioning:
- *   CPU0 → Startup, OTA, NV, Debug CLI, UART, and FuSa
- *          (VoltMon, TLF35585 service, FusaSpi). TLF watchdog owner stays 0.
- *   CPU1 → PMC: PowerManager, SysMonitor, ComHpcWdt, I2C1 APML
- *   CPU2 → running, no peripherals in this step.
- *   CPU3 → USB-PD on I2C0
+ *   CPU0 → Startup, FuSa (VoltMon, TLF35585, FusaSpi), host watchdog.
+ *          TLF watchdog owner stays 0. QSPI2 IRQ stays on this core.
+ *   CPU1 → PMC: PowerManager, SysMonitor, I2C1 APML. THERMTRIP ISR.
+ *   CPU2 → Steady-state ASCLIN0, Debug CLI, NvLog, FwUpdate, PFlash.
+ *   CPU3 → USB-PD on I2C0, sideband slave at 0x54.
  *
  * Shared data lives in LMU SRAM (0xB0000000, accessible from all cores
  * via the SRI crossbar).  Each field has a single writer (producer)
@@ -21,10 +21,11 @@
  *   3. CPU1 ISR reads command, processes it, writes ackNum = seqNum
  *
  * Peripheral ownership (each peripheral assigned to exactly one core):
- *   CPU0: ASCLIN0 (debug UART), ASCLIN1/4 (transfer UART), DFlash, PFlash,
- *         EVADC (FuSa groups), QSPI2 (TLF35585), QSPI3 (FuSa SPI slave)
- *   CPU1: I2C1 (APML)
- *   CPU3: I2C0 (USB-PD)
+ *   CPU0: ASCLIN4 (transfer UART), EVADC, QSPI2 (TLF35585), QSPI3,
+ *         boot-time DFlash/PFlash. Steady-state PFlash is CPU2.
+ *   CPU1: I2C1 (APML), THERMTRIP ERU
+ *   CPU2: ASCLIN0 after handoff, PFlash updates
+ *   CPU3: I2C0 (USB-PD master and 0x54 slave)
  */
 
 #ifndef IPC_H
@@ -198,6 +199,7 @@ typedef struct
     volatile uint32    cpu2Ready;
     volatile uint32    cpu3Ready;       /**< CPU3 USB-PD init done */
     volatile uint32    sysmonPause;
+    volatile uint32    uartOwner;       /**< 0 CPU0, 1 CPU2 requested, 2 CPU0 stopped, 3 CPU2 */
 } Ipc_SharedMem_t;
 
 typedef struct {
@@ -217,8 +219,9 @@ typedef struct {
 
 extern volatile Ipc_SharedMem_t g_ipcShared __attribute__((section(".ipc_shared")));
 extern volatile uint32 g_wdtOwner;
+extern volatile Ipc_DbgRing_t g_dbgRing0;   /* CPU0 writes after UART handoff */
 extern volatile Ipc_DbgRing_t g_dbgRing1;   /* CPU1 writes */
-extern volatile Ipc_DbgRing_t g_dbgRing2;   /* CPU2 writes */
+extern volatile Ipc_DbgRing_t g_dbgRing2;   /* CPU2 writes until it owns ASCLIN0 */
 extern volatile Ipc_DbgRing_t g_dbgRing3;   /* CPU3 writes */
 extern volatile uint32 g_bootTrace;       /* written by this boot */
 extern volatile uint32 g_prevBootTrace;

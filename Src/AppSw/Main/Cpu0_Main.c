@@ -38,8 +38,9 @@
 #include "FwUpdate.h"
 #include "BiosRom.h"
 #include "Bist.h"
-#include "DebugCli.h"
 #include "Platform_PinCfg.h"
+#include "Eru_FaultIsr.h"
+#include "ComHpcWdt.h"
 #include "SysMonitor.h"
 #include "SelfTest.h"
 #include "VoltMon.h"
@@ -48,9 +49,6 @@
 #include "AppPin.h"
 
 #define SOTA_TEST_NO_COMMIT 0
-
-/* Firmware management stays at ~50 ms while FuSa runs every 5 ms. */
-#define CPU0_FW_DECIM          10u
 
 static boolean s_fusaReady = FALSE;
 
@@ -253,8 +251,14 @@ int core0_main(void)
     if (prv_WaitForCores(5000u))
     {
         prv_InitFusa();
+        /* QSPI2 TLF IRQ is already TOS CPU0, the watchdog owner.
+         * PFlash erase runs on CPU2, so this loop keeps servicing
+         * the window while a sector erase has CPU2's interrupts off. */
+        ComHpcWdt_Init();
+        Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
+        Eru_FaultIsr_Init();
         Debug_Print("[SYS] All cores running\r\n");
-        Debug_Print("[SYS] TLF WDT stays on CPU0\r\n");
+        Debug_Print("[SYS] TLF WDT and host WDT stay on CPU0\r\n");
     }
     if (bootStatus == BOOTVALID_PENDING)
     {
@@ -274,12 +278,18 @@ int core0_main(void)
     /* ============================================================== */
     Debug_DrainRings();                  /* flush tail of core init logs */
     Debug_Print("[SYS] CPU0 entering main loop\r\n");
-    DebugCli_Init();
 
     for (;;)
     {
-        static uint32 s_fwTick = 0u;
         uint32 loopStartMs = Stm_GetTimeMs();
+
+        /* CPU2 asked for the debug UART. Flush, then stop touching it. */
+        if (g_ipcShared.uartOwner == 1u)
+        {
+            Debug_FlushBlocking();
+            g_ipcShared.uartOwner = 2u;
+            __dsync();
+        }
 
         if (s_fusaReady)
         {
@@ -290,21 +300,12 @@ int core0_main(void)
             Tlf35585_ServiceWdt();
         }
 
-        s_fwTick++;
-        if ((s_fwTick % CPU0_FW_DECIM) == 0u)
+        ComHpcWdt_Run();
+
+        if (g_ipcShared.uartOwner < 2u)
         {
-            NvLog_Run();
-            FwUpdate_Run();
-            DebugCli_Run();
-            DebugCli_Poll();
-#if !defined(SOTA_TEST_NO_COMMIT)
-            prv_CommitSotaOnce();
-#endif
-            prv_ForwardVoltageFaults();
-            prv_ForwardVoltageWarnings();
-            prv_ForwardTlfEvents();
+            Debug_DrainRings();
         }
-        Debug_DrainRings();
 
         prv_PaceLoop(loopStartMs);
     }

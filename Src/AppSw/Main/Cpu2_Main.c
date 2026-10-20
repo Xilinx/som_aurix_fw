@@ -1,10 +1,11 @@
 /**
  * @file    Cpu2_Main.c
- * @brief   CPU2 — running, no peripherals in this step
+ * @brief   CPU2 — firmware management and steady-state debug UART
  *
- * FuSa (VoltMon, TLF service, FusaSpi) runs on CPU0.
- * This core must not wait on g_wdtOwner. That wait used to hang
- * the core once ownership stopped moving off CPU0.
+ * After CPU0 finishes boot, this core takes ASCLIN0, NvLog, FwUpdate,
+ * the debug CLI, and PFlash updates. FuSa and the TLF watchdog stay
+ * on CPU0, so a PFlash sector erase here does not stop the window
+ * service. This core must not wait on g_wdtOwner.
  */
 
 #include "Ifx_Types.h"
@@ -13,6 +14,11 @@
 #include "Ipc.h"
 #include "Stm_Timer.h"
 #include "Uart_Debug.h"
+#include "PFlash.h"
+#include "NvLog.h"
+#include "FwUpdate.h"
+#include "DebugCli.h"
+#include "SelfTest.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -36,11 +42,42 @@ void core2_main(void)
     for (;;)
     {
         uint32 loopStartMs = Stm_GetTimeMs();
-        uint32 elapsed = Stm_GetTimeMs() - loopStartMs;
 
-        if (elapsed < CPU2_LOOP_PERIOD_MS)
+        if (g_ipcShared.uartOwner == 0u)
         {
-            Stm_DelayMs(CPU2_LOOP_PERIOD_MS - elapsed);
+            g_ipcShared.uartOwner = 1u;
+            __dsync();
+        }
+        else if (g_ipcShared.uartOwner == 2u)
+        {
+            Debug_ClaimSteadyState();
+            g_ipcShared.uartOwner = 3u;
+            __dsync();
+            /* 0x70100000 is this core's PSPR. Fill it before any erase. */
+            PFlash_Init();
+            DebugCli_Init();
+            Debug_Print("[CPU2] debug UART, CLI, NvLog, FwUpdate\r\n");
+        }
+
+        if (g_ipcShared.uartOwner == 3u)
+        {
+            NvLog_Run();
+            FwUpdate_Run();
+            DebugCli_Run();
+            DebugCli_Poll();
+            prv_CommitSotaOnce();
+            prv_ForwardVoltageFaults();
+            prv_ForwardVoltageWarnings();
+            prv_ForwardTlfEvents();
+            Debug_DrainRings();
+        }
+
+        {
+            uint32 elapsed = Stm_GetTimeMs() - loopStartMs;
+            if (elapsed < CPU2_LOOP_PERIOD_MS)
+            {
+                Stm_DelayMs(CPU2_LOOP_PERIOD_MS - elapsed);
+            }
         }
     }
 }

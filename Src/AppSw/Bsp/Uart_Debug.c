@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "IfxCpu_Irq.h"
+#include "IfxSrc.h"
+#include "IfxAsclin.h"
 #include "Ipc.h"
 #include "Bsp.h"
 
@@ -45,6 +47,33 @@ IFX_INTERRUPT(uartTxISR, 0, UART_TX_ISR_PRIO)
 IFX_INTERRUPT(uartRxISR, 0, UART_RX_ISR_PRIO)
 {
     IfxAsclin_Asc_isrReceive(&s_ascHandle);
+}
+
+/* Same handlers in CPU2's vector table. SRC TOS selects which one runs. */
+IFX_INTERRUPT(uartTxIsrCpu2, 2, UART_TX_ISR_PRIO)
+{
+    IfxAsclin_Asc_isrTransmit(&s_ascHandle);
+}
+
+IFX_INTERRUPT(uartRxIsrCpu2, 2, UART_RX_ISR_PRIO)
+{
+    IfxAsclin_Asc_isrReceive(&s_ascHandle);
+}
+
+void Debug_ClaimSteadyState(void)
+{
+    volatile Ifx_SRC_SRCR *tx = IfxAsclin_getSrcPointerTx(&MODULE_ASCLIN0);
+    volatile Ifx_SRC_SRCR *rx = IfxAsclin_getSrcPointerRx(&MODULE_ASCLIN0);
+
+    /* Call from CPU2 only, after CPU0 has stopped writing the ASC. */
+    IfxSrc_disable(tx);
+    IfxSrc_disable(rx);
+    IfxSrc_init(tx, IfxSrc_Tos_cpu2, UART_TX_ISR_PRIO);
+    IfxSrc_init(rx, IfxSrc_Tos_cpu2, UART_RX_ISR_PRIO);
+    IfxCpu_Irq_installInterruptHandler(&uartTxIsrCpu2, UART_TX_ISR_PRIO);
+    IfxCpu_Irq_installInterruptHandler(&uartRxIsrCpu2, UART_RX_ISR_PRIO);
+    IfxSrc_enable(tx);
+    IfxSrc_enable(rx);
 }
 
 void Debug_Init(void)
@@ -108,9 +137,11 @@ static void prv_RingPut(volatile Ipc_DbgRing_t *r, const char *s)
 
 void Debug_DrainRings(void)
 {
-    volatile Ipc_DbgRing_t *rings[3] = { &g_dbgRing1, &g_dbgRing2, &g_dbgRing3 };
+    volatile Ipc_DbgRing_t *rings[4] = {
+        &g_dbgRing0, &g_dbgRing1, &g_dbgRing2, &g_dbgRing3
+    };
     uint32 i;
-    for (i = 0u; i < 3u; i++)
+    for (i = 0u; i < 4u; i++)
     {
         uint32 t = rings[i]->tail;
         uint32 h = rings[i]->head;
@@ -137,10 +168,23 @@ void Debug_Print(const char *str)
 
     switch (IfxCpu_getCoreIndex())
     {
+        case 0:
+            if (g_ipcShared.uartOwner >= 2u)
+            {
+                prv_RingPut(&g_dbgRing0, str);
+                return;
+            }
+            break;                               /* CPU0 still owns ASCLIN0 */
         case 1:  prv_RingPut(&g_dbgRing1, str); return;
-        case 2:  prv_RingPut(&g_dbgRing2, str); return;
+        case 2:
+            if (g_ipcShared.uartOwner != 3u)
+            {
+                prv_RingPut(&g_dbgRing2, str);
+                return;
+            }
+            break;                               /* CPU2 owns ASCLIN0 */
         case 3:  prv_RingPut(&g_dbgRing3, str); return;
-        default: break;                          /* CPU0 falls through */
+        default: break;
     }
 
     {
@@ -171,8 +215,8 @@ void Debug_FlushBlocking(void)
     Ifx_TickTime deadline = IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
 
     /* 1. CPU1/CPU2 rings -> ASC FIFO (bounded, in case the UART is wedged) */
-    while (((g_dbgRing1.head != g_dbgRing1.tail) || (g_dbgRing2.head != g_dbgRing2.tail) ||
-            (g_dbgRing3.head != g_dbgRing3.tail))
+    while (((g_dbgRing0.head != g_dbgRing0.tail) || (g_dbgRing1.head != g_dbgRing1.tail) ||
+            (g_dbgRing2.head != g_dbgRing2.tail) || (g_dbgRing3.head != g_dbgRing3.tail))
            && (IfxStm_get(BSP_DEFAULT_TIMER) < deadline))
     {
         Debug_DrainRings();

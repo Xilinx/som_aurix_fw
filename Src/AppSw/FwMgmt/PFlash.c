@@ -4,8 +4,10 @@
  *
  * Follows the [CODE-EX] Flash_Programming.c pattern exactly:
  *
- *   1. At init, memcpy the iLLD flash command functions into
- *      CPU0 PSPR and assign function pointers.
+ *   1. At init, memcpy the iLLD flash command functions into the
+ *      calling core's PSPR (0x70100000 is the local alias) and
+ *      assign function pointers. CPU0 calls this at boot. CPU2
+ *      calls it again before it owns firmware updates.
  *
  *   2. For erase: disable interrupts, call the PSPR-resident
  *      erase routine (clear ENDINIT → eraseMultipleSectors →

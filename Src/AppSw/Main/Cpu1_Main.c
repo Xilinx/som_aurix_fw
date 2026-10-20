@@ -2,9 +2,9 @@
  * @file    Cpu1_Main.c
  * @brief   CPU1 — Power Management Controller core
  *
- * Owns: PowerManager, SysMonitor, ComHpcWdt, ERU callbacks
+ * Owns: PowerManager, SysMonitor, I2C1 APML, THERMTRIP callback.
  * USB-PD (I2C0 master + 0x54 sideband slave) lives on CPU3.
- * I2C1 is APML / SB-TSI, master only.
+ * Host watchdog runs on CPU0. I2C1 is APML, master only.
  * Reads: g_ipcShared.cmd (commands from CPU0)
  *        g_ipcShared.fusa (voltage/PMIC faults from CPU2)
  * Writes: g_ipcShared.pmc (PM state, temp, PROCHOT)
@@ -20,7 +20,6 @@
 #include "Eru_FaultIsr.h"
 #include "Platform_Cfg.h"
 #include "SysMonitor.h"
-#include "ComHpcWdt.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -112,18 +111,12 @@ void core1_main(void)
     Debug_Print("[CPU1] Init: PowerManager...\r\n");
     PowerManager_Init();
     Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
+    Eru_ThermtripIsr_Attach();
 
 #if !defined(TARGET_EVAL_BOARD)
     SysMonitor_Init();
     SysMonitor_RegisterShutdownCb(PowerManager_OnThermtripIsr);
     Debug_Print("[CPU1] Init: SysMonitor OK\r\n");
-
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-    Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
-    ComHpcWdt_Init();
-    Debug_Print("[CPU1] Init: ComHpcWdt OK\r\n");
-#endif
-
 #endif
 
     s_lastAckedSeq = g_ipcShared.cmd.seqNum;
@@ -144,10 +137,6 @@ void core1_main(void)
         prv_CheckFusaFaults();
 
 #if !defined(TARGET_EVAL_BOARD)
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-        ComHpcWdt_Run();
-#endif
-
         /* Always run SysMonitor so leave-S0 resets the APML dwell.
          * APML itself is gated on PM_STATE_ON + dwell + TransitionPending. */
         SysMonitor_Run();
