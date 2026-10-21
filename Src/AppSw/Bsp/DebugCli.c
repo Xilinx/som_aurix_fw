@@ -296,7 +296,11 @@ static void prv_CmdColdReset(void)
     Debug_Print("  Requesting cold reboot...\r\n");
     NvLog_WriteU32(NVLOG_EVT_RESET_COLD, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    PowerManager_RequestColdReset();
+    /* Same path as poweron / poweroff / warmreset: CPU1 owns PowerManager.
+     * A direct PowerManager_RequestColdReset() from the CLI core blocks
+     * VoltMon_Disable waiting for CPU0, and after Phase 3 the CLI is CPU2. */
+    if (!Ipc_SendCommandWait(IPC_CMD_COLD_RESET, 0u, 500u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdClearFault(void)
