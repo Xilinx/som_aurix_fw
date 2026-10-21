@@ -9,6 +9,11 @@
  * machine as write2/read2, but every RIS / TX_END wait has an STM
  * deadline; on expiry we stop the kernel and ReinitBus.
  *
+ * TODO: temporary. iLLD 1.20.0 has no bounded or non-blocking
+ * transfer, so prv_Write2Bounded / prv_Read2Bounded are a parallel
+ * copy of write2/read2. Remove this copy when Infineon's iLLD
+ * enhancement lands. Do not grow it.
+ *
  * enableRepeatedStart is applied to ADDRCFG.SOPE (iLLD stores the
  * flag on the device handle but write2 never writes SOPE).  APML
  * SB-TSI requires STOP between Send Byte and Receive Byte.

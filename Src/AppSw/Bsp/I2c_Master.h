@@ -4,6 +4,8 @@
  *
  * Configured for I2C0, 400 kHz Fast Mode, P13.1 (SCL) / P13.2 (SDA).
  * All transactions are blocking with a STM-based timeout guard.
+ * TODO: temporary parallel of iLLD write2/read2 until Infineon adds
+ * a bounded transfer. See I2c_Master.c.
  * The CYPD6129 HPI register access protocol uses 2-byte little-endian
  * register addresses, so both raw byte-array and addressed-read helpers
  * are provided.
