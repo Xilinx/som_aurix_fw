@@ -188,7 +188,7 @@ static void prv_HandleHeader(void)
 
     {
         uint8 active = Swap_GetActiveBank();                /* SCU_SWAPCTRL.ADDRCFG */
-        if (active == 0xFFu)
+        if (active == 0u)
         {
             Debug_Print("[FWUP] Active bank unknown (ADDRCFG) - refusing update\r\n");
             prv_SendNak(FWUPDATE_ERR_BAD_HEADER);
@@ -196,10 +196,11 @@ static void prv_HandleHeader(void)
             return;
         }
 
+        /* Always write the currently-unmapped bank — same rule as the
+         * self-tests now use.  Swap_GetInactiveBase() keys off ADDRCFG. */
         s_targetBank = (active == SWAP_BANK_A) ? 1u : 0u;   /* 1 = B, 0 = A */
-        s_writeBase = (active == SWAP_BANK_A) ? PFLASH_BANK_B_BASE    /* PF2 */
-                                              : PFLASH_BANK_A_BASE;   /* PF0 */
-        s_readBase  = PFLASH_BANK_B_BASE;
+        s_writeBase  = Swap_GetInactiveBase();              /* PF2 if A active, PF0 if B */
+        s_readBase   = s_writeBase;
 
         Debug_Printf("[FWUP] Running bank 0x%02X -> writing bank %s (phys 0x%08X)\r\n",
                      (unsigned)active, (s_targetBank == 1u) ? "B" : "A",
@@ -323,9 +324,8 @@ static uint32 prv_CrcFlash(uint32 baseAddr, uint32 size)
 
 static void prv_HandleVerifying(void)
 {
-    uint32 readBase = (Swap_GetActiveBank() == SWAP_BANK_A)
-                    ? PFLASH_BANK_B_BASE    /* running A, wrote B, read B at 0xA0600000 */
-                    : PFLASH_BANK_A_BASE;   /* running B, wrote A, read A at 0xA0600000 */
+    /* Read back from the bank we just wrote (the unmapped one). */
+    uint32 readBase = Swap_GetInactiveBase();
     uint32 flashCrc = prv_CrcFlash(readBase, s_imageSize);
 
     if (flashCrc != s_imageCrc)

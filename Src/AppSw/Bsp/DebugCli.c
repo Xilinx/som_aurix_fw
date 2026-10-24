@@ -1490,7 +1490,7 @@ static void prv_CmdFwSwap(const char *args)
     uint8 active = Swap_GetActiveBank();
     uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
 
-    if (active == 0xFFu) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
+    if (active == 0u) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
 
     if ((DFlash_ReadSotaMeta(&meta) != DFLASH_OK) || (meta.magic != DFLASH_SOTA_MAGIC) ||
         (meta.pendingUpdate != 1u) || ((uint8)meta.activeBank != target))
@@ -1498,8 +1498,10 @@ static void prv_CmdFwSwap(const char *args)
         Debug_Print("[FWSWAP] no verified update staged in the other bank - refusing\r\n");
         return;
     }
-    /* inactive bank is always readable at 0xA0600000 */
-    if (FwUpdate_CrcFlash(PFLASH_BANK_B_BASE, meta.reserved0) != meta.imageCrc)
+    /* CRC the staged image in the currently-unmapped bank (not hardcoded B). */
+    uint32 stagedBase = Swap_GetInactiveBase();
+    if ((stagedBase == 0u) ||
+        (FwUpdate_CrcFlash(stagedBase, meta.reserved0) != meta.imageCrc))
     {
         Debug_Print("[FWSWAP] staged image CRC mismatch - refusing\r\n");
         return;

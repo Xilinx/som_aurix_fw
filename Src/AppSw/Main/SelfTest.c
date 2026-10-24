@@ -62,6 +62,26 @@ static void prv_ServiceWdtIfOwner(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Erase/write target for the destructive flash tests.               */
+/*                                                                    */
+/*  Always the currently-UNMAPPED bank (same rule as production OTA): */
+/*  running from A -> PF2, running from B -> PF0.  Returns 0 when the  */
+/*  active bank cannot be determined (ADDRCFG); the caller must skip   */
+/*  the test rather than erase a hardcoded bank, which is what caused  */
+/*  the Bank-B selftest hang.                                          */
+/* ------------------------------------------------------------------ */
+static uint32 prv_InactiveBaseOrSkip(const char *tag)
+{
+    uint32 base = Swap_GetInactiveBase();
+    if (base == 0u)
+    {
+        Debug_Printf("[TEST:%s] SKIP: active bank unknown (ADDRCFG) - "
+                     "not erasing\r\n", tag);
+    }
+    return base;
+}
+
+/* ------------------------------------------------------------------ */
 /*  DFlash: SOTA metadata write / read-back / erase cycle             */
 /* ------------------------------------------------------------------ */
 void SelfTest_DFlash(void)
@@ -120,7 +140,14 @@ void SelfTest_PFlash(void)
         testBuf[i] = (uint8)(i & 0xFFu);
     }
 
-    s = PFlash_EraseSector(PFLASH_BANK_B_BASE);
+    uint32 base = Swap_GetInactiveBase();
+    if (base == 0u)
+    {
+        Debug_Print("[PFLASH] SKIP: active bank unknown (ADDRCFG)\r\n");
+        return;
+    }
+
+    s = PFlash_EraseSector(base);
     if (s != PFLASH_OK)
     {
         Debug_Printf("[PFLASH] FAIL: erase (%u)\r\n", (unsigned)s);
@@ -128,14 +155,14 @@ void SelfTest_PFlash(void)
     }
     prv_ServiceWdtIfOwner();
 
-    s = PFlash_WritePage256(PFLASH_BANK_B_BASE, testBuf);
+    s = PFlash_WritePage256(base, testBuf);
     if (s != PFLASH_OK)
     {
         Debug_Printf("[PFLASH] FAIL: write (%u)\r\n", (unsigned)s);
         return;
     }
 
-    s = PFlash_VerifyPage256(PFLASH_BANK_B_BASE, testBuf);
+    s = PFlash_VerifyPage256(base, testBuf);
     if (s != PFLASH_OK)
     {
         Debug_Printf("[PFLASH] FAIL: verify (%u)\r\n", (unsigned)s);
@@ -358,8 +385,10 @@ uint32 SelfTest_Sota(void)
  
     Debug_Print("[TEST:SOTA] Starting full SOTA cycle...\r\n");
  
-    /* Step 1: Compute a real CRC of a known PFlash region */
-    uint32 testAddr = PFLASH_BANK_B_BASE;
+    /* Step 1: Compute a real CRC of a known PFlash region.
+     * Target the unmapped bank so this is safe whether we booted A or B. */
+    uint32 testAddr = prv_InactiveBaseOrSkip("SOTA");
+    if (testAddr == 0u) { return 0u; }    /* skip, not a failure */
     uint32 testSize = PFLASH_BURST_SIZE;  /* 256 bytes */
  
     /* Erase and write a known pattern */
@@ -382,14 +411,17 @@ uint32 SelfTest_Sota(void)
     Debug_Printf("[TEST:SOTA] Image CRC=0x%08X (256 bytes at 0x%08X)\r\n",
                  (unsigned)imageCrc, (unsigned)testAddr);
  
-    /* Step 3: Write SOTA metadata with pendingUpdate=1 */
+    /* Step 3: Write SOTA metadata with pendingUpdate=1.
+     * Record the RUNNING bank so Bist_RunPost (step 7) CRCs the region we
+     * just wrote (it reads the opposite of meta.activeBank). */
+    uint8 runBank = Swap_GetActiveBank();   /* 0x55 or 0xAA (testAddr!=0 ⇒ known) */
     memset(&meta, 0, sizeof(meta));
     meta.magic         = DFLASH_SOTA_MAGIC;
     meta.pendingUpdate = 1u;
     meta.bootCounter   = 0u;
     meta.reserved0     = testSize;   /* imageSize in reserved0 */
     meta.imageCrc      = imageCrc;
-    meta.activeBank    = SWAP_BANK_A;
+    meta.activeBank    = runBank;
  
     ds = DFlash_WriteSotaMeta(&meta);
     if (ds != DFLASH_OK) { Debug_Print("[TEST:SOTA] FAIL: write meta\r\n"); return 1u; }
@@ -401,7 +433,7 @@ uint32 SelfTest_Sota(void)
     if (readBack.magic != DFLASH_SOTA_MAGIC)    { err++; Debug_Print("[TEST:SOTA] FAIL: magic\r\n"); }
     if (readBack.pendingUpdate != 1u)           { err++; Debug_Print("[TEST:SOTA] FAIL: pending\r\n"); }
     if (readBack.imageCrc != imageCrc)          { err++; Debug_Print("[TEST:SOTA] FAIL: crc\r\n"); }
-    if (readBack.activeBank != SWAP_BANK_A)           { err++; Debug_Print("[TEST:SOTA] FAIL: bank\r\n"); }
+    if (readBack.activeBank != runBank)         { err++; Debug_Print("[TEST:SOTA] FAIL: bank\r\n"); }
  
     Debug_Printf("[TEST:SOTA] Metadata: pending=%u bank=0x%02X crc=0x%08X\r\n",
                  (unsigned)readBack.pendingUpdate,
@@ -451,7 +483,7 @@ uint32 SelfTest_Sota(void)
     /* Step 8: Clean up — restore metadata to clean state */
     memset(&meta, 0, sizeof(meta));
     meta.magic      = DFLASH_SOTA_MAGIC;
-    meta.activeBank = SWAP_BANK_A;
+    meta.activeBank = runBank;
     DFlash_WriteSotaMeta(&meta);
  
     Debug_Printf("[TEST:SOTA] %s\r\n", prv_Result(err));
@@ -471,6 +503,21 @@ uint32 SelfTest_Swap(void)
  
     Debug_Print("[TEST:SWAP] Testing bank ID reporting...\r\n");
  
+    /* Report the live swap map (no PFlash erase here — DFlash metadata
+     * round-trip only).  The active/inactive pair proves the A/B helpers
+     * the destructive tests rely on are sane before anything is erased. */
+    {
+        uint8  activeBank = Swap_GetActiveBank();
+        uint32 inactive   = Swap_GetInactiveBase();
+        Debug_Printf("[TEST:SWAP] Active bank=0x%02X, inactive base=0x%08X\r\n",
+                     (unsigned)activeBank, (unsigned)inactive);
+        if ((activeBank == 0u) || (inactive == 0u))
+        {
+            Debug_Print("[TEST:SWAP] SKIP: swap map unknown (ADDRCFG)\r\n");
+            return 0u;                 /* skip, not a failure */
+        }
+    }
+ 
     /* Save current metadata */
     ds = DFlash_ReadSotaMeta(&savedMeta);
  
@@ -483,7 +530,7 @@ uint32 SelfTest_Swap(void)
  
     DFlash_ReadSotaMeta(&meta);
     Debug_Printf("[TEST:SWAP] Wrote BANK_A(0x%02X), read back 0x%02X\r\n",
-                (unsigned)SWAP_BANK_A);
+                (unsigned)SWAP_BANK_A, (unsigned)meta.activeBank);
     if (meta.activeBank != SWAP_BANK_A) { err++; Debug_Print("[TEST:SWAP] FAIL: bank 0x55\r\n"); }
  
     /* Test bank 0xAA */
@@ -1397,9 +1444,12 @@ uint32 SelfTest_FwUpdate(void)
     Debug_Printf("[TEST:FWUP] Image: %u bytes, %u chunks, CRC=0x%08X\r\n",
                  (unsigned)imageSize, (unsigned)numChunks, (unsigned)imageCrc);
  
-    /* Step 1: Erase target sector */
+    /* Step 1: Erase target sector in the unmapped bank (safe on A or B) */
+    uint32 fwupBase = prv_InactiveBaseOrSkip("FWUP");
+    if (fwupBase == 0u) { return 0u; }    /* skip, not a failure */
+
     Debug_Print("[TEST:FWUP] Erasing target sector...\r\n");
-    PFlash_Status_t ps = PFlash_EraseSector(PFLASH_BANK_B_BASE);
+    PFlash_Status_t ps = PFlash_EraseSector(fwupBase);
     if (ps != PFLASH_OK)
     {
         Debug_Printf("[TEST:FWUP] FAIL: erase %u\r\n", (unsigned)ps);
@@ -1408,7 +1458,7 @@ uint32 SelfTest_FwUpdate(void)
     Tlf35585_ServiceWdt();
  
     /* Step 2: Write chunks with per-chunk CRC verify */
-    uint32 writeAddr = PFLASH_BANK_B_BASE;
+    uint32 writeAddr = fwupBase;
     uint32 runningCrc = Crc32_Init();
  
     for (i = 0u; i < numChunks; i++)
@@ -1470,7 +1520,7 @@ uint32 SelfTest_FwUpdate(void)
         meta.magic       = DFLASH_SOTA_MAGIC;
         meta.pendingUpdate = 0u;
         meta.imageCrc    = imageCrc;
-        meta.activeBank  = SWAP_BANK_A;
+        meta.activeBank  = Swap_GetActiveBank();   /* record the running bank */
         meta.reserved0   = imageSize;
  
         DFlash_Status_t ds = DFlash_WriteSotaMeta(&meta);
@@ -1490,7 +1540,7 @@ uint32 SelfTest_FwUpdate(void)
         DFlash_SotaMeta_t clean;
         memset(&clean, 0, sizeof(clean));
         clean.magic      = DFLASH_SOTA_MAGIC;
-        clean.activeBank = SWAP_BANK_A;
+        clean.activeBank = Swap_GetActiveBank();   /* record the running bank */
         DFlash_WriteSotaMeta(&clean);
     }
  
