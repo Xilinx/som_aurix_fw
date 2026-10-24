@@ -38,12 +38,19 @@
 #include "FwUpdate.h"
 #include "BiosRom.h"
 #include "Bist.h"
-#include "DebugCli.h"
 #include "Platform_PinCfg.h"
+#include "Eru_FaultIsr.h"
+#include "ComHpcWdt.h"
 #include "SysMonitor.h"
 #include "SelfTest.h"
+#include "VoltMon.h"
+#include "FusaSpi.h"
+#include "IfxPort.h"
+#include "AppPin.h"
 
 #define SOTA_TEST_NO_COMMIT 0
+
+static boolean s_fusaReady = FALSE;
 
 /* ================================================================== */
 /*  Multicore sync                                                    */
@@ -68,6 +75,97 @@ static void prv_SyncBarrier(void)
 static void prv_FlashKeepAlive(void)
 {
     if (g_wdtOwner == 0u) { Tlf35585_ServiceWdt(); }
+}
+
+static void prv_OnVoltageFault(const VoltMon_ChCfg_t *ch,
+                               uint16 measuredMv,
+                               VoltMon_Severity_t severity)
+{
+    if (severity >= VOLTMON_FAULT)
+    {
+        IfxPort_setPinLow(AppPin_GetPort(PIN_FUSA_VOLTAGE_ERR_L.portIdx),
+                          PIN_FUSA_VOLTAGE_ERR_L.pinIdx);
+        FusaSpi_AssertAlert();
+
+        Ipc_FaultCode_t code = (measuredMv < ch->uvFaultMv)
+                               ? IPC_FAULT_UV : IPC_FAULT_OV;
+        Ipc_SignalFault(code, (uint32)ch->evadcChannel, (uint32)measuredMv);
+    }
+}
+
+static void prv_OnTlfFault(void)
+{
+    Ipc_SignalFault(IPC_FAULT_PMIC, 0u, 0u);
+}
+
+static void prv_PublishVoltages(void)
+{
+    uint16 chMv[VOLTMON_MAX_CHANNELS];
+    uint32 i;
+
+    for (i = 0u; i < VOLTMON_MAX_CHANNELS; i++)
+    {
+        chMv[i] = VoltMon_GetLastMv(i);
+    }
+    Ipc_UpdateVoltages(chMv, 0u, 0u);
+}
+
+static void prv_PublishTlfStatus(void)
+{
+    Ipc_UpdateTlfStatus(
+        (uint32)Tlf35585_GetDevState(),
+        0u,
+        0u,
+        (uint32)Tlf35585_GetDevState(),
+        0u,
+        0u,
+        (uint32)Tlf35585_IsErrActive(),
+        (uint32)Tlf35585_IsSafeStateActive()
+    );
+}
+
+static void prv_InitFusa(void)
+{
+    Debug_Print("[CPU0] Init: VoltMon...\r\n");
+    VoltMon_Init();
+    VoltMon_RegisterFaultCb(prv_OnVoltageFault);
+
+    /* Replaces the boot callback. CPU1 turns a PMIC IPC fault into
+     * a forced power-off, which is the path that was live on CPU2. */
+    Tlf35585_RegisterFaultCb(prv_OnTlfFault);
+    Tlf35585_EnableIsrMode();
+    Debug_Print("[CPU0] Init: TLF service stays here\r\n");
+
+    FusaSpi_Init();
+    Debug_Print("[CPU0] Init: FusaSpi OK\r\n");
+    s_fusaReady = TRUE;
+}
+
+static void prv_RunFusa(void)
+{
+    static uint32 s_lastSnapMs = 0u;
+
+    Tlf35585_ServiceWdt();
+    Tlf35585_CheckFaults();
+    VoltMon_Scan();
+    FusaSpi_Update();
+    prv_PublishVoltages();
+    prv_PublishTlfStatus();
+
+    if (!VoltMon_AnyFaultActive() && !Tlf35585_IsErrActive())
+    {
+        IfxPort_setPinHigh(
+            AppPin_GetPort(PIN_FUSA_VOLTAGE_ERR_L.portIdx),
+            PIN_FUSA_VOLTAGE_ERR_L.pinIdx);
+        FusaSpi_DeassertAlert();
+        Ipc_ClearFaultActive();
+    }
+
+    if ((Stm_GetTimeMs() - s_lastSnapMs) >= 1000u)
+    {
+        s_lastSnapMs = Stm_GetTimeMs();
+        Tlf35585_PublishRegSnapshot();
+    }
 }
 
 /* ================================================================== */
@@ -110,8 +208,7 @@ int core0_main(void)
     I2cMaster_Init();
     Debug_Print("[SYS] Init: I2C OK\r\n");
 
-    /* TLF full init — still on CPU0 before cores are released.
-     * CPU2 takes over WDT service after the handover in Phase 3. */
+    /* TLF full init — CPU0 keeps the window watchdog for the whole boot. */
     if (Tlf35585_Init() != TLF_OK)
     {
         Debug_Print("[SYS] Init: TLF FAILED\r\n");
@@ -153,7 +250,15 @@ int core0_main(void)
     prv_SyncBarrier();
     if (prv_WaitForCores(5000u))
     {
-        prv_HandoverTlfWdt();
+        prv_InitFusa();
+        /* QSPI2 TLF IRQ is already TOS CPU0, the watchdog owner.
+         * PFlash erase runs on CPU2, so this loop keeps servicing
+         * the window while a sector erase has CPU2's interrupts off. */
+        ComHpcWdt_Init();
+        Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
+        Eru_FaultIsr_Init();
+        Debug_Print("[SYS] All cores running\r\n");
+        Debug_Print("[SYS] TLF WDT and host WDT stay on CPU0\r\n");
     }
     if (bootStatus == BOOTVALID_PENDING)
     {
@@ -165,40 +270,42 @@ int core0_main(void)
         Debug_Print("[BIST] POST skipped (no pending update)\r\n");
     }
     Debug_Print("[SYS] Init: POST complete\r\n");
-    /* ============================================================== */
-    /*  Phase 3: Release CPU1/CPU2, wait, hand over the TLF WDT       */
-    /* ============================================================== */
-
-    /* On timeout: CPU0 keeps WDT ownership; the main loop below
-     * continues servicing (g_wdtOwner still 0). */
+    /* On core-init timeout: g_wdtOwner stays 0 and the loop below
+     * keeps servicing the TLF. FuSa init is skipped. */
 
     /* ============================================================== */
     /*  Phase 4: Debug CLI + main loop                                */
     /* ============================================================== */
     Debug_DrainRings();                  /* flush tail of core init logs */
     Debug_Print("[SYS] CPU0 entering main loop\r\n");
-    DebugCli_Init();
 
     for (;;)
     {
         uint32 loopStartMs = Stm_GetTimeMs();
 
-        NvLog_Run();
-        FwUpdate_Run();
-
-        if (g_wdtOwner == 0u)
+        /* CPU2 asked for the debug UART. Flush, then stop touching it. */
+        if (g_ipcShared.uartOwner == 1u)
         {
-            Tlf35585_ServiceWdt();       /* only if CPU2 never came up */
+            Debug_FlushBlocking();
+            g_ipcShared.uartOwner = 2u;
+            __dsync();
         }
-        Debug_DrainRings();
-        DebugCli_Run();
-        DebugCli_Poll();
-    #if !defined(SOTA_TEST_NO_COMMIT)
-        prv_CommitSotaOnce();
-    #endif
-        prv_ForwardVoltageFaults();
-        prv_ForwardVoltageWarnings();
-        prv_ForwardTlfEvents();
+
+        if (s_fusaReady)
+        {
+            prv_RunFusa();
+        }
+        else if (g_wdtOwner == 0u)
+        {
+            Tlf35585_ServiceWdt();
+        }
+
+        ComHpcWdt_Run();
+
+        if (g_ipcShared.uartOwner < 2u)
+        {
+            Debug_DrainRings();
+        }
 
         prv_PaceLoop(loopStartMs);
     }

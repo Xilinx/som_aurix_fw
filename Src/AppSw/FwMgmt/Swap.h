@@ -71,8 +71,14 @@ boolean       Swap_PageProgrammed(uint32 pageAddr);   /* wrapper for the CLI dum
 uint8 Swap_GetCurrentBank(void);
 
 /**
- * @brief  Get the physical base address of the inactive bank.
- * @return PFLASH_BANK_A_BASE or PFLASH_BANK_B_BASE, or 0 on error.
+ * @brief  Get the physical base address of the currently-unmapped bank.
+ *
+ * Derived from Swap_GetActiveBank() (ADDRCFG = what is mapped this boot):
+ *   A active -> PFLASH_BANK_B_BASE (PF2), B active -> PFLASH_BANK_A_BASE (PF0).
+ * This is the only bank safe to erase/write while executing.
+ *
+ * @return PFLASH_BANK_A_BASE or PFLASH_BANK_B_BASE, or 0 if the active
+ *         bank is unknown (caller MUST skip erase/write in that case).
  */
 uint32 Swap_GetInactiveBase(void);
 
@@ -102,7 +108,7 @@ void Swap_TriggerSystemReset(void) __attribute__((noreturn));
 
 Swap_Status_t Swap_EraseAll(void);
 
-uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA / 0xFF */
+uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA, or 0 if unknown */
 
 
 #endif /* SWAP_H */

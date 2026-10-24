@@ -13,7 +13,7 @@
  *   4. Drives DP2_HPD (P13.0) or DP3_HPD (P13.3) accordingly:
  *      - HPD HIGH: level assert
  *      - HPD LOW: level deassert
- *      - HPD IRQ: 2ms low pulse (per DP spec, min 0.25ms, max 2ms)
+ *      - HPD IRQ: 1 ms low pulse (VESA IRQ_HPD is 0.5-1 ms; >2 ms is unplug)
  */
 
 #ifndef USBPD_HPD_H
@@ -30,7 +30,7 @@ typedef enum
     HPD_EVENT_NONE      = 0u,
     HPD_EVENT_HIGH      = 1u,   /* DP connected — assert HPD level */
     HPD_EVENT_LOW       = 2u,   /* DP disconnected — deassert HPD */
-    HPD_EVENT_IRQ       = 3u,   /* DP IRQ — 2ms low pulse */
+    HPD_EVENT_IRQ       = 3u,   /* DP IRQ — 1 ms low pulse */
 } UsbPd_HpdEvent_t;
 
 /* ================================================================== */
@@ -69,10 +69,8 @@ void UsbPd_Hpd_Init(void);
 void UsbPd_Hpd_ProcessEvent(uint8 portIdx, UsbPd_HpdEvent_t event);
 
 /**
- * @brief  Periodic service — handles IRQ pulse timing.
- *
- * Must be called from the main loop to complete IRQ pulses
- * (deassert HPD after the 2ms low period).
+ * @brief  Periodic service. IRQ pulses complete in ProcessEvent;
+ *         this raises HPD if a pulse was left pending.
  */
 void UsbPd_Hpd_Run(void);
 

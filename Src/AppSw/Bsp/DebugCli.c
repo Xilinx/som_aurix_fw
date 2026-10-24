@@ -296,7 +296,11 @@ static void prv_CmdColdReset(void)
     Debug_Print("  Requesting cold reboot...\r\n");
     NvLog_WriteU32(NVLOG_EVT_RESET_COLD, NVLOG_SRC_DEBUG,
                    NVLOG_SEV_INFO, 0u);
-    PowerManager_RequestColdReset();
+    /* Same path as poweron / poweroff / warmreset: CPU1 owns PowerManager.
+     * A direct PowerManager_RequestColdReset() from the CLI core blocks
+     * VoltMon_Disable waiting for CPU0, and after Phase 3 the CLI is CPU2. */
+    if (!Ipc_SendCommandWait(IPC_CMD_COLD_RESET, 0u, 500u))
+        Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
 static void prv_CmdClearFault(void)
@@ -394,7 +398,7 @@ static void prv_CmdUptime(void)
 
 static void prv_CmdVersion(void)
 {
-    Debug_Printf("  TC387 COM-HPC Controller v0.1\r\n");
+    Debug_Printf("  TC387 COM-HPC Controller v0.2\r\n");
 }
 
 static void prv_CmdUsbPd(void)
@@ -713,6 +717,10 @@ static void prv_CmdI2cReset(const char *args)
     uint8 bus = (uint8)prv_Atoi(a);
     if ((*a == '\0') || (bus > 1u)) { Debug_Print("[I2C] usage: i2creset 0|1\r\n"); return; }
     I2cMaster_ReinitBus(bus);
+    if (bus == 0u)
+    {
+        I2cSlave_Resume();
+    }
     Debug_Printf("[I2C] bus %u reinitialised, BUSSTAT now %u\r\n",
                  (unsigned)bus, (unsigned)I2cMaster_GetRawBusStatus(bus));
 }
@@ -1031,7 +1039,10 @@ static void prv_CmdI2cSniff(const char *args)
     uint32 seen[16] = {0};                    /* bitmap of 7-bit addresses seen */
  
     if (*a != '\0') secs = prv_Atoi(a);
- 
+
+    /* Park the CPU3 sideband slave before this command owns MODULE_I2C0. */
+    I2cSlave_Suspend();
+
     /* release the bus: module off, pins hi-Z inputs */
     CLI_SNIFF_MODULE.RUNCTRL.U = 0u;
     IfxPort_setPinModeInput(CLI_SNIFF_SDA_PORT, CLI_SNIFF_SDA_PIN, IfxPort_InputMode_noPullDevice);
@@ -1135,6 +1146,7 @@ static void prv_CmdI2cSniff(const char *args)
     }
  
     I2cMaster_ReinitBus(0u);
+    I2cSlave_Resume();
      {
         uint32 p, i, m = (pkts < SNIFF_LOG) ? pkts : SNIFF_LOG;
         for (p = 0u; p < m; p++)
@@ -1171,6 +1183,7 @@ static void prv_CmdI2cSlaveScan(const char *args)
 
     if (*a != '\0') dwell = prv_Atoi(a);
 
+    I2cSlave_Suspend();
     Debug_Printf("[I2CSS] slave sweep 0x08-0x77, %ums each, keep the cable plugged in\r\n",
                  (unsigned)dwell);
 
@@ -1214,6 +1227,7 @@ static void prv_CmdI2cSlaveScan(const char *args)
     }
 
     I2cMaster_ReinitBus(0u);
+    I2cSlave_Resume();
     Debug_Printf("[I2CSS] done, %u address(es) with traffic; bus0 restored\r\n", (unsigned)hits);
 }
 
@@ -1241,6 +1255,7 @@ static void prv_CmdI2cSlave(const char *args)
         return;
     }
 
+    I2cSlave_Suspend();
     /* reconfigure module as 7-bit slave */
     i2c->RUNCTRL.B.RUN  = 0u;
     i2c->ADDRCFG.B.MNS  = 0u;                /* 0 = slave            */
@@ -1302,6 +1317,7 @@ static void prv_CmdI2cSlave(const char *args)
     }
 
     I2cMaster_ReinitBus(0u);                 /* back to master mode */
+    I2cSlave_Resume();
     Debug_Printf("[I2CS] %s: %u addr match(es), %u byte(s); bus0 restored\r\n",
                  aborted ? "aborted" : "done",
                  (unsigned)matches, (unsigned)bytes);
@@ -1318,11 +1334,12 @@ static void prv_CmdI2cTest(const char *args)
     if (*a != '\0') { secs  = prv_Atoi(a);    while (*a && *a != ' ') a++; a = prv_SkipSpaces(a); }
     if (*a != '\0') { shift = prv_Atoi(a); }
 
-    /* 1. master scan */
+    /* 1. master scan — each probe parks and restores the 0x54 slave. */
     Debug_Print("[I2CT] step 1: master scan of bus 0\r\n");
     prv_CmdI2cScan("0");
 
-    /* 2. retimer emulator */
+    /* 2. retimer emulator. Hold the sideband slave off until we restore it. */
+    I2cSlave_Suspend();
     Debug_Printf("[I2CT] step 2: emulating retimer @0x%02X (ADR %s) for %us. Plug a DP alt-mode device in. ESC to stop.\r\n",
                  (unsigned)addr7, shift ? "<<1" : "unshifted", (unsigned)secs);
     I2cSlave_Setup(&s_cliSlave, &MODULE_I2C0, (uint8)addr7, (uint8)shift, NULL_PTR);
@@ -1342,6 +1359,7 @@ static void prv_CmdI2cTest(const char *args)
     }
     I2cSlave_Stop(&s_cliSlave);
     I2cMaster_ReinitBus(0u);
+    I2cSlave_Resume();
 
     /* 3. report */
     Debug_Printf("[I2CT] %s: %u addr match, %u rx, %u tx, %u nack\r\n",
@@ -1472,7 +1490,7 @@ static void prv_CmdFwSwap(const char *args)
     uint8 active = Swap_GetActiveBank();
     uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
 
-    if (active == 0xFFu) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
+    if (active == 0u) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
 
     if ((DFlash_ReadSotaMeta(&meta) != DFLASH_OK) || (meta.magic != DFLASH_SOTA_MAGIC) ||
         (meta.pendingUpdate != 1u) || ((uint8)meta.activeBank != target))
@@ -1480,8 +1498,10 @@ static void prv_CmdFwSwap(const char *args)
         Debug_Print("[FWSWAP] no verified update staged in the other bank - refusing\r\n");
         return;
     }
-    /* inactive bank is always readable at 0xA0600000 */
-    if (FwUpdate_CrcFlash(PFLASH_BANK_B_BASE, meta.reserved0) != meta.imageCrc)
+    /* CRC the staged image in the currently-unmapped bank (not hardcoded B). */
+    uint32 stagedBase = Swap_GetInactiveBase();
+    if ((stagedBase == 0u) ||
+        (FwUpdate_CrcFlash(stagedBase, meta.reserved0) != meta.imageCrc))
     {
         Debug_Print("[FWSWAP] staged image CRC mismatch - refusing\r\n");
         return;

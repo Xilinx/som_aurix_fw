@@ -2,7 +2,9 @@
  * @file    Cpu1_Main.c
  * @brief   CPU1 — Power Management Controller core
  *
- * Owns: PowerManager, SysMonitor, ComHpcWdt, UsbPd, ERU callbacks
+ * Owns: PowerManager, SysMonitor, I2C1 APML, THERMTRIP callback.
+ * USB-PD (I2C0 master + 0x54 sideband slave) lives on CPU3.
+ * Host watchdog runs on CPU0. I2C1 is APML, master only.
  * Reads: g_ipcShared.cmd (commands from CPU0)
  *        g_ipcShared.fusa (voltage/PMIC faults from CPU2)
  * Writes: g_ipcShared.pmc (PM state, temp, PROCHOT)
@@ -18,12 +20,6 @@
 #include "Eru_FaultIsr.h"
 #include "Platform_Cfg.h"
 #include "SysMonitor.h"
-#include "ComHpcWdt.h"
-#include "UsbPd_Manager.h"
-#include "UsbPd_Hpd.h"
-#include "UsbPd_ApuProxy.h"
-#include "I2c_Slave.h"
-#include "UsbPd_Cfg.h"
 
 extern IfxCpu_syncEvent g_cpuSyncEvent;
 
@@ -115,25 +111,12 @@ void core1_main(void)
     Debug_Print("[CPU1] Init: PowerManager...\r\n");
     PowerManager_Init();
     Eru_RegisterCallback(ERU_CB_THERMTRIP, PowerManager_OnThermtripIsr);
+    Eru_ThermtripIsr_Attach();
 
 #if !defined(TARGET_EVAL_BOARD)
     SysMonitor_Init();
     SysMonitor_RegisterShutdownCb(PowerManager_OnThermtripIsr);
     Debug_Print("[CPU1] Init: SysMonitor OK\r\n");
-
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-    Eru_RegisterCallback(ERU_CB_WD_STROBE, ComHpcWdt_OnStrobeIsr);
-    ComHpcWdt_Init();
-    Debug_Print("[CPU1] Init: ComHpcWdt OK\r\n");
-#endif
-
-#if (USBPD_FEATURE_ENABLE == 1u)
-    I2cSlave_Init(NULL_PTR);
-    UsbPd_Hpd_Init();
-    UsbPd_ApuProxy_Init();
-    UsbPdManager_Init();
-    Debug_Print("[CPU1] Init: UsbPd OK\r\n");
-#endif
 #endif
 
     s_lastAckedSeq = g_ipcShared.cmd.seqNum;
@@ -147,22 +130,16 @@ void core1_main(void)
 
         prv_ProcessCommands();
         PowerManager_Run();
+        /* Publish PM state before APML.  If SysMonitor ever blocks again,
+         * CLI `status` still shows the sequencer's real state (7), not a
+         * stale IPC 6.  A second publish at the end refreshes temp/PROCHOT. */
+        prv_PublishStatus();
         prv_CheckFusaFaults();
 
 #if !defined(TARGET_EVAL_BOARD)
-        UsbPd_Hpd_Run();
-
-#if (SYSMON_CARRIER_WD_ENABLE == 1u)
-        ComHpcWdt_Run();
-#endif
-
-        if (PowerManager_GetState() == PM_STATE_ON)
-        {
-            SysMonitor_Run();
-#if (USBPD_FEATURE_ENABLE == 1u)
-            UsbPdManager_Run();
-#endif
-        }
+        /* Always run SysMonitor so leave-S0 resets the APML dwell.
+         * APML itself is gated on PM_STATE_ON + dwell + TransitionPending. */
+        SysMonitor_Run();
 #endif
 
         prv_PublishStatus();

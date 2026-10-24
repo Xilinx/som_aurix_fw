@@ -28,6 +28,11 @@
 
 #define SYSMON_THERMAL_POLL_MS      100u
 
+/* Hold off first SB-TSI access after PWROK.  APML is only valid in a
+ * settled S0; Sapphire hung because the first poll ran at PWROK+0 ms
+ * (s_lastThermal starts at 0 so the 100 ms period was already elapsed). */
+#define SYSMON_S0_DWELL_MS          100u
+
 /* Temperature thresholds in degrees C — update from AMD thermal spec */
 #define SYSMON_WARNING_TEMP_C       85      /* assert PROCHOT above this     */
 #define SYSMON_WARNING_HYST_C       75      /* release PROCHOT below this    */

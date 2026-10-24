@@ -34,8 +34,6 @@ void prv_ForwardVoltageWarnings(void);
 
 void prv_CommitSotaOnce(void);
 
-void prv_HandoverTlfWdt(void);
-
 boolean prv_WaitForCores(uint32 timeoutMs);
 
 uint32 SelfTest_RunAll(void);

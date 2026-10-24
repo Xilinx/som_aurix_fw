@@ -30,8 +30,8 @@ static Eru_Callback_t s_callbacks[ERU_CB_COUNT] = {
 
 /* ---- ISR Handlers -------------------------------------------------------
  * IFX_INTERRUPT(name, coreId, priority)
- * These run on CPU0.  Keep handlers minimal — set a flag or call a
- * short callback.  Heavy processing belongs in the main loop.
+ * THERMTRIP runs on CPU1 (PowerManager). CARRIER_HOT and WD_STROBE
+ * run on CPU0 (host watchdog). Keep handlers short.
  * --------------------------------------------------------------------- */
 
 IFX_INTERRUPT(eruCarrierHotISR, 0, ERU_PRIO_CARRIER_HOT)
@@ -42,7 +42,7 @@ IFX_INTERRUPT(eruCarrierHotISR, 0, ERU_PRIO_CARRIER_HOT)
     }
 }
 
-IFX_INTERRUPT(eruThermtripISR, 0, ERU_PRIO_THERMTRIP)
+IFX_INTERRUPT(eruThermtripISR, 1, ERU_PRIO_THERMTRIP)
 {
     if (s_callbacks[ERU_CB_THERMTRIP] != NULL_PTR)
     {
@@ -66,6 +66,11 @@ void Eru_RegisterCallback(Eru_CallbackId_t id, Eru_Callback_t cb)
     {
         s_callbacks[id] = cb;
     }
+}
+
+void Eru_ThermtripIsr_Attach(void)
+{
+    IfxCpu_Irq_installInterruptHandler(&eruThermtripISR, ERU_PRIO_THERMTRIP);
 }
 
 void Eru_FaultIsr_Init(void)
@@ -122,10 +127,9 @@ void Eru_FaultIsr_Init(void)
                                         IfxScuEru_InterruptGatingPattern_alwaysActive);
 
     src = &MODULE_SRC.SCU.SCUERU[1];
-    IfxSrc_init(src, IfxSrc_Tos_cpu0, ERU_PRIO_THERMTRIP);
+    IfxSrc_init(src, IfxSrc_Tos_cpu1, ERU_PRIO_THERMTRIP);
     IfxSrc_enable(src);
-
-    IfxCpu_Irq_installInterruptHandler(&eruThermtripISR, ERU_PRIO_THERMTRIP);
+    /* Handler is installed by Eru_ThermtripIsr_Attach() on CPU1. */
 
 //  Debug_Print("[ERU] THERMTRIP# (P10.3): falling edge -> OGU1\r\n");
     Debug_Print("[ERU] THERMTRIP# (P10.3): Rising edge -> OGU1\r\n");
