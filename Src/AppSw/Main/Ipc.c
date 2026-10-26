@@ -92,7 +92,10 @@ void Ipc_WaitReleasedBarrier(void)
     {
     }
     IfxCpu_emitEvent(&g_cpuSyncEvent);
-    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK)
+    /* g_cpuSyncEvent is a plain unsigned int; read it through a volatile
+     * pointer so an optimised build cannot hoist the load out of the loop
+     * (IfxCpu_waitEvent does the same). */
+    while ((*(volatile uint32 *)&g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK)
     {
     }
 }
