@@ -29,9 +29,13 @@
 /*  ISR priorities                                                    */
 /* ================================================================== */
 
-#define UART_XFER_TX_ISR_PRIO   30u
-#define UART_XFER_RX_ISR_PRIO   31u
-#define UART_XFER_ER_ISR_PRIO   32u
+/* CPU0 handlers are installed by priority (IfxCpu_Irq_swIntVector0[prio]),
+ * so a priority must not be shared.  30-32 belong to QSPI2 (TLF35585),
+ * 40-42 to QSPI3 (FUSA_SPI); sharing them left whichever driver installed
+ * last as the handler for both peripherals. */
+#define UART_XFER_TX_ISR_PRIO   33u
+#define UART_XFER_RX_ISR_PRIO   34u
+#define UART_XFER_ER_ISR_PRIO   35u
 
 /* ================================================================== */
 /*  Ring buffer                                                       */
