@@ -31,6 +31,7 @@ static volatile boolean s_thermtripIsrFlag = FALSE;
 static boolean          s_rsmrstAsserted = FALSE;
 static boolean s_waitForRstRelease      = FALSE;
 static uint8      s_thermtripDebounce  = 0u;  /* consecutive LOW-read counter */
+static volatile uint32 s_thermtripCount = 0u; /* THERMTRIP events acted on */
 static uint8      s_rstBtnDebounce     = 0u;
 static uint8           s_retryCount    = 0u;
 static PM_ResetCause_t s_resetCause    = PM_RESET_CAUSE_NONE;
@@ -793,6 +794,7 @@ void PowerManager_Run(void)
             (s_state != PM_STATE_FAULT))
         {
             Debug_Print("[PM] THERMTRIP# ISR triggered\r\n");
+            s_thermtripCount++;
             s_resetCause = PM_RESET_CAUSE_THERMAL;
             prv_GoToS5();
             return;
@@ -816,6 +818,7 @@ void PowerManager_Run(void)
             {
                 Debug_Printf("[PM] THERMTRIP# asserted (debounce %u polls)\r\n",
                              (unsigned)s_thermtripDebounce);
+                s_thermtripCount++;
                 prv_GoToS5();
                 return;
             }
@@ -1493,6 +1496,11 @@ PM_ResetCause_t PowerManager_GetResetCause(void)
 uint8 PowerManager_GetRetryCount(void)
 {
     return s_retryCount;
+}
+
+uint32 PowerManager_GetThermtripCount(void)
+{
+    return s_thermtripCount;
 }
 
 void PowerManager_RequestForcedOff(void)

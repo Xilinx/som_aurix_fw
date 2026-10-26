@@ -62,46 +62,46 @@
 #define FUSA_REG_RESERVED_0B        0x0Bu
 
 /* ---- Thermal / APML (0x0C–0x0F) ---- */
-#define FUSA_REG_APU_TEMP_C         0x0Cu   /* APU die temperature (signed int32, °C) */
-#define FUSA_REG_PROCHOT_STATUS     0x0Du   /* PROCHOT active flags */
-#define FUSA_REG_THERMAL_STATE      0x0Eu   /* Thermal throttle state */
-#define FUSA_REG_THERMTRIP_COUNT    0x0Fu   /* THERMTRIP event count this session */
+#define FUSA_REG_APU_TEMP_C         0x0Cu   /* APU die temp, signed int32 °C; -128 = no valid SB-TSI reading */
+#define FUSA_REG_PROCHOT_STATUS     0x0Du   /* 1 = throttling / PROCHOT active */
+#define FUSA_REG_THERMAL_STATE      0x0Eu   /* bit0 throttling, bit1 APU temp reading valid */
+#define FUSA_REG_THERMTRIP_COUNT    0x0Fu   /* THERMTRIP# events acted on since AURIX boot */
 
 /* ---- TLF PMIC (0x10–0x17) ---- */
-#define FUSA_REG_TLF_DEVSTAT        0x10u   /* TLF device status register */
-#define FUSA_REG_TLF_SYSSF          0x11u   /* TLF system status flags */
-#define FUSA_REG_TLF_WDSTAT         0x12u   /* TLF watchdog status / error counter */
+#define FUSA_REG_TLF_DEVSTAT        0x10u   /* TLF DEVSTAT (1 Hz snapshot, 0 until first) */
+#define FUSA_REG_TLF_SYSSF          0x11u   /* TLF SYSSF (1 Hz snapshot) */
+#define FUSA_REG_TLF_WDSTAT         0x12u   /* TLF WWDSTAT (1 Hz snapshot) */
 #define FUSA_REG_TLF_STATE          0x13u   /* TLF state (INIT/NORMAL/etc) */
-#define FUSA_REG_TLF_WDT_SVC       0x14u   /* TLF WDT service count */
-#define FUSA_REG_TLF_WDT_MISS      0x15u   /* TLF WDT miss count */
+#define FUSA_REG_TLF_WDT_SVC       0x14u   /* TLF window-WDT service count since boot */
+#define FUSA_REG_TLF_WDT_MISS      0x15u   /* TLF window-WDT missed-window count */
 #define FUSA_REG_TLF_ERR_PIN        0x16u   /* TLF ERR pin state */
 #define FUSA_REG_TLF_SS_PIN         0x17u   /* TLF safe-state pin state */
 
 /* ---- Voltage monitoring (0x20–0x3F) ---- */
 /* Channels 0–23: millivolt values from VoltMon */
 #define FUSA_REG_VOLT_CH_BASE       0x20u   /* VOLT_CH0 = 0x20, CH1 = 0x21, ... CH23 = 0x37 */
-#define FUSA_REG_VOLT_UV_FLAGS      0x38u   /* Undervoltage fault bitmask (1 bit per channel) */
+#define FUSA_REG_VOLT_UV_FLAGS      0x38u   /* UV fault bitmask, bit n = VOLT_CHn (0 while monitoring off) */
 #define FUSA_REG_VOLT_OV_FLAGS      0x39u   /* Overvoltage fault bitmask */
-#define FUSA_REG_VOLT_WARN_FLAGS    0x3Au   /* Warning-level bitmask */
+#define FUSA_REG_VOLT_WARN_FLAGS    0x3Au   /* Warning-band bitmask (UV or OV warn, not yet a fault) */
 #define FUSA_REG_VOLT_TIMESTAMP     0x3Bu   /* Timestamp of last voltage scan (ms) */
 
 /* ---- USB PD summary (0x40–0x43) ---- */
-#define FUSA_REG_USBPD_PORT0_STATE  0x40u   /* Port 0: attach/role/alt-mode packed */
-#define FUSA_REG_USBPD_PORT1_STATE  0x41u   /* Port 1: attach/role/alt-mode packed */
-#define FUSA_REG_USBPD_FAULT_FLAGS  0x42u   /* USB PD fault flags */
-#define FUSA_REG_USBPD_HPD_STATE    0x43u   /* HPD pin states */
+#define FUSA_REG_USBPD_PORT0_STATE  0x40u   /* Port 0 status word, see USBPD_STAT_* (UsbPd_Manager.h) */
+#define FUSA_REG_USBPD_PORT1_STATE  0x41u   /* Port 1 status word, see USBPD_STAT_* */
+#define FUSA_REG_USBPD_FAULT_FLAGS  0x42u   /* see USBPD_FAULT_*; bit n = CYPD n. 0 until CPU3 ready */
+#define FUSA_REG_USBPD_HPD_STATE    0x43u   /* bit0 = port 0 HPD level, bit1 = port 1 */
 
 /* ---- NV log summary (0x48–0x4B) ---- */
 #define FUSA_REG_NVLOG_SLOT         0x48u   /* Active NV log slot */
 #define FUSA_REG_NVLOG_EVENTS       0x49u   /* Events in active slot */
 #define FUSA_REG_NVLOG_ERRORS       0x4Au   /* NV log flush errors */
-#define FUSA_REG_NVLOG_LAST_EVT     0x4Bu   /* Last event type logged */
+#define FUSA_REG_NVLOG_LAST_EVT     0x4Bu   /* Last NvLog event type accepted (0 = none) */
 
 /* ---- COM-HPC misc (0x50–0x53) ---- */
-#define FUSA_REG_COMHPC_WDT_STATE   0x50u   /* COM-HPC watchdog state */
-#define FUSA_REG_RAPID_SHUTDOWN     0x51u   /* RAPID_SHUTDOWN pin state */
-#define FUSA_REG_LID_STATE          0x52u   /* LID# pin state */
-#define FUSA_REG_TAMPER_STATE       0x53u   /* TAMPER# pin state */
+#define FUSA_REG_COMHPC_WDT_STATE   0x50u   /* 0 idle, 1 enable-delay, 2 active, 3 fired */
+#define FUSA_REG_RAPID_SHUTDOWN     0x51u   /* RAPID_SHUTDOWN raw pin level (1 = high) */
+#define FUSA_REG_LID_STATE          0x52u   /* LID# raw pin level (active low) */
+#define FUSA_REG_TAMPER_STATE       0x53u   /* TAMPER# raw pin level (active low) */
 
 /* Total register count */
 #define FUSA_REG_COUNT              0x60u   /* 96 registers × 4 bytes = 384 bytes */
@@ -124,7 +124,7 @@
 /*  Register map version                                              */
 /* ================================================================== */
 #define FUSA_MAP_VERSION_MAJOR      1u
-#define FUSA_MAP_VERSION_MINOR      0u
+#define FUSA_MAP_VERSION_MINOR      1u
 #define FUSA_MAP_VERSION_PATCH      0u
 #define FUSA_MAP_VERSION_PACKED     ((FUSA_MAP_VERSION_MAJOR << 16) | \
                                     (FUSA_MAP_VERSION_MINOR << 8)  | \
