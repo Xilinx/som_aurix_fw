@@ -144,6 +144,9 @@
 /*  Configuration                                                     */
 /* ================================================================== */
 
+/** SPI frame length in bits: [ADDR:8 | 0:24] and the 32-bit reply. */
+#define FUSA_SPI_FRAME_BITS         32u
+
 /** Update interval for populating the register map from live data */
 #ifndef FUSA_SPI_UPDATE_INTERVAL_MS
 #define FUSA_SPI_UPDATE_INTERVAL_MS 100u

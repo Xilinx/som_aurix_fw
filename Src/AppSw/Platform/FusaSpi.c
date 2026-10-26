@@ -57,6 +57,16 @@ static uint32           s_lastUpdateMs = 0u;
 static uint32 s_txBuf;
 static uint32 s_rxBuf;
 
+/* Re-arm bookkeeping.  s_rxFrames counts completed frames (RX ISR);
+ * s_rearmCount counts recoveries done by prv_RearmIfIdle(). */
+static volatile uint32 s_rxFrames   = 0u;
+static volatile uint32 s_rearmCount = 0u;
+static uint32          s_lastFrames = 0u;
+static uint8           s_idlePolls  = 0u;
+
+/* Upper bound on RX FIFO words drained during a re-arm (FIFO is 8 deep). */
+#define FUSA_SPI_RX_DRAIN_MAX       16u
+
 /* ================================================================== */
 /*  ISRs — must be before prv_SpiInit in the file                     */
 /* ================================================================== */
@@ -71,6 +81,7 @@ IFX_INTERRUPT(qspi3RxISR, 0, QSPI3_RX_ISR_PRIO)
 {
     IfxCpu_enableInterrupts();
     IfxQspi_SpiSlave_isrReceive(&s_spiSlave);
+    s_rxFrames++;
 
     /* Extract register address from received frame (bits [31:24]) */
     uint8 addr = (uint8)((s_rxBuf >> 24u) & 0xFFu);
@@ -152,7 +163,9 @@ static void prv_SpiInit(void)
     slaveCfg.erPriority         = QSPI3_ER_ISR_PRIO;
     slaveCfg.isrProvider        = IfxSrc_Tos_cpu0;
 
-    slaveCfg.protocol.dataWidth      = 31u;
+    /* iLLD programs BACON.DL = dataWidth - 1, so this is the frame length
+     * in bits (2..32), not "length minus one". */
+    slaveCfg.protocol.dataWidth      = FUSA_SPI_FRAME_BITS;
     slaveCfg.protocol.clockPolarity  = IfxQspi_ClockPolarity_idleLow;
     slaveCfg.protocol.shiftClock     = IfxQspi_ShiftClock_shiftTransmitDataOnTrailingEdge;
     slaveCfg.protocol.dataHeading    = IfxQspi_DataHeading_msbFirst;
@@ -163,6 +176,83 @@ static void prv_SpiInit(void)
     IfxCpu_Irq_installInterruptHandler(&qspi3RxISR, QSPI3_RX_ISR_PRIO);
     IfxCpu_Irq_installInterruptHandler(&qspi3ErISR, QSPI3_ER_ISR_PRIO);
 }
+/* ================================================================== */
+/*  Re-arm                                                            */
+/* ================================================================== */
+
+/* The RX ISR posts the next exchange after every completed frame, so the
+ * slave stays armed (one word in the TX FIFO) while frames keep arriving.
+ * An error such as a CS glitch or a short frame clears onTransfer in
+ * qspi3ErISR without posting, and nothing re-arms the slave until another
+ * frame completes.  Recover from that here.
+ *
+ * "Unarmed" means the TX FIFO is empty AND no frame has completed since
+ * the previous poll, on two consecutive polls (>= 5 ms with the CPU0
+ * loop).  Requiring no completed frames keeps this from firing in the
+ * short window after a frame ends and before the RX ISR has posted its
+ * reply, and from draining an RX word that a pending ISR still needs.
+ * A word still sitting in the TX FIFO means the slave is already armed,
+ * so that case is left alone. */
+static void prv_RearmIfIdle(void)
+{
+    uint32 frames;
+
+    /* QSPI3 and its ISRs belong to CPU0.  FusaSpi_Update() is also called
+     * from the CLI self-test on CPU2, which cannot lock out CPU0's RX ISR. */
+    if (IfxCpu_getCoreIndex() != 0u)
+    {
+        return;
+    }
+
+    frames = s_rxFrames;
+
+    if ((frames != s_lastFrames) ||
+        (IfxQspi_getTransmitFifoLevel(&MODULE_QSPI3) != 0u))
+    {
+        s_lastFrames = frames;
+        s_idlePolls  = 0u;
+        return;
+    }
+
+    if (s_idlePolls < 1u)
+    {
+        s_idlePolls++;
+        return;
+    }
+    s_idlePolls = 0u;
+
+    {
+        boolean irq = IfxCpu_disableInterrupts();
+
+        /* Re-check with the RX ISR locked out. */
+        if ((s_rxFrames == frames) &&
+            (IfxQspi_getTransmitFifoLevel(&MODULE_QSPI3) == 0u))
+        {
+            uint32 n = 0u;
+
+            /* Drop stale RX words, then clear the busy flag (it can be left
+             * set if a frame never completed) and post a fresh exchange.
+             * The reply is MAGIC, the same as the first frame after reset,
+             * so the master can use it to re-synchronise. */
+            while ((IfxQspi_getReceiveFifoLevel(&MODULE_QSPI3) != 0u) &&
+                   (n < FUSA_SPI_RX_DRAIN_MAX))
+            {
+                (void)IfxQspi_readReceiveFifo(&MODULE_QSPI3);
+                n++;
+            }
+            s_spiSlave.onTransfer = FALSE;
+            s_txBuf = FUSA_MAGIC;
+            s_rxBuf = 0u;
+            if (IfxQspi_SpiSlave_exchange(&s_spiSlave, &s_txBuf, &s_rxBuf, 1u) ==
+                IfxQspi_Status_ok)
+            {
+                s_rearmCount++;
+            }
+        }
+        IfxCpu_restoreInterrupts(irq);
+    }
+}
+
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
@@ -207,6 +297,8 @@ void FusaSpi_Update(void)
     uint32 nowMs;
 
     if (!s_initialised) return;
+
+    prv_RearmIfIdle();               /* every call; cadence is the caller's loop */
 
     nowMs = Stm_GetTimeMs();
     if ((nowMs - s_lastUpdateMs) < FUSA_SPI_UPDATE_INTERVAL_MS) return;
@@ -402,6 +494,8 @@ void FusaSpi_DumpRegMap(void)
                  (unsigned)s_regMap[FUSA_REG_RAPID_SHUTDOWN],
                  (unsigned)s_regMap[FUSA_REG_LID_STATE],
                  (unsigned)s_regMap[FUSA_REG_TAMPER_STATE]);
+    Debug_Printf("[FUSA_SPI]  SPI: frames=%u rearms=%u\r\n",
+                 (unsigned)s_rxFrames, (unsigned)s_rearmCount);
     Debug_Print("[FUSA_SPI] === End ===\r\n");
 }
 
