@@ -72,11 +72,26 @@ static void prv_ServiceWdtIfOwner(void)
 /* ------------------------------------------------------------------ */
 static uint32 prv_InactiveBaseOrSkip(const char *tag)
 {
+    DFlash_SotaMeta_t meta;
     uint32 base = Swap_GetInactiveBase();
+
     if (base == 0u)
     {
         Debug_Printf("[TEST:%s] SKIP: active bank unknown (ADDRCFG) - "
                      "not erasing\r\n", tag);
+        return 0u;
+    }
+
+    /* While an update is pending (staged before fwswap, or running but not yet
+     * committed) the inactive bank holds the staged image or the rollback
+     * image.  These tests erase its first sector and rewrite the SOTA
+     * metadata, so do not run them then. */
+    if ((DFlash_ReadSotaMeta(&meta) == DFLASH_OK) &&
+        (meta.magic == DFLASH_SOTA_MAGIC) && (meta.pendingUpdate != 0u))
+    {
+        Debug_Printf("[TEST:%s] SKIP: an update is pending - not erasing the "
+                     "inactive bank (commit or clear it first)\r\n", tag);
+        return 0u;
     }
     return base;
 }
