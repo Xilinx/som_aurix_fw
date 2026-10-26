@@ -100,24 +100,37 @@ static void prv_OnTlfFault(void)
 static void prv_PublishVoltages(void)
 {
     uint16 chMv[VOLTMON_MAX_CHANNELS];
+    uint32 uv, ov, warn;
     uint32 i;
 
     for (i = 0u; i < VOLTMON_MAX_CHANNELS; i++)
     {
         chMv[i] = VoltMon_GetLastMv(i);
     }
-    Ipc_UpdateVoltages(chMv, 0u, 0u);
+    VoltMon_GetFlags(&uv, &ov, &warn);
+    Ipc_UpdateVoltages(chMv, uv, ov);
 }
 
 static void prv_PublishTlfStatus(void)
 {
+    /* DEVSTAT / SYSSF / WWDSTAT come from the ~1 Hz register snapshot
+     * (prv_RunFusa), so they read 0 until the first snapshot exists. */
+    uint32 devstat = 0u, syssf = 0u, wdstat = 0u;
+
+    if (g_ipcShared.fusa.tlfRegsSeq != 0u)
+    {
+        devstat = (uint32)g_ipcShared.fusa.tlfRegs[0];
+        syssf   = (uint32)g_ipcShared.fusa.tlfRegs[1];
+        wdstat  = (uint32)g_ipcShared.fusa.tlfRegs[10];
+    }
+
     Ipc_UpdateTlfStatus(
+        devstat,
+        syssf,
+        wdstat,
         (uint32)Tlf35585_GetDevState(),
-        0u,
-        0u,
-        (uint32)Tlf35585_GetDevState(),
-        0u,
-        0u,
+        Tlf35585_GetWwdServiceCount(),
+        Tlf35585_GetWwdMissCount(),
         (uint32)Tlf35585_IsErrActive(),
         (uint32)Tlf35585_IsSafeStateActive()
     );
