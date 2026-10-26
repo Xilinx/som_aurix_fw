@@ -230,14 +230,49 @@ boolean prv_WaitForCores(uint32 timeoutMs)
 /* ================================================================== */
 
 /* One-shot SOTA commit once the PMC reports the platform is ON. */
+#define COMMIT_RETRY_MS     5000u
+
 void prv_CommitSotaOnce(void)
 {
-    static boolean s_committed = FALSE;
+    static boolean s_committed     = FALSE;
+    static boolean s_postBlockLogged = FALSE;
+    static uint32  s_lastTryMs     = 0u;
+    Bist_Stats_t   bist;
+    uint32         now;
 
-    if (!s_committed && (g_ipcShared.pmc.pmState == (uint32)PM_STATE_ON))
+    if (s_committed || (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
     {
-        BootValid_CommitUpdate();
+        return;
+    }
+
+    /* Do not commit an image that failed its power-on CRC check.  Leaving the
+     * update pending lets the boot counter run out and roll back. */
+    Bist_GetStats(&bist);
+    if (bist.postResult == BIST_ERR_CRC)
+    {
+        if (!s_postBlockLogged)
+        {
+            s_postBlockLogged = TRUE;
+            Debug_Print("[BOOT] POST failed - not committing the update\r\n");
+        }
+        return;
+    }
+
+    now = Stm_GetTimeMs();
+    if ((s_lastTryMs != 0u) && ((now - s_lastTryMs) < COMMIT_RETRY_MS))
+    {
+        return;
+    }
+    s_lastTryMs = now | 1u;     /* never 0: 0 means "not tried yet" */
+
+    /* Mark done only when the commit succeeded; otherwise retry. */
+    if (BootValid_CommitUpdate() == BOOTVALID_OK)
+    {
         s_committed = TRUE;
+    }
+    else
+    {
+        Debug_Print("[BOOT] commit failed - will retry\r\n");
     }
 }
 
