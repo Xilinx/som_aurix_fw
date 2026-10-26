@@ -27,6 +27,13 @@
 #include "IfxCpu_Irq.h"
 #include "SysMonitor.h"
 #include "UsbPd_Cfg.h"
+#include "UsbPd_Manager.h"
+#include "UsbPd_Hpd.h"
+#include "ComHpcWdt.h"
+#include "Ipc.h"
+
+/* APU temperature older than this is reported as invalid. */
+#define FUSA_APU_TEMP_STALE_MS      1000u
 
 /* ================================================================== */
 /*  Register map storage                                              */
@@ -222,17 +229,40 @@ void FusaSpi_Update(void)
     }
 
     /* ---- Thermal / APML ---- */
+    s_regMap[FUSA_REG_THERMTRIP_COUNT] = PowerManager_GetThermtripCount();
 #if !defined(TARGET_EVAL_BOARD)
-    s_regMap[FUSA_REG_PROCHOT_STATUS] = (uint32)SysMonitor_IsThrottling();
+    {
+        /* SysMonitor (CPU1) publishes the SB-TSI reading to IPC.  It is only
+         * refreshed in S0, so report INVALID outside S0 or when it is stale
+         * rather than replaying the last value. */
+        sint16  tempC = g_ipcShared.sysmon.apuTempC;
+        boolean valid = (tempC != (sint16)SYSMON_TEMP_INVALID) &&
+                        (PowerManager_GetState() == PM_STATE_ON) &&
+                        ((nowMs - g_ipcShared.sysmon.apuTempMs) <= FUSA_APU_TEMP_STALE_MS);
+        boolean throttling = SysMonitor_IsThrottling();
+
+        s_regMap[FUSA_REG_APU_TEMP_C]     = (uint32)(sint32)(valid ? tempC : (sint16)SYSMON_TEMP_INVALID);
+        s_regMap[FUSA_REG_PROCHOT_STATUS] = (uint32)throttling;
+        s_regMap[FUSA_REG_THERMAL_STATE]  = (throttling ? 0x1u : 0x0u) |
+                                            (valid      ? 0x2u : 0x0u);
+    }
 #endif
 
     /* ---- TLF PMIC ---- */
     s_regMap[FUSA_REG_TLF_STATE]    = (uint32)Tlf35585_GetDevState();
     s_regMap[FUSA_REG_TLF_ERR_PIN]  = (uint32)Tlf35585_IsErrActive();
     s_regMap[FUSA_REG_TLF_SS_PIN]   = (uint32)Tlf35585_IsSafeStateActive();
-    /* DEVSTAT, SYSSF, WDSTAT are populated by Tlf35585_CheckFaults
-     * and exposed here. For detailed status, read from the TLF
-     * event log. */
+    s_regMap[FUSA_REG_TLF_WDT_SVC]  = Tlf35585_GetWwdServiceCount();
+    s_regMap[FUSA_REG_TLF_WDT_MISS] = Tlf35585_GetWwdMissCount();
+    /* DEVSTAT / SYSSF / WWDSTAT come from the ~1 Hz register snapshot
+     * (Tlf35585_PublishRegSnapshot) so this task adds no QSPI2 traffic.
+     * They read 0 until the first snapshot has been published. */
+    if (g_ipcShared.fusa.tlfRegsSeq != 0u)
+    {
+        s_regMap[FUSA_REG_TLF_DEVSTAT] = (uint32)g_ipcShared.fusa.tlfRegs[0];
+        s_regMap[FUSA_REG_TLF_SYSSF]   = (uint32)g_ipcShared.fusa.tlfRegs[1];
+        s_regMap[FUSA_REG_TLF_WDSTAT]  = (uint32)g_ipcShared.fusa.tlfRegs[10];
+    }
 
     /* ---- Voltage monitoring ---- */
     {
@@ -247,6 +277,35 @@ void FusaSpi_Update(void)
         }
         s_regMap[FUSA_REG_VOLT_TIMESTAMP] = nowMs;
     }
+    {
+        uint32 uv, ov, warn;
+        VoltMon_GetFlags(&uv, &ov, &warn);
+        s_regMap[FUSA_REG_VOLT_UV_FLAGS]   = uv;
+        s_regMap[FUSA_REG_VOLT_OV_FLAGS]   = ov;
+        s_regMap[FUSA_REG_VOLT_WARN_FLAGS] = warn;
+    }
+
+    /* ---- USB PD summary (CPU3 owns the manager) ---- */
+#if !defined(TARGET_EVAL_BOARD) && (USBPD_FEATURE_ENABLE == 1u)
+    if (g_ipcShared.cpu3Ready != 0u)
+    {
+        s_regMap[FUSA_REG_USBPD_PORT0_STATE] = UsbPdManager_GetPortStatusWord(0u);
+        s_regMap[FUSA_REG_USBPD_PORT1_STATE] = UsbPdManager_GetPortStatusWord(1u);
+        s_regMap[FUSA_REG_USBPD_FAULT_FLAGS] = UsbPdManager_GetFaultFlags();
+        s_regMap[FUSA_REG_USBPD_HPD_STATE]   =
+            (UsbPd_Hpd_GetLevel(0u) ? 0x1u : 0x0u) |
+            (UsbPd_Hpd_GetLevel(1u) ? 0x2u : 0x0u);
+    }
+#endif
+
+    /* ---- COM-HPC misc: raw pin levels, state of the host watchdog ---- */
+    s_regMap[FUSA_REG_COMHPC_WDT_STATE] = ComHpcWdt_GetState();
+    s_regMap[FUSA_REG_RAPID_SHUTDOWN] = (uint32)IfxPort_getPinState(
+        AppPin_GetPort(PIN_RAPID_SD.portIdx), PIN_RAPID_SD.pinIdx);
+    s_regMap[FUSA_REG_LID_STATE] = (uint32)IfxPort_getPinState(
+        AppPin_GetPort(PIN_LID_L.portIdx), PIN_LID_L.pinIdx);
+    s_regMap[FUSA_REG_TAMPER_STATE] = (uint32)IfxPort_getPinState(
+        AppPin_GetPort(PIN_TAMPER_L.portIdx), PIN_TAMPER_L.pinIdx);
 
     /* ---- NV Log summary ---- */
     {
@@ -256,6 +315,7 @@ void FusaSpi_Update(void)
         s_regMap[FUSA_REG_NVLOG_SLOT]   = (uint32)stats.activeSlot;
         s_regMap[FUSA_REG_NVLOG_EVENTS] = stats.eventsInSlot;
         s_regMap[FUSA_REG_NVLOG_ERRORS] = stats.flushErrors;
+        s_regMap[FUSA_REG_NVLOG_LAST_EVT] = (uint32)stats.lastEventType;
     }
 
     /* ---- FuSa status (matches GPIO-driven 2-bit field) ---- */
@@ -317,6 +377,31 @@ void FusaSpi_DumpRegMap(void)
                  (unsigned)s_regMap[FUSA_REG_BOOT_COUNT],
                  (unsigned)s_regMap[FUSA_REG_NVLOG_SLOT],
                  (unsigned)s_regMap[FUSA_REG_NVLOG_EVENTS]);
+    Debug_Printf("[FUSA_SPI]  THERM: temp=%d state=0x%X trips=%u\r\n",
+                 (int)(sint32)s_regMap[FUSA_REG_APU_TEMP_C],
+                 (unsigned)s_regMap[FUSA_REG_THERMAL_STATE],
+                 (unsigned)s_regMap[FUSA_REG_THERMTRIP_COUNT]);
+    Debug_Printf("[FUSA_SPI]  TLF: devstat=0x%02X syssf=0x%02X wwdstat=0x%02X svc=%u miss=%u\r\n",
+                 (unsigned)s_regMap[FUSA_REG_TLF_DEVSTAT],
+                 (unsigned)s_regMap[FUSA_REG_TLF_SYSSF],
+                 (unsigned)s_regMap[FUSA_REG_TLF_WDSTAT],
+                 (unsigned)s_regMap[FUSA_REG_TLF_WDT_SVC],
+                 (unsigned)s_regMap[FUSA_REG_TLF_WDT_MISS]);
+    Debug_Printf("[FUSA_SPI]  VOLT flags: uv=0x%06X ov=0x%06X warn=0x%06X\r\n",
+                 (unsigned)s_regMap[FUSA_REG_VOLT_UV_FLAGS],
+                 (unsigned)s_regMap[FUSA_REG_VOLT_OV_FLAGS],
+                 (unsigned)s_regMap[FUSA_REG_VOLT_WARN_FLAGS]);
+    Debug_Printf("[FUSA_SPI]  USBPD: p0=0x%02X p1=0x%02X fault=0x%02X hpd=0x%X\r\n",
+                 (unsigned)s_regMap[FUSA_REG_USBPD_PORT0_STATE],
+                 (unsigned)s_regMap[FUSA_REG_USBPD_PORT1_STATE],
+                 (unsigned)s_regMap[FUSA_REG_USBPD_FAULT_FLAGS],
+                 (unsigned)s_regMap[FUSA_REG_USBPD_HPD_STATE]);
+    Debug_Printf("[FUSA_SPI]  MISC: nvlog_last=%u comhpc_wdt=%u rapid=%u lid=%u tamper=%u\r\n",
+                 (unsigned)s_regMap[FUSA_REG_NVLOG_LAST_EVT],
+                 (unsigned)s_regMap[FUSA_REG_COMHPC_WDT_STATE],
+                 (unsigned)s_regMap[FUSA_REG_RAPID_SHUTDOWN],
+                 (unsigned)s_regMap[FUSA_REG_LID_STATE],
+                 (unsigned)s_regMap[FUSA_REG_TAMPER_STATE]);
     Debug_Print("[FUSA_SPI] === End ===\r\n");
 }
 

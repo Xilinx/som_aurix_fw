@@ -902,3 +902,6 @@ void Tlf35585_PublishRegSnapshot(void)          /* CPU2, ~1 Hz */
     __dsync();
     g_ipcShared.fusa.tlfRegsSeq++;
 }
+
+uint32 Tlf35585_GetWwdServiceCount(void) { return s_wwdServiceCount; }
+uint32 Tlf35585_GetWwdMissCount(void)    { return s_wwdMissCount; }
