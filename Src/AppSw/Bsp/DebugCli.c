@@ -315,9 +315,34 @@ static void prv_CmdClearFault(void)
         Debug_Print("  ERROR: CPU1 did not ack\r\n");
 }
 
+/* The CLI runs on CPU2; the TLF35585 SPI channel (QSPI2, its buffers and the
+ * window-watchdog service) belongs to CPU0.  Show the ~1 Hz register snapshot
+ * CPU0 publishes instead of driving the same SPI channel from this core. */
 static void prv_CmdTlf(void)
 {
-    Tlf35585_DumpStatus("35585");
+    static const char *const k_names[11] = {
+        "DEVSTAT", "SYSSF", "SPISF", "MONSF0", "MONSF1", "MONSF2",
+        "INITERR", "WDCFG0", "WWDCFG0", "WWDCFG1", "WWDSTAT"
+    };
+    uint32 i;
+
+    if (g_ipcShared.fusa.tlfRegsSeq == 0u)
+    {
+        Debug_Print("[TLF] no register snapshot published yet\r\n");
+        return;
+    }
+    Debug_Printf("[TLF] === 35585 (snapshot #%u, ~1 Hz) ===\r\n",
+                 (unsigned)g_ipcShared.fusa.tlfRegsSeq);
+    for (i = 0u; i < 11u; i++)
+    {
+        Debug_Printf("[TLF]   %-7s=0x%02X\r\n", k_names[i],
+                     (unsigned)g_ipcShared.fusa.tlfRegs[i]);
+    }
+    Debug_Printf("[TLF]   state=%u err_pin=%u safe_state=%u\r\n",
+                 (unsigned)g_ipcShared.fusa.tlfState,
+                 (unsigned)g_ipcShared.fusa.tlfErrPin,
+                 (unsigned)g_ipcShared.fusa.tlfSsPin);
+    Debug_Print("[TLF] === end 35585 ===\r\n");
 }
 
 static void prv_CmdVmon(void)
