@@ -1641,8 +1641,6 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdI2cBitbang();                                     
     else if (prv_StrEq(cmd, "uptime"))
         prv_CmdUptime();
-    else if (prv_StrEq(cmd, "uptime"))
-        prv_CmdUptime();
     else if (prv_StrEq(cmd, "version"))
         prv_CmdVersion();
     else if ((args = prv_StartsWith(cmd, "selftest")) != NULL_PTR)

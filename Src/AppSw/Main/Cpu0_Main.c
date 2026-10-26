@@ -48,8 +48,6 @@
 #include "IfxPort.h"
 #include "AppPin.h"
 
-#define SOTA_TEST_NO_COMMIT 0
-
 static boolean s_fusaReady = FALSE;
 
 /* ================================================================== */
@@ -223,7 +221,6 @@ int core0_main(void)
         Debug_Print("[SYS] Init: TLF OK\r\n");
     }
     Tlf35585_RegisterFaultCb(PowerManager_RequestPowerOff);
-    Debug_Print("[SYS] Init: TLF OK\r\n");
 
     /* ============================================================== */
     /*  Phase 1: BIOS ROM + IPC init (before core release)            */
