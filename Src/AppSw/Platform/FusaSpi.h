@@ -65,7 +65,7 @@
 #define FUSA_REG_APU_TEMP_C         0x0Cu   /* APU die temp, signed int32 °C; -128 = no valid SB-TSI reading */
 #define FUSA_REG_PROCHOT_STATUS     0x0Du   /* 1 = throttling / PROCHOT active */
 #define FUSA_REG_THERMAL_STATE      0x0Eu   /* bit0 throttling, bit1 APU temp reading valid */
-#define FUSA_REG_THERMTRIP_COUNT    0x0Fu   /* THERMTRIP# events acted on since AURIX boot */
+#define FUSA_REG_THERMTRIP_COUNT    0x0Fu   /* thermal shutdown events since AURIX boot: THERMTRIP# or SysMonitor over-temp */
 
 /* ---- TLF PMIC (0x10–0x17) ---- */
 #define FUSA_REG_TLF_DEVSTAT        0x10u   /* TLF DEVSTAT (1 Hz snapshot, 0 until first) */
@@ -80,13 +80,17 @@
 /* ---- Voltage monitoring (0x20–0x3F) ---- */
 /* Channels 0–23: millivolt values from VoltMon */
 #define FUSA_REG_VOLT_CH_BASE       0x20u   /* VOLT_CH0 = 0x20, CH1 = 0x21, ... CH23 = 0x37 */
-#define FUSA_REG_VOLT_UV_FLAGS      0x38u   /* UV fault bitmask, bit n = VOLT_CHn (0 while monitoring off) */
+#define FUSA_REG_VOLT_UV_FLAGS      0x38u   /* UV fault bitmask, bit n = VOLT_CHn (0 while monitoring off).
+                                             * VOLT_*_FLAGS are live, not latched: a fault that clears is gone
+                                             * at the next 100 ms refresh. FUSA_ALERT# is the latch. */
 #define FUSA_REG_VOLT_OV_FLAGS      0x39u   /* Overvoltage fault bitmask */
 #define FUSA_REG_VOLT_WARN_FLAGS    0x3Au   /* Warning-band bitmask (UV or OV warn, not yet a fault) */
 #define FUSA_REG_VOLT_TIMESTAMP     0x3Bu   /* Timestamp of last voltage scan (ms) */
 
 /* ---- USB PD summary (0x40–0x43) ---- */
-#define FUSA_REG_USBPD_PORT0_STATE  0x40u   /* Port 0 status word, see USBPD_STAT_* (UsbPd_Manager.h) */
+#define FUSA_REG_USBPD_PORT0_STATE  0x40u   /* Port 0 status word, see USBPD_STAT_* (UsbPd_Manager.h).
+                                             * 0x40-0x43 hold the last state seen in S0: the PD manager
+                                             * only runs while PM_STATE_ON, so they are stale outside S0. */
 #define FUSA_REG_USBPD_PORT1_STATE  0x41u   /* Port 1 status word, see USBPD_STAT_* */
 #define FUSA_REG_USBPD_FAULT_FLAGS  0x42u   /* see USBPD_FAULT_*; bit n = CYPD n. 0 until CPU3 ready */
 #define FUSA_REG_USBPD_HPD_STATE    0x43u   /* bit0 = port 0 HPD level, bit1 = port 1 */

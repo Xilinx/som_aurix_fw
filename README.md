@@ -269,8 +269,10 @@ Persistent crash/event recorder in DFlash:
 ### 21. FuSa SPI Slave Register Map (v0.2)
 QSPI3 slave on P2.4/5/6/7 (CS/MISO/MOSI/CLK), ALERT on P2.0:
 - 96-register map: identity (magic, version), PM state, thermal/APML, TLF PMIC status, 24 VoltMon channels, USB PD state, NV log stats
-- Updated every 100 ms on CPU2
+- Updated every 100 ms (CPU2 in v0.2, CPU0 in v0.3)
 - ALERT# pin asserted on voltage/PMIC faults, deasserted when cleared
+- Map version 1.1.0 (v0.3): the previously unwritten registers are now populated -- APU temperature (-128 = no valid reading), thermal state, thermal shutdown count, TLF DEVSTAT/SYSSF/WWDSTAT and WDT counters, per-channel UV/OV/warning bitmasks, USB PD port/fault/HPD state, NvLog last event, COM-HPC WDT state, RAPID_SHUTDOWN/LID#/TAMPER# pin levels
+- Voltage flags are live (not latched; ALERT# is the latch). USB PD registers hold the last state seen in S0
 
 ### 22. Debug CLI (v0.2)
 Interactive serial console over ASCLIN0 (115200 baud, 8N1):

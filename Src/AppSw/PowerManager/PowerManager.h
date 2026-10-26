@@ -81,7 +81,9 @@ PM_ResetCause_t PowerManager_GetResetCause(void);
 uint8 PowerManager_GetRetryCount(void);
 
 /**
- * @brief  Get the number of THERMTRIP# events acted on since boot.
+ * @brief  Get the number of thermal shutdown events acted on since boot.
+ *         Counts the THERMTRIP# pin and SysMonitor over-temperature
+ *         shutdowns, which share PowerManager_OnThermtripIsr.
  */
 uint32 PowerManager_GetThermtripCount(void);
 
