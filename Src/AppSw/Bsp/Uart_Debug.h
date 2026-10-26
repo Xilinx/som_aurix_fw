@@ -32,7 +32,11 @@ void Debug_Printf(const char *fmt, ...);
 
 void Debug_DrainRings(void);
 
-void Debug_DrainRings(void);
+/**
+ * @brief Move ASCLIN0 TX/RX service requests onto CPU2.
+ *        Call from CPU2 after CPU0 has stopped writing the UART.
+ */
+void Debug_ClaimSteadyState(void);
 
 void Debug_FlushBlocking(void);
 

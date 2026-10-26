@@ -57,9 +57,9 @@ static uint16                    s_rxBuf[SPI_BUFFER_SIZE];
 
 /* Window watchdog timing */
 static uint32                    s_wdtLastServiceMs   = 0u;
-static uint32                    s_wdtOpenWindowMs    = 200u;
-static uint32                    s_wdtClosedWindowMs  = 10u;
-static uint32                    s_wdtServiceTargetMs = 0u;
+static uint32                    s_wdtOpenWindowMs    = 150u;  /* match WWDCFG1=3, WDCYC=1 ms */
+static uint32                    s_wdtClosedWindowMs  = 50u;   /* match WWDCFG0=1             */
+static uint32                    s_wdtServiceTargetMs = 125u;  /* never 0: that ticks every call */
 static boolean                   s_wdiPinState        = FALSE;
 
 /* Fault monitoring */
@@ -281,6 +281,42 @@ static Tlf35585_Status_t prv_Lock(void)
     return TLF_OK;
 }
 
+/**
+ * Fill closed/open/target from the TLF's ACTIVE watchdog registers.
+ * Must run on the warm-init path as well: BSS/static defaults are
+ * reloaded on every AURIX reset, but that path used to skip this and
+ * leave s_wdtServiceTargetMs at 0, so every ServiceWdt() tick hit the
+ * closed window and TLF went SAFE STATE (SYSSF.WWDE).
+ */
+static void prv_DeriveWwdTiming(void)
+{
+    uint8  ww0 = 0u, ww1 = 0u, wdcfg0 = 0u;
+    uint32 unitMs;
+
+    Tlf35585_ReadReg(TLF_R_WDCFG0,  &wdcfg0);
+    Tlf35585_ReadReg(TLF_R_WWDCFG0, &ww0);
+    Tlf35585_ReadReg(TLF_R_WWDCFG1, &ww1);
+
+    /* Window = CWx/OWx * 50 watchdog ticks; tick = 0.1 ms or 1 ms (WDCYC). */
+    unitMs = ((wdcfg0 & TLF_WDCFG0_WDCYC) != 0u) ? 50u : 5u;
+    s_wdtClosedWindowMs  = (uint32)ww0 * unitMs;
+    s_wdtOpenWindowMs    = (uint32)ww1 * unitMs;
+    s_wdtServiceTargetMs = s_wdtClosedWindowMs + (s_wdtOpenWindowMs / 2u);
+
+    if (s_wdtServiceTargetMs == 0u)
+    {
+        s_wdtClosedWindowMs  = 50u;
+        s_wdtOpenWindowMs    = 150u;
+        s_wdtServiceTargetMs = 125u;
+        Debug_Print("[TLF] WARN: WWD timing read as 0, using 50/150/125 ms\r\n");
+    }
+
+    Debug_Printf("[TLF] WWD active: closed=%ums open=%ums target=%ums\r\n",
+                 (unsigned)s_wdtClosedWindowMs,
+                 (unsigned)s_wdtOpenWindowMs,
+                 (unsigned)s_wdtServiceTargetMs);
+}
+
 static Tlf35585_Status_t prv_ApplyProtectedConfig(void)
 {
     Tlf35585_Status_t s;
@@ -347,22 +383,7 @@ static Tlf35585_Status_t prv_ApplyProtectedConfig(void)
         }
     }
 
-    /* --- Derive WWD service timing from ACTIVATED values, never from
-     *     intent.  Window = CW/OW * 50 watchdog ticks; tick = WDCYC
-     *     (bit0: 0 = 0.1 ms, 1 = 1 ms).                                  */
-    {
-        uint8  ww0 = 0u, ww1 = 0u;
-        uint32 unitMs = ((wdcfg0 & TLF_WDCFG0_WDCYC) != 0u) ? 50u : 5u;
-        Tlf35585_ReadReg(TLF_R_WWDCFG0, &ww0);
-        Tlf35585_ReadReg(TLF_R_WWDCFG1, &ww1);
-        s_wdtClosedWindowMs  = (uint32)ww0 * unitMs;
-        s_wdtOpenWindowMs    = (uint32)ww1 * unitMs;
-        s_wdtServiceTargetMs = s_wdtClosedWindowMs + (s_wdtOpenWindowMs / 2u);
-        Debug_Printf("[TLF] WWD active: closed=%ums open=%ums target=%ums\r\n",
-                     (unsigned)s_wdtClosedWindowMs,
-                     (unsigned)s_wdtOpenWindowMs,
-                     (unsigned)s_wdtServiceTargetMs);
-    }
+    prv_DeriveWwdTiming();
     return TLF_OK;
 }
 
@@ -502,8 +523,13 @@ Tlf35585_Status_t Tlf35585_Init(void)
         Tlf35585_WriteReg(TLF_RW_SPISF, TLF_CLEAR_STATUS);
         Tlf35585_WriteReg(TLF_RW_SYSSF, TLF_CLEAR_STATUS);
 
+        /* Re-read window times.  Skipping protected config used to skip
+         * this too, so ServiceWdt() fired every call (target=0). */
+        prv_DeriveWwdTiming();
+
         /* Immediate WWD service — the window has been free-running
-         * since the reset; service now to reset the counter. */
+         * since the reset; service now to reset the counter.  The next
+         * tick waits for s_wdtServiceTargetMs. */
         {
             uint8 wwdCmd = 0u;
             Tlf35585_ReadReg(TLF_RW_WWDSCMD, &wwdCmd);
@@ -604,6 +630,10 @@ void Tlf35585_ServiceWdt(void)
     elapsedMs = nowMs - s_wdtLastServiceMs;
 
     /* ---- Trigger when we're past the closed window ---------------- */
+    if (s_wdtServiceTargetMs == 0u)
+    {
+        s_wdtServiceTargetMs = 125u;   /* never tick every call */
+    }
     if (elapsedMs >= s_wdtServiceTargetMs)
     {
         boolean isMiss = (elapsedMs >= (s_wdtClosedWindowMs + s_wdtOpenWindowMs));
@@ -844,8 +874,8 @@ void Tlf35585_DumpStatus(const char *context)
 
 void Tlf35585_EnableIsrMode(void)
 {
-    /* Clear any SRR left over from CPU0's last polled transfer, so
-     * CPU2 doesn't take a spurious interrupt the moment SRE goes on */
+    /* Clear any SRR left over from the last polled transfer before
+     * the QSPI2 service requests are enabled. The ISRs run on CPU0. */
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_TX);
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_RX);
     IfxSrc_clearRequest(&SRC_QSPI_QSPI2_ERR);

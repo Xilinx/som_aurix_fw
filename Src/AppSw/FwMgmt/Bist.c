@@ -87,11 +87,14 @@ static Bist_Status_t prv_RunCheck(void (*keepAliveCb)(void))
 
     s_stats.expectedCrc = meta.imageCrc;
 
-    /* Determine active bank base address */
-    if (meta.activeBank == SWAP_BANK_B)
-        activeBase = PFLASH_BANK_A_BASE;
-    else
-        activeBase = PFLASH_BANK_B_BASE;
+    /* CPU loads follow ADDRCFG: 0xA0000000 is always the running image.
+     * Inverting meta.activeBank treated those addresses as physical, so
+     * B→A POST CRCd 0xA0600000 (old B) and reported FAIL with no protection. */
+    activeBase = Swap_GetActiveLogicalBase();
+    if (activeBase == 0u)
+    {
+        activeBase = PFLASH_BANK_A_BASE;   /* SWAP not mapped: still PF0 */
+    }
 
     /* Image size: if not stored in metadata, use full bank size.
      * The FwUpdate protocol pads to 256-byte boundary and stores

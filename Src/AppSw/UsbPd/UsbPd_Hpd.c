@@ -11,8 +11,9 @@
 #include "NvLog.h"
 #include "IfxPort.h"
 
-/* HPD IRQ pulse width per DP spec */
-#define HPD_IRQ_PULSE_MS    2u
+/* VESA IRQ_HPD is a 0.5-1 ms low pulse. A low longer than 2 ms is an
+ * unplug. Do not wait for UsbPd_Hpd_Run() on the 50 ms CPU3 loop. */
+#define HPD_IRQ_PULSE_US    1000u
 
 /* ================================================================== */
 /*  State — two ports                                                 */
@@ -89,15 +90,15 @@ void UsbPd_Hpd_ProcessEvent(uint8 portIdx, UsbPd_HpdEvent_t event)
             break;
 
         case HPD_EVENT_IRQ:
-            /* Generate a 2ms low pulse.  If HPD was already high,
-             * pull it low and set the timer.  If HPD was low,
-             * the IRQ is meaningless per DP spec — ignore. */
+            /* Finish the pulse here. Cpu3_Main only calls Run() every
+             * 50 ms, which would look like an unplug. */
             if (s_hpd[portIdx].hpdLevel)
             {
                 prv_SetHpdPin(portIdx, FALSE);
-                s_hpd[portIdx].irqPending = TRUE;
-                s_hpd[portIdx].irqStartMs = Stm_GetTimeMs();
-                Debug_Printf("[HPD] Port %u: IRQ pulse start\r\n",
+                Stm_DelayUs(HPD_IRQ_PULSE_US);
+                prv_SetHpdPin(portIdx, TRUE);
+                s_hpd[portIdx].irqPending = FALSE;
+                Debug_Printf("[HPD] Port %u: IRQ pulse\r\n",
                              (unsigned)portIdx);
             }
             break;
@@ -114,13 +115,8 @@ void UsbPd_Hpd_Run(void)
     {
         if (s_hpd[i].irqPending)
         {
-            uint32 elapsed = Stm_GetTimeMs() - s_hpd[i].irqStartMs;
-            if (elapsed >= HPD_IRQ_PULSE_MS)
-            {
-                /* Pulse complete — reassert HPD high */
-                prv_SetHpdPin(i, TRUE);
-                s_hpd[i].irqPending = FALSE;
-            }
+            prv_SetHpdPin(i, TRUE);
+            s_hpd[i].irqPending = FALSE;
         }
     }
 }

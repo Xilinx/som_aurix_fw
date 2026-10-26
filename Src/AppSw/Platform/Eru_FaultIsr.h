@@ -46,6 +46,12 @@ typedef void (*Eru_Callback_t)(void);
 void Eru_FaultIsr_Init(void);
 
 /**
+ * @brief Install the THERMTRIP vector on the calling core.
+ *        Call from CPU1 before Eru_FaultIsr_Init() enables the SRC.
+ */
+void Eru_ThermtripIsr_Attach(void);
+
+/**
  * @brief  Register a callback for a specific ERU event.
  * @param  id   Which event (THERMTRIP, CARRIER_HOT, WD_STROBE)
  * @param  cb   Function pointer, or NULL_PTR to clear

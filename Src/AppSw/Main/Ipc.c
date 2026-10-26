@@ -15,10 +15,14 @@
 
 volatile Ipc_SharedMem_t g_ipcShared __attribute__((section(".ipc_shared")));
 volatile uint32 g_wdtOwner __attribute__((section(".ipc_shared"))) = 0u;
+volatile Ipc_DbgRing_t g_dbgRing0 __attribute__((section(".ipc_shared")));
 volatile Ipc_DbgRing_t g_dbgRing1 __attribute__((section(".ipc_shared")));
 volatile Ipc_DbgRing_t g_dbgRing2 __attribute__((section(".ipc_shared")));
+volatile Ipc_DbgRing_t g_dbgRing3 __attribute__((section(".ipc_shared")));
 volatile uint32 g_bootTrace     __attribute__((section(".ipc_shared")));
 volatile uint32 g_prevBootTrace __attribute__((section(".ipc_shared")));
+IFX_ALIGN(4) IfxCpu_syncEvent g_cpuSyncEvent __attribute__((section(".ipc_shared")));
+volatile uint32 g_coreRelease __attribute__((section(".ipc_shared")));
 /* ================================================================== */
 /*  IR service request nodes                                          */
 /*                                                                    */
@@ -58,6 +62,41 @@ IFX_INTERRUPT(ipcIrCpu0FromCpu2, IPC_CORE_ORCHESTRATOR, IPC_IR_PRIO_CPU2_TO_CPU0
 /*  Public API                                                        */
 /* ================================================================== */
 
+uint32 Ipc_ResetCoreBarrier(void)
+{
+    uint32 prev = (uint32)g_cpuSyncEvent;
+
+    /* IDLE first so CPU1/2/3 that saw a leftover GO must wait. */
+    g_coreRelease  = CORE_SYNC_IDLE;
+    g_cpuSyncEvent = 0u;
+    __dsync();
+    return prev;
+}
+
+void Ipc_ReleaseAndWaitBarrier(void)
+{
+    g_cpuSyncEvent = 0u;
+    __dsync();
+    g_coreRelease = CORE_SYNC_GO;
+    __dsync();
+    IfxCpu_emitEvent(&g_cpuSyncEvent);
+    (void)IfxCpu_waitEvent(&g_cpuSyncEvent, 100);
+}
+
+void Ipc_WaitReleasedBarrier(void)
+{
+    while (g_coreRelease != CORE_SYNC_IDLE)
+    {
+    }
+    while (g_coreRelease != CORE_SYNC_GO)
+    {
+    }
+    IfxCpu_emitEvent(&g_cpuSyncEvent);
+    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK)
+    {
+    }
+}
+
 void Ipc_Init(void)
 {
     /* Zero all shared memory */
@@ -95,10 +134,15 @@ void Ipc_Init(void)
     }
     {
         g_wdtOwner      = 0u;
+        g_ipcShared.uartOwner = 0u;
+        g_dbgRing0.head = 0u;
+        g_dbgRing0.tail = 0u;
         g_dbgRing1.head = 0u;  
         g_dbgRing1.tail = 0u;
         g_dbgRing2.head = 0u;  
         g_dbgRing2.tail = 0u;
+        g_dbgRing3.head = 0u;
+        g_dbgRing3.tail = 0u;
         g_ipcShared.voltMon.reqSeq = 0u;
         g_ipcShared.voltMon.ackSeq = 0u;
         __dsync();
@@ -212,9 +256,8 @@ boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs)
 {
     uint32 startMs;
 
-    if (!g_ipcShared.cpu2Ready)
-        return FALSE;              /* consumer not up — nothing to wait for */
-
+    /* Scanner is CPU0. Do not gate this on cpu2Ready: CPU2 no longer
+     * runs VoltMon, and a missing CPU2 must not skip the stop handshake. */
     g_ipcShared.voltMon.reqSeq++;
     __dsync();
 
@@ -227,7 +270,7 @@ boolean Ipc_RequestVoltMonStopWait(uint32 timeoutMs)
     return TRUE;
 }
 
-void Ipc_AckVoltMonStop(void)              /* CPU2 only */
+void Ipc_AckVoltMonStop(void)              /* CPU0 scanner */
 {
     g_ipcShared.voltMon.ackSeq = g_ipcShared.voltMon.reqSeq;
     __dsync();

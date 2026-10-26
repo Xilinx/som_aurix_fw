@@ -188,7 +188,7 @@ static void prv_HandleHeader(void)
 
     {
         uint8 active = Swap_GetActiveBank();                /* SCU_SWAPCTRL.ADDRCFG */
-        if (active == 0xFFu)
+        if (active == 0u)
         {
             Debug_Print("[FWUP] Active bank unknown (ADDRCFG) - refusing update\r\n");
             prv_SendNak(FWUPDATE_ERR_BAD_HEADER);
@@ -196,14 +196,24 @@ static void prv_HandleHeader(void)
             return;
         }
 
+        /* Erase/write use the physical unmapped bank.  CPU CRC uses the
+         * logical window at 0xA0600000 (ADDRCFG-swapped).  Using the
+         * physical base for CRC while running from B reads the live
+         * image at 0xA0000000 and fails IMG_CRC. */
         s_targetBank = (active == SWAP_BANK_A) ? 1u : 0u;   /* 1 = B, 0 = A */
-        s_writeBase = (active == SWAP_BANK_A) ? PFLASH_BANK_B_BASE    /* PF2 */
-                                              : PFLASH_BANK_A_BASE;   /* PF0 */
-        s_readBase  = PFLASH_BANK_B_BASE;
+        s_writeBase  = Swap_GetInactiveBase();
+        s_readBase   = Swap_GetInactiveLogicalBase();
+        if ((s_writeBase == 0u) || (s_readBase == 0u))
+        {
+            Debug_Print("[FWUP] Inactive bank unknown - refusing update\r\n");
+            prv_SendNak(FWUPDATE_ERR_BAD_HEADER);
+            s_state = FWUPDATE_ERROR;
+            return;
+        }
 
-        Debug_Printf("[FWUP] Running bank 0x%02X -> writing bank %s (phys 0x%08X)\r\n",
+        Debug_Printf("[FWUP] Running bank 0x%02X -> writing bank %s (phys 0x%08X, CRC logical 0x%08X)\r\n",
                      (unsigned)active, (s_targetBank == 1u) ? "B" : "A",
-                     (unsigned)s_writeBase);
+                     (unsigned)s_writeBase, (unsigned)s_readBase);
     }
 
     if ((s_imageSize == 0u) || (s_imageSize > PFLASH_BANK_B_SIZE))
@@ -323,14 +333,27 @@ static uint32 prv_CrcFlash(uint32 baseAddr, uint32 size)
 
 static void prv_HandleVerifying(void)
 {
-    uint32 readBase = (Swap_GetActiveBank() == SWAP_BANK_A)
-                    ? PFLASH_BANK_B_BASE    /* running A, wrote B, read B at 0xA0600000 */
-                    : PFLASH_BANK_A_BASE;   /* running B, wrote A, read A at 0xA0600000 */
-    uint32 flashCrc = prv_CrcFlash(readBase, s_imageSize);
+    /* CPU readback of the staged image — logical inactive window, not
+     * the physical program address (those diverge when Bank B is mapped). */
+    uint32 readBase = s_readBase;
+    uint32 flashCrc;
+
+    if (readBase == 0u)
+    {
+        Debug_Print("[FWUP] Logical inactive base unknown - verify refused\r\n");
+        prv_SendNak(FWUPDATE_ERR_IMG_CRC);
+        s_state = FWUPDATE_ERROR;
+        return;
+    }
+
+    Debug_Printf("[FWUP] Verify CRC at logical 0x%08X (wrote phys 0x%08X)\r\n",
+                 (unsigned)readBase, (unsigned)s_writeBase);
+    flashCrc = prv_CrcFlash(readBase, s_imageSize);
 
     if (flashCrc != s_imageCrc)
     {
-        Debug_Printf("[FWUP] Flash readback mismatch: 0x%08X\r\n", (unsigned)flashCrc);
+        Debug_Printf("[FWUP] Flash readback mismatch: 0x%08X (logical 0x%08X)\r\n",
+                     (unsigned)flashCrc, (unsigned)readBase);
         prv_SendNak(FWUPDATE_ERR_IMG_CRC);
         s_state = FWUPDATE_ERROR;
         return;
@@ -367,10 +390,8 @@ static void prv_HandleVerifying(void)
     prv_WdBypass(FALSE);
     s_state = FWUPDATE_DONE;
     g_debugMuted = FALSE;
-    uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
-    Debug_Printf("[FWUP] Calling Swap_ChangeMode(0x%02X)...\r\n", (unsigned)newBank);
-    Debug_Print("[FWUP] Update complete — resetting...\r\n");
-
+    //uint8 newBank = (s_targetBank == 0u) ? SWAP_BANK_A : SWAP_BANK_B;
+    Debug_Print("[FWUP] Update staged - run fwswap to apply\r\n");
 }
 
 /* ================================================================== */

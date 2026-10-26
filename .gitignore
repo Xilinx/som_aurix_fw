@@ -1,5 +1,6 @@
 # Build artefacts
 Build/
+build/
 *.elf
 *.hex
 *.bin
@@ -11,6 +12,7 @@ Build/
 Makefile
 
 tools/flasher/
+tools/toolchain/
 
 !Image/*.elf
 
@@ -30,7 +32,9 @@ RemoteSystemsTempFiles/
 Thumbs.db
 
 # iLLD library — not committed; each developer unpacks their own copy
+# (may be a real dir or a symlink, so match both forms)
 iLLD/
+iLLD
 
 # Reference documents — AMD Confidential / proprietary SOM materials
 # Obtain separately per NDA / AMD partner portal

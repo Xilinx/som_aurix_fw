@@ -39,6 +39,8 @@ static boolean s_i2cFailProchot = FALSE;
 static uint32 s_lastPoll    = 0u;
 static uint32 s_lastLog     = 0u;
 static uint32 s_lastThermal = 0u;
+static uint32 s_s0SeenMs    = 0u;
+static boolean s_s0DwellDone = FALSE;
 
 static uint8 s_apuProchotClearCount = 0u;
 static boolean s_apuProchotAsserted = FALSE;
@@ -130,6 +132,8 @@ void SysMonitor_Init(void)
     s_lastPoll    = 0u;
     s_lastLog     = 0u;
     s_lastThermal = 0u;
+    s_s0SeenMs    = 0u;
+    s_s0DwellDone = FALSE;
     s_prochotActive = FALSE;
     s_thermalThrottle = FALSE;
     s_apuProchotClearCount = 0u;
@@ -153,6 +157,9 @@ void SysMonitor_Run(void)
      * PM_STATE_ON check at the Cpu0_Main.c call site. */
     if (PowerManager_GetState() != PM_STATE_ON)
     {
+        s_s0DwellDone = FALSE;
+        s_s0SeenMs    = 0u;
+        s_lastThermal = 0u;
         return;
     }
     if (g_ipcShared.sysmonPause != 0u)
@@ -168,11 +175,39 @@ void SysMonitor_Run(void)
      * Read APU die temperature via I2C1 (SIC/SID, P11.13/P11.14).
      * Compare against warning (PROCHOT) and error (shutdown) thresholds.
      *
-     * APML register map is pending AMD documentation for Glacier Peak.
-     * Once available, replace prv_ReadApuTempC() with the actual I2C
-     * transaction targeting the correct APML register address.
+     * Do not touch SB-TSI until S0 has settled: TransitionPending covers
+     * SLP_S3/S5, APU_RESET_L, and the first 500 ms after ON; the dwell
+     * covers the PWROK+0 ms first-poll case even if onEntryMs was 0.
+     * GPIO / CARRIER_HOT still run during the dwell.
+     * Fail-open: a NAK/timeout returns TEMP_INVALID and the PMC loop
+     * keeps running.
      * ------------------------------------------------------------------ */
-    if (Stm_IsElapsedMs(&s_lastThermal, SYSMON_THERMAL_POLL_MS))
+    {
+        boolean skipApml = FALSE;
+
+        if (s_s0DwellDone == FALSE)
+        {
+            if (s_s0SeenMs == 0u)
+            {
+                s_s0SeenMs = Stm_GetTimeMs();
+            }
+            if ((Stm_GetTimeMs() - s_s0SeenMs) < SYSMON_S0_DWELL_MS)
+            {
+                skipApml = TRUE;
+            }
+            else
+            {
+                s_s0DwellDone = TRUE;
+                s_lastThermal = 0u;
+            }
+        }
+        if (PowerManager_TransitionPending() != FALSE)
+        {
+            skipApml = TRUE;
+        }
+
+        if ((skipApml == FALSE) &&
+            Stm_IsElapsedMs(&s_lastThermal, SYSMON_THERMAL_POLL_MS))
     {
         sint16 tempC = prv_ReadApuTempC();
         s_apuTempC = tempC;                 /* INVALID on I2C failure, on purpose */
@@ -258,6 +293,7 @@ void SysMonitor_Run(void)
             }
         }
     }
+    }
         /* ---- APU-side PROCHOT detection via SB-TSI status register -----------
         * P11.9 drives the gate of Q53 (BSS138), so reading the GPIO only
         * returns what the Aurix wrote.  Poll SB-TSI status register 0x02
@@ -265,6 +301,8 @@ void SysMonitor_Run(void)
         * PROCHOT instead.
         * ------------------------------------------------------------------ */
 #if (SYSMON_APML_PROCHOT_ENABLE == 1u)
+    if ((s_s0DwellDone != FALSE) &&
+        (PowerManager_TransitionPending() == FALSE))
     {
         uint8 sbtsiStatus = 0u;
         I2c_Status_t st;

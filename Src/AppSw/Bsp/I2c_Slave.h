@@ -1,25 +1,20 @@
 /**
  * @file    I2c_Slave.h
- * @brief   I2C1 slave driver for APU USB-C sideband proxy
+ * @brief   I2C0 slave for the Ryzen USB-C sideband (UsbPd_ApuProxy)
  *
- * The TC3xx I2C peripheral supports simultaneous master and slave
- * operation.  This driver configures I2C1 to respond to slave
- * addresses 0x54 and 0x58 while the existing I2c_Master driver
- * continues to use I2C1 for APML reads.
+ * I2C1 is APML / SB-TSI and is master-only. The sideband slave lives
+ * on I2C0, the same module CPU3 uses as master to the carrier CYPD
+ * controllers. Call I2cSlave_Init() from CPU3 only.
  *
- * The iLLD does not provide an I2C slave wrapper, so this driver
- * accesses the I2C1 registers directly.
+ * The TC387 ADDRCFG register has one ADR field, so the hardware match
+ * is 0x54 (port 0). 0x58 remains the port-1 address in the config
+ * block; this peripheral cannot ACK a second slave address.
  *
- * When the APU reads from 0x54, the slave serves the port-0
- * APU proxy register map.  When it reads 0x58, port-1.
+ * CYPD master transfers and this slave share MODULE_I2C0.
+ * I2cMaster suspends the slave around bus-0 transfers and resumes it
+ * after. I2C1 never calls Suspend/Resume.
  *
- * The slave response is interrupt-driven: the Protocol Interrupt
- * (I2C_PIRQSM) fires on address match, and the slave loads the
- * TX FIFO with the proxy register bytes.
- *
- * IMPORTANT: On the eval board (TARGET_EVAL_BOARD), this is
- * compiled but I2C1 has no APU connected.  The slave address
- * match will simply never fire.
+ * The ISR is routed to CPU3 (protocol + FIFO service requests).
  */
 
 #ifndef I2C_SLAVE_H
@@ -32,8 +27,8 @@
 #endif
 
 #define I2C_SLV_USBC0_ADDR   0x54u
-#define I2C_SLV_USBC1_ADDR   0x58u
-#define I2C1_SLAVE_ISR_PRIO  50u
+#define I2C_SLV_USBC1_ADDR   0x58u   /* config only; ADDRCFG can match one address */
+#define I2C0_SLAVE_ISR_PRIO  50u     /* CPU3 vector; protocol and DTR share it */
 #define I2C_SLV_LOG_LEN      128u
 
 typedef boolean (*I2cSlave_ReadCb_t)(uint8 portIdx, uint8 regAddr, uint8 *pData);
@@ -68,10 +63,10 @@ void    I2cSlave_Start (I2cSlave_Inst_t *s);
 void    I2cSlave_Stop  (I2cSlave_Inst_t *s);        /* leaves module in master mode, RUN=1 */
 void    I2cSlave_Poll  (I2cSlave_Inst_t *s);        /* call in a loop; services AM/RX/TX/errors */
 
-/* legacy I2C1 / APU proxy API (unchanged behaviour) */
+/* APU sideband on MODULE_I2C0. Init from CPU3, after UsbPd_ApuProxy_Init. */
 void    I2cSlave_Init   (I2cSlave_ReadCb_t readCb);
 boolean I2cSlave_IsBusy (void);
-void    I2cSlave_Suspend(void);
-void    I2cSlave_Resume (void);
+void    I2cSlave_Suspend(void);  /* mask CPU3 IRQ, park I2C0 as master */
+void    I2cSlave_Resume (void);  /* restore 0x54 listen and CPU3 IRQ */
 
 #endif

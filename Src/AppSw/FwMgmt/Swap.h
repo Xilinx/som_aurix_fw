@@ -71,10 +71,45 @@ boolean       Swap_PageProgrammed(uint32 pageAddr);   /* wrapper for the CLI dum
 uint8 Swap_GetCurrentBank(void);
 
 /**
- * @brief  Get the physical base address of the inactive bank.
- * @return PFLASH_BANK_A_BASE or PFLASH_BANK_B_BASE, or 0 on error.
+ * @brief  Get the physical base address of the currently-unmapped bank.
+ *
+ * Derived from Swap_GetActiveBank() (ADDRCFG = what is mapped this boot):
+ *   A active -> PFLASH_BANK_B_BASE (PF2), B active -> PFLASH_BANK_A_BASE (PF0).
+ * This is the only bank safe to erase/write while executing.
+ *
+ * @return PFLASH_BANK_A_BASE or PFLASH_BANK_B_BASE, or 0 if the active
+ *         bank is unknown (caller MUST skip erase/write in that case).
  */
 uint32 Swap_GetInactiveBase(void);
+
+/**
+ * @brief  CPU-load address of the currently-unmapped bank.
+ *
+ * Flash command sequences (erase/write) use physical addresses from
+ * Swap_GetInactiveBase().  CPU loads follow SCU_SWAPCTRL.ADDRCFG:
+ *   0xA0000000 always reads the running bank,
+ *   0xA0600000 always reads the other physical bank.
+ * CRC / verify must use this window, not the physical base — otherwise
+ * a board running from B CRCs its own image at 0xA0000000 (IMG_CRC).
+ *
+ * @return PFLASH_BANK_B_BASE (0xA0600000), or 0 if ADDRCFG is unknown.
+ */
+uint32 Swap_GetInactiveLogicalBase(void);
+
+/**
+ * @brief  CPU-load address of the bank mapped at the boot vector.
+ *
+ * @return PFLASH_BANK_A_BASE (0xA0000000), or 0 if ADDRCFG is unknown.
+ */
+uint32 Swap_GetActiveLogicalBase(void);
+
+/**
+ * @brief  Translate a physical inactive-bank address to the CPU window.
+ *
+ * Used by readback/verify of a page that was programmed at a physical
+ * address.  Returns 0 if the active map is unknown.
+ */
+uint32 Swap_InactivePhysToLogical(uint32 physAddr);
 
 /**
  * @brief  Write a new UCB_SWAP marker to select the given bank.
@@ -102,7 +137,7 @@ void Swap_TriggerSystemReset(void) __attribute__((noreturn));
 
 Swap_Status_t Swap_EraseAll(void);
 
-uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA / 0xFF */
+uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA, or 0 if unknown */
 
 
 #endif /* SWAP_H */

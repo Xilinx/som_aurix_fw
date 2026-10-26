@@ -167,11 +167,41 @@ uint8 Swap_GetCurrentBank(void)
 
 uint32 Swap_GetInactiveBase(void)
 {
-    uint8 current = Swap_GetCurrentBank();
+    /* Key off ADDRCFG (what the SSW mapped at 0xA0000000 for THIS boot),
+     * not the UCB marker (what the NEXT reset will apply).  Erase/write
+     * safety must follow the bank that is actually running.
+     *   A active -> PF2 (PFLASH_BANK_B_BASE) is unmapped
+     *   B active -> PF0 (PFLASH_BANK_A_BASE) is unmapped
+     *   unknown  -> 0 (caller must skip; never erase blindly)            */
+    uint8 active = Swap_GetActiveBank();
 
-    if (current == SWAP_BANK_A)  return PFLASH_BANK_B_BASE;
-    if (current == SWAP_BANK_B)  return PFLASH_BANK_A_BASE;
+    if (active == SWAP_BANK_A)  return PFLASH_BANK_B_BASE;
+    if (active == SWAP_BANK_B)  return PFLASH_BANK_A_BASE;
     return 0u;
+}
+
+uint32 Swap_GetInactiveLogicalBase(void)
+{
+    /* ADDRCFG swaps PF0 and PF2 in the CPU map.  The unmapped bank is
+     * therefore always visible at PFLASH_BANK_B_BASE (0xA0600000). */
+    return (Swap_GetActiveBank() == 0u) ? 0u : PFLASH_BANK_B_BASE;
+}
+
+uint32 Swap_GetActiveLogicalBase(void)
+{
+    return (Swap_GetActiveBank() == 0u) ? 0u : PFLASH_BANK_A_BASE;
+}
+
+uint32 Swap_InactivePhysToLogical(uint32 physAddr)
+{
+    uint32 physBase = Swap_GetInactiveBase();
+    uint32 logBase  = Swap_GetInactiveLogicalBase();
+
+    if ((physBase == 0u) || (logBase == 0u) || (physAddr < physBase))
+    {
+        return 0u;
+    }
+    return logBase + (physAddr - physBase);
 }
 
 Swap_Status_t Swap_ChangeMode(uint8 targetBank)
@@ -259,6 +289,6 @@ uint8 Swap_GetActiveBank(void)
     {
         case 1u: return SWAP_BANK_A;     /* standard map  */
         case 2u: return SWAP_BANK_B;     /* alternate map */
-        default: return 0xFFu;
+        default: return 0u;              /* unrecognized / SWAP not enabled */
     }
 }

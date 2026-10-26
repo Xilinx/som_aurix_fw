@@ -2,8 +2,8 @@
  * @file    Bist.h
  * @brief   Power-On Self Test and periodic Built-In Self Test
  *
- * POST: CRC-32 of the active PFlash bank compared against the
- * image CRC stored in SOTA DFlash metadata.
+ * POST: CRC-32 of the currently mapped PFlash (CPU address 0xA0000000)
+ * compared against the image CRC stored in SOTA DFlash metadata.
  *
  * Periodic BIST: re-runs the same CRC check every BIST_PERIOD_HOURS.
  *
@@ -62,8 +62,8 @@ typedef struct
  * @brief  Run Power-On Self Test.
  *
  * Reads the SOTA metadata from DFlash to get the expected CRC
- * and image size, then CRC-32s the active PFlash bank in 4KB
- * chunks (servicing the WDT between chunks).
+ * and image size, then CRC-32s the mapped running image at
+ * 0xA0000000 in 4KB chunks (servicing the WDT between chunks).
  *
  * Call after DFlash_Init and BootValid_CheckOnStartup, but before
  * entering the main loop.
