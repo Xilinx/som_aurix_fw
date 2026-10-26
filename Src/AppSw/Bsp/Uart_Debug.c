@@ -209,19 +209,35 @@ IfxAsclin_Asc *Debug_GetAscHandle(void)
 }
 
 
-void Debug_FlushBlocking(void)
+void Debug_FlushBlockingKeepAlive(void (*keepAlive)(void))
 {
     Ifx_TickTime timeout = IfxStm_getTicksFromMilliseconds(BSP_DEFAULT_TIMER, 1000);
-    Ifx_TickTime deadline = IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
+    Ifx_TickTime slice   = IfxStm_getTicksFromMilliseconds(BSP_DEFAULT_TIMER, 10);
+    Ifx_TickTime deadline = (Ifx_TickTime)IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
 
     /* 1. CPU1/CPU2 rings -> ASC FIFO (bounded, in case the UART is wedged) */
     while (((g_dbgRing0.head != g_dbgRing0.tail) || (g_dbgRing1.head != g_dbgRing1.tail) ||
             (g_dbgRing2.head != g_dbgRing2.tail) || (g_dbgRing3.head != g_dbgRing3.tail))
-           && (IfxStm_get(BSP_DEFAULT_TIMER) < deadline))
+           && ((Ifx_TickTime)IfxStm_get(BSP_DEFAULT_TIMER) < deadline))
     {
+        if (keepAlive != NULL_PTR) { keepAlive(); }
         Debug_DrainRings();
     }
 
-    /* 2. ASC software FIFO + hardware shifter: iLLD waits for both */
-    (void)IfxAsclin_Asc_flushTx(&s_ascHandle, timeout);
+    /* 2. ASC software FIFO + hardware shifter.  iLLD waits for both, so do it
+     * in short slices to keep calling keepAlive (the TLF window watchdog). */
+    deadline = (Ifx_TickTime)IfxStm_get(BSP_DEFAULT_TIMER) + timeout;
+    do
+    {
+        if (keepAlive != NULL_PTR) { keepAlive(); }
+        if (IfxAsclin_Asc_flushTx(&s_ascHandle, slice))
+        {
+            break;
+        }
+    } while ((Ifx_TickTime)IfxStm_get(BSP_DEFAULT_TIMER) < deadline);
+}
+
+void Debug_FlushBlocking(void)
+{
+    Debug_FlushBlockingKeepAlive(NULL_PTR);
 }

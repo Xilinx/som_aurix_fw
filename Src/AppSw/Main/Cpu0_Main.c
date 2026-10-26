@@ -291,7 +291,8 @@ int core0_main(void)
         /* CPU2 asked for the debug UART. Flush, then stop touching it. */
         if (g_ipcShared.uartOwner == 1u)
         {
-            Debug_FlushBlocking();
+            /* Keep the TLF window serviced: a full flush can outlast it. */
+            Debug_FlushBlockingKeepAlive(prv_FlashKeepAlive);
             g_ipcShared.uartOwner = 2u;
             __dsync();
         }

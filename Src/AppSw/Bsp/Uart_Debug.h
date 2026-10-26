@@ -40,6 +40,12 @@ void Debug_ClaimSteadyState(void);
 
 void Debug_FlushBlocking(void);
 
+/**
+ * @brief Same as Debug_FlushBlocking(), but calls keepAlive() between short
+ *        waits (NULL allowed).  Use from a core that owns a watchdog.
+ */
+void Debug_FlushBlockingKeepAlive(void (*keepAlive)(void));
+
 
 IfxAsclin_Asc *Debug_GetAscHandle(void);
 
