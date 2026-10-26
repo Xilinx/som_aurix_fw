@@ -171,9 +171,9 @@ static void prv_RunFusa(void)
 /*  Firmware version string                                           */
 /* ================================================================== */
 #if defined(TARGET_EVAL_BOARD)
-#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.2 [EVAL BOARD] [MULTICORE]\r\n"
+#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.3 [EVAL BOARD] [MULTICORE]\r\n"
 #else
-#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.2 [MULTICORE]\r\n"
+#define FW_VERSION_STR  "TC387 COM-HPC Controller v0.3 [MULTICORE]\r\n"
 #endif
 
 
