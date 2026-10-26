@@ -122,7 +122,7 @@ void Debug_Init(void)
 
 static void prv_RingPut(volatile Ipc_DbgRing_t *r, const char *s)
 {
-    uint32 h = r->head;
+    uint32 h = r->head & (DBGRING_SIZE - 1u);   /* never index with a stale/garbage value */
     while (*s != '\0')
     {
         uint32 next = (h + 1u) & (DBGRING_SIZE - 1u);
@@ -143,8 +143,8 @@ void Debug_DrainRings(void)
     uint32 i;
     for (i = 0u; i < 4u; i++)
     {
-        uint32 t = rings[i]->tail;
-        uint32 h = rings[i]->head;
+        uint32 t = rings[i]->tail & (DBGRING_SIZE - 1u);
+        uint32 h = rings[i]->head & (DBGRING_SIZE - 1u);
         while (t != h)
         {
             uint32 end = (h > t) ? h : DBGRING_SIZE;

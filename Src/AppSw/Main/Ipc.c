@@ -69,6 +69,16 @@ uint32 Ipc_ResetCoreBarrier(void)
     /* IDLE first so CPU1/2/3 that saw a leftover GO must wait. */
     g_coreRelease  = CORE_SYNC_IDLE;
     g_cpuSyncEvent = 0u;
+
+    /* .ipc_shared is NOLOAD and survives a system reset, and CPU0 prints
+     * (Debug_Print reads uartOwner) before Ipc_Init() runs.  Reset the UART
+     * owner and the debug rings here.  CPU1/2/3 are parked until GO and
+     * print nothing before it, so nothing races with this. */
+    g_ipcShared.uartOwner = 0u;
+    g_dbgRing0.head = 0u;  g_dbgRing0.tail = 0u;
+    g_dbgRing1.head = 0u;  g_dbgRing1.tail = 0u;
+    g_dbgRing2.head = 0u;  g_dbgRing2.tail = 0u;
+    g_dbgRing3.head = 0u;  g_dbgRing3.tail = 0u;
     __dsync();
     return prev;
 }
