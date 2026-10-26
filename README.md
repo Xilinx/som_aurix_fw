@@ -223,26 +223,26 @@ Two Infineon CYPD6129 USB PD controllers managed via I2C0 (400 kHz, P13.1/P13.2)
 - **UsbPd_Hpd** — Virtual HPD driver for DP2_HPD (P13.0) and DP3_HPD (P13.3) with IRQ pulse timing per DP specification
 - **UsbPd_Cfg** — DFlash-backed topology config with checksum protection, CYPD6129/6229 abstraction
 - **UsbPd_Manager** — Dual-port event dispatch with HPI reads, APU proxy packing, HPD dispatch, NvLog integration
-- **I2c_Slave** — Raw I2C1 slave driver for APU proxy register readback
+- **I2c_Slave** — Raw I2C0 slave (0x54) driver for APU proxy register readback
 
-### 18. Multicore Architecture (v0.2)
+### 18. Multicore Architecture (v0.3)
 Four-core partitioning with deterministic peripheral ownership:
 
 | Core | Rate | Modules |
 |------|------|---------|
-| CPU0 | 20 Hz | Startup, UART, DFlash, PFlash, NvLog, FwUpdate, BIST, DebugCli, BiosRom |
-| CPU1 | 50 Hz | PowerManager, SysMonitor, UsbPd, ComHpcWdt, ERU, I2C0/I2C1 |
-| CPU2 | 100 Hz | VoltMon (EVADC), TLF35585 (QSPI2), FusaSpi (QSPI3) |
-| CPU3 | — | Sync event participant, reserved |
+| CPU0 | 5 ms | Startup and boot-time DFlash/PFlash/BIST, FuSa (VoltMon, TLF35585 incl. window-watchdog service, FusaSpi), host watchdog (ComHpcWdt), BiosRom |
+| CPU1 | 5 ms | PowerManager, SysMonitor, I2C1 APML (master only), THERMTRIP ISR |
+| CPU2 | 50 ms | DebugCli and ASCLIN0 (after handoff), NvLog, FwUpdate, PFlash |
+| CPU3 | 50 ms | USB-PD (UsbPd_Manager/Hpd/ApuProxy), I2C0 master + 0x54 sideband slave |
 
 **IPC shared memory** in non-cached global LMU (`lmuram_nc` at 0xB0040000):
 - `Ipc_CmdMailbox_t` — CPU0→CPU1 command dispatch with seqNum/ackNum handshake
 - `Ipc_PmcStatus_t` — CPU1→all: PM state, reset cause, retry count, temperature
-- `Ipc_FusaStatus_t` — CPU2→all: 24 voltage channels, TLF status, fault codes
+- `Ipc_FusaStatus_t` — CPU0→all: 24 voltage channels, TLF status, fault codes
 
-**Synchronisation:** `IfxCpu_syncEvent` barrier where all cores block until every core emits, then proceed simultaneously.
+**Synchronisation:** two-phase release. CPU0 clears the barrier (IDLE) first thing in `core0_main()`, publishes GO after `Ipc_Init()`, then CPU1/2/3 emit on `IfxCpu_syncEvent` and all proceed once every core has emitted.
 
-**TLF WDT ownership handover:** CPU0 services during init, writes `g_ipcShared.wdtOwner = 2`, CPU2 takes over for runtime. Dual-path SPI: CPU2 uses ISRs, CPU0 polls SRR flags manually (interrupt-off safe during flash erases).
+**TLF WDT ownership:** CPU0 services the TLF window watchdog for the whole run (`g_wdtOwner` stays 0), so PFlash erase on CPU2 does not stop the service. QSPI2 ISRs also run on CPU0. **UART ownership:** CPU0 owns ASCLIN0 through boot, then hands it to CPU2 through `g_ipcShared.uartOwner` (0 → 1 → 2 → 3); other cores print through per-core ring buffers.
 
 ### 19. Over-the-Air Firmware Update (SOTA) (v0.2)
 PFlash A/B bank management with UART-based transfer protocol:
@@ -319,8 +319,8 @@ Comprehensive validation exercisable from CLI `selftest`:
 | usbpd_live | (SoM only) PD controller I2C probe + HPI state read |
 | pm_live | (SoM only) PM state, VIN_PWR_OK, SLP_S3/S5, APU_PWROK GPIO readback |
 
-### 24. APU Sideband Protocol (v0.2)
-Bidirectional Ryzen↔AURIX communication over ASCLIN4:
+### 24. APU Sideband Protocol (planned, not implemented in firmware)
+No firmware handler exists for this in v0.3; only the host-side script `tools/aurix_sideband.py` is present. Intended design for Ryzen↔AURIX communication over ASCLIN4:
 - Binary framed: `[CMD:8][LEN:8][PAYLOAD][CRC8]`
 - Commands: PING, GET_STATUS, GET_VOLTAGES, GET_TEMP, GET_PM_STATE, GET_TLF_STATUS, GET_USBPD, SHUTDOWN, WARM_RESET, COLD_RESET, FUSA_REG_READ
 - Coexists with FwUpdate: detects SYNC magic and hands off to SOTA mode
@@ -330,7 +330,7 @@ Bidirectional Ryzen↔AURIX communication over ASCLIN4:
 QSPI2 on P15.2/3/6/7 (CS/SCL/SDI/SDO):
 - **EarlyInit:** immediate WDT service within 14 ms of power-on
 - **Init:** INITERR clearing (W1C), protected config writes with settling delays and readback verify, SYSSF clear, WWD service, NORMAL transition
-- **Runtime:** window watchdog service at 100 Hz (CPU2), fault detection with edge-triggered reporting
+- **Runtime:** window watchdog service on CPU0 (v0.3), fault detection with edge-triggered reporting
 - **TLF35584/35585 compatible:** same SPI interface, SoM-specific INITERR handling
 
 ### 26. APML Temperature Monitoring (v0.2)
@@ -380,10 +380,10 @@ som_aurix_fw/
     │   └── Ifx_Cfg.h          # iLLD top-level config
     └── AppSw/
         ├── Main/
-        │   ├── Cpu0_Main.c    # CPU0: orchestrator, OTA, NV, CLI
-        │   ├── Cpu1_Main.c    # CPU1: PMC, SysMonitor, UsbPd
-        │   ├── Cpu2_Main.c    # CPU2: VoltMon, TLF, FusaSpi
-        │   ├── Cpu23_Main.c   # CPU3: sync event, idle
+        │   ├── Cpu0_Main.c    # CPU0: boot master, FuSa (VoltMon, TLF, FusaSpi), host watchdog
+        │   ├── Cpu1_Main.c    # CPU1: PowerManager, SysMonitor, APML
+        │   ├── Cpu2_Main.c    # CPU2: CLI, NvLog, FwUpdate, PFlash
+        │   ├── Cpu3_Main.c    # CPU3: USB-PD, I2C0 sideband slave
         │   ├── Ipc.h/c        # Inter-core shared memory + commands
         │   ├── SelfTest.h/c   # Comprehensive self-test suite
         │   └── ApuSideband.h/c # Ryzen↔AURIX sideband protocol
@@ -434,16 +434,16 @@ som_aurix_fw/
 
 | Peripheral | Core | Module | Rationale |
 |------------|------|--------|-----------|
-| ASCLIN0 | CPU0 | Debug UART, CLI | Single writer avoids interleaving |
-| ASCLIN4 | CPU0 | Uart_Xfer, FwUpdate, ApuSideband | OTA orchestrated by CPU0 |
-| DFlash | CPU0 | NvLog, BootValid, UsbPd_Cfg | Single command interface |
-| PFlash | CPU0 | FwUpdate, BIST | Erase/write during OTA |
-| I2C0 | CPU1 | UsbPd (CYPD6129) | PD controllers on carrier |
-| I2C1 | CPU1 | APML (SB-TSI/SB-RMI), I2C slave | APU sideband |
-| ERU | CPU1 | THERMTRIP, WD_STROBE | Callbacks route to PowerManager |
-| EVADC | CPU2 | VoltMon | FuSa ADC groups |
-| QSPI2 | CPU2 | TLF35585 | WDT service at 100 Hz |
-| QSPI3 | CPU2 | FusaSpi slave | Carrier safety controller |
+| ASCLIN0 | CPU0, then CPU2 | Debug UART, CLI | CPU0 through boot, CPU2 after the uartOwner handoff |
+| ASCLIN4 | CPU0 (ISRs) / CPU2 (FwUpdate) | Uart_Xfer, FwUpdate | OTA runs on CPU2; interrupts are still routed to CPU0 |
+| DFlash | CPU0 (boot) / CPU2 | BootValid, NvLog, UsbPd_Cfg | Single command interface |
+| PFlash | CPU2 (CPU0 at boot) | FwUpdate, BIST | Erase/write during OTA |
+| I2C0 | CPU3 | UsbPd (CYPD6129 master), 0x54 APU sideband slave | PD controllers on carrier; dual-role bus |
+| I2C1 | CPU1 | APML (SB-TSI/SB-RMI), master only | Point-to-point to the Ryzen |
+| ERU | CPU1 / CPU0 | THERMTRIP (CPU1); CARRIER_HOT, WD_STROBE (CPU0) | THERMTRIP routes to PowerManager; WD_STROBE to the host watchdog |
+| EVADC | CPU0 | VoltMon | FuSa ADC groups |
+| QSPI2 | CPU0 | TLF35585 | Window-watchdog service stays with CPU0 |
+| QSPI3 | CPU0 | FusaSpi slave | Carrier safety controller |
 | QSPI0 | None | BiosRom (tri-stated) | Released to Ryzen |
 
 
