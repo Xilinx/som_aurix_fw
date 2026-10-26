@@ -65,6 +65,9 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
         return BOOTVALID_OK;               /* no counter, no BIST, metadata kept */
     }
     /* ---- Update is pending — evaluate boot counter -------------- */
+    /* bootCounter counts THIS boot, and the revert test below uses >=, so the
+     * new image gets BOOTVALID_MAX_RETRIES - 1 boots to commit before the
+     * revert fires (the last one reverts before the application runs).   */
     meta.bootCounter++;
 
     Debug_Printf("[BOOT] Update pending — boot attempt %u / %u\r\n",
@@ -96,9 +99,27 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
          * of the one recorded in the metadata.                      */
         {
             uint8 revertBank = (meta.activeBank == SWAP_BANK_B) ? SWAP_BANK_A : SWAP_BANK_B;
+            Swap_Status_t sStatus;
 
-            /* Clear the pending flag BEFORE reverting so the old
-             * bank boots into a clean state.                        */
+            Debug_Printf("[BOOT] Reverting to bank 0x%02X — triggering system reset\r\n",
+                         (unsigned)revertBank);
+
+            /* Move the UCB marker FIRST and check it.  If the swap cannot be
+             * made (marker slots full, UCB write error) the update must stay
+             * pending: clearing the metadata and resetting anyway would reboot
+             * the failed image as if it were committed.                     */
+            sStatus = Swap_ChangeMode(revertBank);
+            if (sStatus != SWAP_OK)
+            {
+                Debug_Printf("[BOOT] CRITICAL: revert swap failed (%u) - update stays pending\r\n",
+                             (unsigned)sStatus);
+                return BOOTVALID_ERR_SWAP;
+            }
+
+            /* The marker is armed.  Record the reverted state so the old bank
+             * boots into a clean state.  If this write fails we still reset:
+             * the old bank then sees metadata for the other bank and treats
+             * it as a staged update (see the activeBank check above).       */
             meta.pendingUpdate = 0u;
             meta.bootCounter   = 0u;
             meta.activeBank    = revertBank;
@@ -107,16 +128,10 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
             {
                 Debug_Printf("[BOOT] CRITICAL: failed to write revert metadata (%u)\r\n",
                              (unsigned)dStatus);
-                return BOOTVALID_ERR_DFLASH;
             }
 
-            Debug_Printf("[BOOT] Reverting to bank 0x%02X — triggering system reset\r\n",
-                         (unsigned)revertBank);
-
-            /* Issue the swap and reset.  If this succeeds, the
-             * function never returns — the device resets and
-             * SSW boots from the reverted bank.                     */
-            Swap_ChangeMode(revertBank);
+            /* Does not return: the device resets and the SSW boots the
+             * reverted bank.                                               */
             Swap_TriggerSystemReset();
 
             /* Should never reach here */
