@@ -162,7 +162,15 @@ void SelfTest_PFlash(void)
         return;
     }
 
-    s = PFlash_VerifyPage256(base, testBuf);
+    {
+        uint32 logAddr = Swap_InactivePhysToLogical(base);
+        if (logAddr == 0u)
+        {
+            Debug_Print("[PFLASH] SKIP: logical map unknown, not verifying\r\n");
+            return;
+        }
+        s = PFlash_VerifyPage256(logAddr, testBuf);
+    }
     if (s != PFLASH_OK)
     {
         Debug_Printf("[PFLASH] FAIL: verify (%u)\r\n", (unsigned)s);
@@ -406,14 +414,24 @@ uint32 SelfTest_Sota(void)
     if (ps != PFLASH_OK) { Debug_Printf("[TEST:SOTA] FAIL: write %u\r\n", (unsigned)ps); return 1u; }
     Tlf35585_ServiceWdt();
  
-    /* Step 2: CRC the written data */
-    uint32 imageCrc = Crc32_Calc((const uint8 *)testAddr, testSize);
-    Debug_Printf("[TEST:SOTA] Image CRC=0x%08X (256 bytes at 0x%08X)\r\n",
-                 (unsigned)imageCrc, (unsigned)testAddr);
+    /* Step 2: CRC the written data via the CPU window (not the physical
+     * program address — those differ when Bank B is mapped). */
+    uint32 imageCrc = 0u;
+    {
+        uint32 logAddr = Swap_InactivePhysToLogical(testAddr);
+        if (logAddr == 0u)
+        {
+            Debug_Print("[TEST:SOTA] SKIP: logical map unknown\r\n");
+            return 0u;
+        }
+        imageCrc = Crc32_Calc((const uint8 *)logAddr, testSize);
+        Debug_Printf("[TEST:SOTA] Image CRC=0x%08X (256 bytes phys 0x%08X logical 0x%08X)\r\n",
+                     (unsigned)imageCrc, (unsigned)testAddr, (unsigned)logAddr);
+    }
  
     /* Step 3: Write SOTA metadata with pendingUpdate=1.
-     * Record the RUNNING bank so Bist_RunPost (step 7) CRCs the region we
-     * just wrote (it reads the opposite of meta.activeBank). */
+     * Record the RUNNING bank (BootValid compares it to ADDRCFG).
+     * POST now CRCs 0xA0000000 (the live image), not the opposite bank. */
     uint8 runBank = Swap_GetActiveBank();   /* 0x55 or 0xAA (testAddr!=0 ⇒ known) */
     memset(&meta, 0, sizeof(meta));
     meta.magic         = DFLASH_SOTA_MAGIC;
@@ -474,10 +492,9 @@ uint32 SelfTest_Sota(void)
     }
     else
     {
-        Debug_Printf("[TEST:SOTA] POST result=%u (expected — CRC covers 256B, POST reads full bank)\r\n",
+        Debug_Printf("[TEST:SOTA] POST result=%u (expected — POST CRCs the running image at 0xA0000000, this test wrote 256B to the inactive bank)\r\n",
                      (unsigned)bistResult);
-        /* This is expected to fail if POST reads the full bank
-         * but we only wrote 256 bytes. Not a test failure. */
+        /* Not a test failure: production POST protects the live image. */
     }
  
     /* Step 8: Clean up — restore metadata to clean state */
@@ -1485,8 +1502,17 @@ uint32 SelfTest_FwUpdate(void)
             break;
         }
  
-        /* Verify readback */
-        ps = PFlash_VerifyPage256(writeAddr, pChunk);
+        /* Verify readback through the CPU window (logical inactive). */
+        {
+            uint32 logAddr = Swap_InactivePhysToLogical(writeAddr);
+            if (logAddr == 0u)
+            {
+                Debug_Print("[TEST:FWUP] FAIL: logical map unknown\r\n");
+                err++;
+                break;
+            }
+            ps = PFlash_VerifyPage256(logAddr, pChunk);
+        }
         if (ps != PFLASH_OK)
         {
             Debug_Printf("[TEST:FWUP] FAIL: verify chunk %u\r\n", (unsigned)i);

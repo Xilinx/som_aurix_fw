@@ -1498,12 +1498,15 @@ static void prv_CmdFwSwap(const char *args)
         Debug_Print("[FWSWAP] no verified update staged in the other bank - refusing\r\n");
         return;
     }
-    /* CRC the staged image in the currently-unmapped bank (not hardcoded B). */
-    uint32 stagedBase = Swap_GetInactiveBase();
+    /* CRC via the CPU map (0xA0600000 = unmapped bank).  Do not use the
+     * physical inactive base — when B is running that is 0xA0000000, which
+     * reads the live image and falsely rejects a good staged update. */
+    uint32 stagedBase = Swap_GetInactiveLogicalBase();
     if ((stagedBase == 0u) ||
         (FwUpdate_CrcFlash(stagedBase, meta.reserved0) != meta.imageCrc))
     {
-        Debug_Print("[FWSWAP] staged image CRC mismatch - refusing\r\n");
+        Debug_Printf("[FWSWAP] staged image CRC mismatch at logical 0x%08X - refusing\r\n",
+                     (unsigned)stagedBase);
         return;
     }
     Swap_Status_t ss = Swap_ChangeMode(target);

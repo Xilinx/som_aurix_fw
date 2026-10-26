@@ -20,8 +20,6 @@
 #include "DebugCli.h"
 #include "SelfTest.h"
 
-extern IfxCpu_syncEvent g_cpuSyncEvent;
-
 #ifndef CPU2_LOOP_PERIOD_MS
 #define CPU2_LOOP_PERIOD_MS     50u
 #endif
@@ -32,8 +30,7 @@ void core2_main(void)
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
 
-    IfxCpu_emitEvent(&g_cpuSyncEvent);
-    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}
+    Ipc_WaitReleasedBarrier();
 
     Debug_Print("[CPU2] Ready (FuSa is on CPU0)\r\n");
     g_ipcShared.cpu2Ready = TRUE;

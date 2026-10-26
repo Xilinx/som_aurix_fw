@@ -24,8 +24,6 @@
 #include "UsbPd_Cfg.h"
 #include "I2c_Slave.h"
 
-extern IfxCpu_syncEvent g_cpuSyncEvent;
-
 #ifndef USBPD_LOOP_PERIOD_MS
 #define USBPD_LOOP_PERIOD_MS    50u
 #endif
@@ -35,8 +33,7 @@ void core3_main(void)
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
     IfxCpu_enableInterrupts();
 
-    IfxCpu_emitEvent(&g_cpuSyncEvent);
-    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}
+    Ipc_WaitReleasedBarrier();
 
 #if !defined(TARGET_EVAL_BOARD) && (USBPD_FEATURE_ENABLE == 1u)
     Debug_Print("[CPU3] Init: UsbPd...\r\n");

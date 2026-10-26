@@ -21,8 +21,6 @@
 #include "Platform_Cfg.h"
 #include "SysMonitor.h"
 
-extern IfxCpu_syncEvent g_cpuSyncEvent;
-
 /* ================================================================== */
 /*  IPC command processing                                            */
 /* ================================================================== */
@@ -104,8 +102,7 @@ void core1_main(void)
     IfxCpu_enableInterrupts();
     IfxScuWdt_disableCpuWatchdog(IfxScuWdt_getCpuWatchdogPassword());
 
-    IfxCpu_emitEvent(&g_cpuSyncEvent);
-    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK){}
+    Ipc_WaitReleasedBarrier();
 
     /* ---- CPU1 init ---- */
     Debug_Print("[CPU1] Init: PowerManager...\r\n");

@@ -55,18 +55,17 @@ static boolean s_fusaReady = FALSE;
 /* ================================================================== */
 /*  Multicore sync                                                    */
 /* ================================================================== */
-IFX_ALIGN(4) IfxCpu_syncEvent g_cpuSyncEvent __attribute__((section(".ipc_shared"))) = 0;  
-
 /* Rendezvous barrier + report. Judged on the sync word itself, not
- * the iLLD boolean (its sense is inverted in this iLLD version). */
+ * the iLLD boolean (its sense is inverted in this iLLD version).
+ * Ipc_ReleaseAndWaitBarrier() publishes CORE_SYNC_GO so CPU1/2/3 do
+ * not treat a leftover 0xF in NOLOAD LMU as "all cores arrived". */
 static void prv_SyncBarrier(void)
 {
     uint32 sync;
 
-    IfxCpu_emitEvent(&g_cpuSyncEvent);
-    (void)IfxCpu_waitEvent(&g_cpuSyncEvent, 100);
+    Ipc_ReleaseAndWaitBarrier();
 
-    sync = g_cpuSyncEvent;
+    sync = (uint32)g_cpuSyncEvent;
     Debug_Printf("[SYS] barrier %s, sync=0x%X\r\n",
                  ((sync & 0xFu) == 0xFu) ? "OK" : "INCOMPLETE",
                  (unsigned)sync);
@@ -184,6 +183,8 @@ static void prv_RunFusa(void)
 /* ================================================================== */
 int core0_main(void)
 {
+    uint32 prevSync = Ipc_ResetCoreBarrier();   /* before CPU1/2/3 sample leftover 0xF */
+
     g_prevBootTrace = g_bootTrace;                              /* keep last boot's record */
     g_bootTrace     = 0xB0000000u | (SCU_SWAPCTRL.U & 0xFFu);
     IfxCpu_enableInterrupts();
@@ -203,6 +204,10 @@ int core0_main(void)
     Debug_Print("\r\n" FW_VERSION_STR);
      g_bootTrace |= 0x2000u;
     Debug_Print("[SYS] Init: UART OK\r\n");
+    Debug_Printf("[SYS] Core sync: leftover event=0x%X (%s)\r\n",
+                 (unsigned)prevSync,
+                 (prevSync == 0u) ? "power-on or already clear"
+                                  : "cleared; was retained across system reset");
     UartXfer_Init();
     Debug_Print("[SYS] Init: Side UART OK\r\n");
     I2cMaster_Init();

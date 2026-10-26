@@ -83,6 +83,35 @@ uint8 Swap_GetCurrentBank(void);
 uint32 Swap_GetInactiveBase(void);
 
 /**
+ * @brief  CPU-load address of the currently-unmapped bank.
+ *
+ * Flash command sequences (erase/write) use physical addresses from
+ * Swap_GetInactiveBase().  CPU loads follow SCU_SWAPCTRL.ADDRCFG:
+ *   0xA0000000 always reads the running bank,
+ *   0xA0600000 always reads the other physical bank.
+ * CRC / verify must use this window, not the physical base — otherwise
+ * a board running from B CRCs its own image at 0xA0000000 (IMG_CRC).
+ *
+ * @return PFLASH_BANK_B_BASE (0xA0600000), or 0 if ADDRCFG is unknown.
+ */
+uint32 Swap_GetInactiveLogicalBase(void);
+
+/**
+ * @brief  CPU-load address of the bank mapped at the boot vector.
+ *
+ * @return PFLASH_BANK_A_BASE (0xA0000000), or 0 if ADDRCFG is unknown.
+ */
+uint32 Swap_GetActiveLogicalBase(void);
+
+/**
+ * @brief  Translate a physical inactive-bank address to the CPU window.
+ *
+ * Used by readback/verify of a page that was programmed at a physical
+ * address.  Returns 0 if the active map is unknown.
+ */
+uint32 Swap_InactivePhysToLogical(uint32 physAddr);
+
+/**
  * @brief  Write a new UCB_SWAP marker to select the given bank.
  *
  * Follows the [SOTA-DEMO] strategy:

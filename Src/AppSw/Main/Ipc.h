@@ -57,6 +57,14 @@
 #define CORE_SYNC_MASK        0xFu      /* CPU0..3 all participate     */
 #define CORE_SYNC_TIMEOUT_MS  30000u    /* > worst-case CPU0 Phase 0-2 */
 
+/* Two-phase release for g_cpuSyncEvent.  The event lives in .ipc_shared
+ * (NOLOAD LMU) so a system reset does NOT clear a leftover 0xF.  CPU1/2/3
+ * must observe IDLE (CPU0 claimed this boot) then GO (CPU0 finished
+ * Ipc_Init) before emitting, or they pass the barrier during Phase 0 and
+ * Ipc_Init wipes their ready flags — the fwswap first-boot hang. */
+#define CORE_SYNC_IDLE        0x11111111u
+#define CORE_SYNC_GO          0x22222222u
+
 #define DBGRING_SIZE  4096u
 
 /* ================================================================== */
@@ -225,6 +233,8 @@ extern volatile Ipc_DbgRing_t g_dbgRing2;   /* CPU2 writes until it owns ASCLIN0
 extern volatile Ipc_DbgRing_t g_dbgRing3;   /* CPU3 writes */
 extern volatile uint32 g_bootTrace;       /* written by this boot */
 extern volatile uint32 g_prevBootTrace;
+extern IfxCpu_syncEvent g_cpuSyncEvent;   /* 4 core bits; NOLOAD, must be reset */
+extern volatile uint32  g_coreRelease;    /* CORE_SYNC_IDLE then CORE_SYNC_GO  */
 
 /* ================================================================== */
 /*  Public API                                                        */
@@ -237,6 +247,27 @@ extern volatile uint32 g_prevBootTrace;
  * Zeros all shared memory and installs IR interrupt handlers.
  */
 void Ipc_Init(void);
+
+/**
+ * @brief  CPU0: claim this boot and clear a leftover barrier word.
+ *
+ * Must be the first thing core0_main() does, before other cores can
+ * sample CORE_SYNC_GO from a previous boot.  Returns the previous
+ * g_cpuSyncEvent value for a boot log.
+ */
+uint32 Ipc_ResetCoreBarrier(void);
+
+/**
+ * @brief  CPU0: publish GO, emit, wait up to 100 ms for all four bits.
+ *
+ * Call after Ipc_Init() so cpu*Ready flags start at 0.
+ */
+void Ipc_ReleaseAndWaitBarrier(void);
+
+/**
+ * @brief  CPU1/2/3: wait IDLE, then GO, then join g_cpuSyncEvent.
+ */
+void Ipc_WaitReleasedBarrier(void);
 
 /**
  * @brief  Send a command from CPU0 to CPU1.

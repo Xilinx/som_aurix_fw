@@ -21,6 +21,8 @@ volatile Ipc_DbgRing_t g_dbgRing2 __attribute__((section(".ipc_shared")));
 volatile Ipc_DbgRing_t g_dbgRing3 __attribute__((section(".ipc_shared")));
 volatile uint32 g_bootTrace     __attribute__((section(".ipc_shared")));
 volatile uint32 g_prevBootTrace __attribute__((section(".ipc_shared")));
+IFX_ALIGN(4) IfxCpu_syncEvent g_cpuSyncEvent __attribute__((section(".ipc_shared")));
+volatile uint32 g_coreRelease __attribute__((section(".ipc_shared")));
 /* ================================================================== */
 /*  IR service request nodes                                          */
 /*                                                                    */
@@ -59,6 +61,41 @@ IFX_INTERRUPT(ipcIrCpu0FromCpu2, IPC_CORE_ORCHESTRATOR, IPC_IR_PRIO_CPU2_TO_CPU0
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
+
+uint32 Ipc_ResetCoreBarrier(void)
+{
+    uint32 prev = (uint32)g_cpuSyncEvent;
+
+    /* IDLE first so CPU1/2/3 that saw a leftover GO must wait. */
+    g_coreRelease  = CORE_SYNC_IDLE;
+    g_cpuSyncEvent = 0u;
+    __dsync();
+    return prev;
+}
+
+void Ipc_ReleaseAndWaitBarrier(void)
+{
+    g_cpuSyncEvent = 0u;
+    __dsync();
+    g_coreRelease = CORE_SYNC_GO;
+    __dsync();
+    IfxCpu_emitEvent(&g_cpuSyncEvent);
+    (void)IfxCpu_waitEvent(&g_cpuSyncEvent, 100);
+}
+
+void Ipc_WaitReleasedBarrier(void)
+{
+    while (g_coreRelease != CORE_SYNC_IDLE)
+    {
+    }
+    while (g_coreRelease != CORE_SYNC_GO)
+    {
+    }
+    IfxCpu_emitEvent(&g_cpuSyncEvent);
+    while ((g_cpuSyncEvent & CORE_SYNC_MASK) != CORE_SYNC_MASK)
+    {
+    }
+}
 
 void Ipc_Init(void)
 {

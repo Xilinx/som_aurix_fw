@@ -180,6 +180,30 @@ uint32 Swap_GetInactiveBase(void)
     return 0u;
 }
 
+uint32 Swap_GetInactiveLogicalBase(void)
+{
+    /* ADDRCFG swaps PF0 and PF2 in the CPU map.  The unmapped bank is
+     * therefore always visible at PFLASH_BANK_B_BASE (0xA0600000). */
+    return (Swap_GetActiveBank() == 0u) ? 0u : PFLASH_BANK_B_BASE;
+}
+
+uint32 Swap_GetActiveLogicalBase(void)
+{
+    return (Swap_GetActiveBank() == 0u) ? 0u : PFLASH_BANK_A_BASE;
+}
+
+uint32 Swap_InactivePhysToLogical(uint32 physAddr)
+{
+    uint32 physBase = Swap_GetInactiveBase();
+    uint32 logBase  = Swap_GetInactiveLogicalBase();
+
+    if ((physBase == 0u) || (logBase == 0u) || (physAddr < physBase))
+    {
+        return 0u;
+    }
+    return logBase + (physAddr - physBase);
+}
+
 Swap_Status_t Swap_ChangeMode(uint8 targetBank)
 {
     uint32  next = 0u;
