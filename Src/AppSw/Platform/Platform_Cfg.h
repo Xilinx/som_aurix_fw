@@ -69,6 +69,21 @@
 
 #define PM_MUX_FOLLOW_POWER   0u
 
+/* Hand the shared debug UART (ASCLIN0 via the mux on P14.6) to the x86 SoC once PM is
+ * in PM_STATE_ON, so the BIOS console is visible.  0 = never (default).  A non-zero
+ * value is the minimum number of ms after ON before the handoff starts (1 = as early
+ * as possible).  Unlike PM_MUX_FOLLOW_POWER, which hands the UART over before the SoC
+ * starts, this keeps the AURIX console through "System ON".  The mux is flipped as
+ * soon as everything the AURIX printed has left the UART, so BIOS output is lost only
+ * for the short drain window (tens of ms).  The AURIX console is silent afterwards;
+ * the mux returns to the AURIX when PM leaves ON.  Override with
+ * -DPM_UART_HANDOFF_AFTER_ON_MS=1u. */
+#ifndef PM_UART_HANDOFF_AFTER_ON_MS
+#define PM_UART_HANDOFF_AFTER_ON_MS   0u
+#endif
+/* Give up waiting for the console to drain after this long and flip anyway. */
+#define PM_UART_HANDOFF_MAX_WAIT_MS   300u
+
 #define PM_SLP_S5_TIMEOUT_MS            250u
 #define PM_SLP_S3_TIMEOUT_MS            500u
 #define PM_T6_WAIT_MS                   22u

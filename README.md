@@ -214,6 +214,10 @@ The ASCLIN0 debug UART is shared between the AURIX and the x86 SoC via a board-l
 - **UART_MUX_SEL = 1 (HIGH):** AURIX owns the UART (power-on through SYS_RESET_L release)
 - **UART_MUX_SEL = 0 (LOW):** x86 SoC owns the UART (after SYS_RESET_L is deasserted)
 
+By default the handoff is disabled (`PM_MUX_FOLLOW_POWER 0u` in `Platform_Cfg.h`), so the AURIX keeps the UART for the whole run. Two ways to hand it to the x86 SoC so the BIOS console is visible:
+- `PM_MUX_FOLLOW_POWER 1u`: hand over before the SoC starts. The BIOS sees all of its output; the AURIX console is silent from then on, including the `System ON` line.
+- `-DPM_UART_HANDOFF_AFTER_ON_MS=1u`: keep the AURIX console through `System ON`, then print `[PM] UART MUX -> x86 SoC (AURIX console goes quiet)` and drive UART_MUX_SEL low as soon as everything the AURIX printed has left the UART (a few tens of ms; 300 ms at the latest). BIOS output in that short window is lost. The value is the minimum delay after ON before the handoff starts. The mux returns to the AURIX when the power manager leaves ON.
+
 ### 17. USB PD Sideband Management
 Two Infineon CYPD6129 USB PD controllers managed via I2C0 (400 kHz, P13.1/P13.2). Pin-strapped to addresses 0x40 (R869 LOW) and 0x42 (R726 HIGH). Both devices share a wired-OR USBC_PD_ALERT_L interrupt line (P10.7).
 
