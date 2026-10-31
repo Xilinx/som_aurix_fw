@@ -57,6 +57,12 @@ static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
 static boolean s_biosRevalidate = TRUE;
 static uint32 s_onEntryMs = 0u;
+#if (PM_UART_HANDOFF_AFTER_ON_MS > 0u)
+static uint8  s_uartHandoffStage   = 0u;   /* 0 waiting, 1 announced, 2 handed over */
+static uint32 s_uartHandoffStartMs = 0u;
+static uint32 s_uartHandoffAnnounceMs = 0u;
+static uint8  s_uartIdlePasses     = 0u;
+#endif
 
 static void prv_OnPgFault(const PwrRail_Cfg_t *rail, uint8 railIdx);
 
@@ -423,6 +429,35 @@ static void prv_UartReleaseToSoc(void)
 #endif
 }
 
+/* UART handoff, called every pass while in PM_STATE_ON.  Non-blocking: announce, then
+ * flip the mux as soon as the console has been idle for two passes (so the last byte has
+ * left the shifter), or after PM_UART_HANDOFF_MAX_WAIT_MS at the latest. */
+static void prv_ServiceUartHandoff(void)
+{
+#if (PM_UART_HANDOFF_AFTER_ON_MS > 0u)
+    uint32 elapsed = Stm_GetTimeMs() - s_uartHandoffStartMs;
+
+    if ((s_uartHandoffStage == 0u) && (elapsed >= PM_UART_HANDOFF_AFTER_ON_MS))
+    {
+        Debug_Print("[PM] UART MUX -> x86 SoC (AURIX console goes quiet)\r\n");
+        s_uartHandoffStage = 1u;
+        s_uartHandoffAnnounceMs = Stm_GetTimeMs();
+        s_uartIdlePasses = 0u;
+    }
+    else if (s_uartHandoffStage == 1u)
+    {
+        s_uartIdlePasses = Debug_IsIdle() ? (uint8)(s_uartIdlePasses + 1u) : 0u;
+        if ((s_uartIdlePasses >= 2u) ||
+            ((Stm_GetTimeMs() - s_uartHandoffAnnounceMs) >= PM_UART_HANDOFF_MAX_WAIT_MS))
+        {
+            IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                              PIN_UART_MUX_SEL.pinIdx);
+            s_uartHandoffStage = 2u;
+        }
+    }
+#endif
+}
+
 static void prv_AssertApuReset(void)
 {
     IfxPort_setPinHigh(AppPin_GetPort(PIN_APU_RESET_OUT_L.portIdx),
@@ -481,6 +516,13 @@ static void prv_SetState(PM_State_t newState)
 {
     Debug_Printf("[PM] %d -> %d\r\n", (int)s_state, (int)newState);
     s_state = newState;
+#if (PM_UART_HANDOFF_AFTER_ON_MS > 0u)
+    if (newState == PM_STATE_ON)
+    {
+        s_uartHandoffStage   = 0u;
+        s_uartHandoffStartMs = Stm_GetTimeMs();
+    }
+#endif
     prv_UpdateFusaStatus(newState);
 }
 
@@ -1074,6 +1116,7 @@ void PowerManager_Run(void)
 
         /* ------------------------------------------------------------------ */
         case PM_STATE_ON:
+            prv_ServiceUartHandoff();
             /* Observe APU_RESET_L for visibility only — by design this must
              * not change S0/S3/S5 power state. Log once per assertion. */
             if (prv_ReadSocResetL() && !prv_PwrokValid())

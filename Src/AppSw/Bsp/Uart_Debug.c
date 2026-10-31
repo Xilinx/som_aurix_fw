@@ -208,6 +208,22 @@ IfxAsclin_Asc *Debug_GetAscHandle(void)
     return &s_ascHandle;
 }
 
+boolean Debug_IsIdle(void)
+{
+    /* Per-core rings -> software FIFO -> hardware FIFO.  Only reads shared
+     * state, so it may be called from any core. */
+    if ((g_dbgRing0.head != g_dbgRing0.tail) || (g_dbgRing1.head != g_dbgRing1.tail) ||
+        (g_dbgRing2.head != g_dbgRing2.tail) || (g_dbgRing3.head != g_dbgRing3.tail))
+    {
+        return FALSE;
+    }
+    if (Ifx_Fifo_readCount(s_ascHandle.tx) != 0)
+    {
+        return FALSE;
+    }
+    return (boolean)(IfxAsclin_getTxFifoFillLevel(&MODULE_ASCLIN0) == 0u);
+}
+
 
 void Debug_FlushBlockingKeepAlive(void (*keepAlive)(void))
 {
