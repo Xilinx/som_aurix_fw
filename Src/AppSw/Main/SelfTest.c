@@ -72,11 +72,26 @@ static void prv_ServiceWdtIfOwner(void)
 /* ------------------------------------------------------------------ */
 static uint32 prv_InactiveBaseOrSkip(const char *tag)
 {
+    DFlash_SotaMeta_t meta;
     uint32 base = Swap_GetInactiveBase();
+
     if (base == 0u)
     {
         Debug_Printf("[TEST:%s] SKIP: active bank unknown (ADDRCFG) - "
                      "not erasing\r\n", tag);
+        return 0u;
+    }
+
+    /* While an update is pending (staged before fwswap, or running but not yet
+     * committed) the inactive bank holds the staged image or the rollback
+     * image.  These tests erase its first sector and rewrite the SOTA
+     * metadata, so do not run them then. */
+    if ((DFlash_ReadSotaMeta(&meta) == DFLASH_OK) &&
+        (meta.magic == DFLASH_SOTA_MAGIC) && (meta.pendingUpdate != 0u))
+    {
+        Debug_Printf("[TEST:%s] SKIP: an update is pending - not erasing the "
+                     "inactive bank (commit or clear it first)\r\n", tag);
+        return 0u;
     }
     return base;
 }
@@ -230,14 +245,55 @@ boolean prv_WaitForCores(uint32 timeoutMs)
 /* ================================================================== */
 
 /* One-shot SOTA commit once the PMC reports the platform is ON. */
+#define COMMIT_RETRY_MS     5000u
+
 void prv_CommitSotaOnce(void)
 {
-    static boolean s_committed = FALSE;
+    static boolean s_committed     = FALSE;
+    static boolean s_blockLogged   = FALSE;
+    static uint32  s_blockedResult = 0u;
+    static uint32  s_lastTryMs     = 0u;
+    Bist_Stats_t   bist;
+    uint32         now;
 
-    if (!s_committed && (g_ipcShared.pmc.pmState == (uint32)PM_STATE_ON))
+    if (s_committed || (g_ipcShared.pmc.pmState != (uint32)PM_STATE_ON))
     {
-        BootValid_CommitUpdate();
+        return;
+    }
+
+    /* While the running image is an update on trial, commit only after the
+     * power-on CRC check passed.  A failed check, a skipped check (e.g. the
+     * revert could not arm the swap) or one that has not run all leave the
+     * update pending, so the boot counter runs out and rolls back.  Boots with
+     * no pending update keep the normal no-op path. */
+    Bist_GetStats(&bist);
+    if ((bist.postResult != BIST_OK) && BootValid_IsUpdatePending())
+    {
+        if (!s_blockLogged || (s_blockedResult != (uint32)bist.postResult))
+        {
+            s_blockLogged    = TRUE;
+            s_blockedResult  = (uint32)bist.postResult;
+            Debug_Printf("[BOOT] update pending, POST result %u - not committing\r\n",
+                         (unsigned)bist.postResult);
+        }
+        return;
+    }
+
+    now = Stm_GetTimeMs();
+    if ((s_lastTryMs != 0u) && ((now - s_lastTryMs) < COMMIT_RETRY_MS))
+    {
+        return;
+    }
+    s_lastTryMs = now | 1u;     /* never 0: 0 means "not tried yet" */
+
+    /* Mark done only when the commit succeeded; otherwise retry. */
+    if (BootValid_CommitUpdate() == BOOTVALID_OK)
+    {
         s_committed = TRUE;
+    }
+    else
+    {
+        Debug_Print("[BOOT] commit failed - will retry\r\n");
     }
 }
 

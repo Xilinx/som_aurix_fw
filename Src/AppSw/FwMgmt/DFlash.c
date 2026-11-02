@@ -208,5 +208,20 @@ DFlash_Status_t DFlash_WriteSotaMeta(const DFlash_SotaMeta_t *pMeta)
     if (status != DFLASH_OK) return status;
 
     status = DFlash_Write(DFLASH_SOTA_ADDR, pMeta, sizeof(DFlash_SotaMeta_t));
-    return status;
+    if (status != DFLASH_OK) return status;
+
+    /* The erase/program path reports no hardware status, so confirm the
+     * metadata actually reads back.  Callers (FwUpdate, BootValid) rely on
+     * this result to decide whether an update is staged or committed. */
+    {
+        DFlash_SotaMeta_t readBack;
+
+        status = DFlash_Read(DFLASH_SOTA_ADDR, &readBack, sizeof(DFlash_SotaMeta_t));
+        if (status != DFLASH_OK) return status;
+        if (memcmp(&readBack, pMeta, sizeof(DFlash_SotaMeta_t)) != 0)
+        {
+            return DFLASH_ERR_VERIFY;
+        }
+    }
+    return DFLASH_OK;
 }
