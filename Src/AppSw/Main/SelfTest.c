@@ -250,7 +250,8 @@ boolean prv_WaitForCores(uint32 timeoutMs)
 void prv_CommitSotaOnce(void)
 {
     static boolean s_committed     = FALSE;
-    static boolean s_postBlockLogged = FALSE;
+    static boolean s_blockLogged   = FALSE;
+    static uint32  s_blockedResult = 0u;
     static uint32  s_lastTryMs     = 0u;
     Bist_Stats_t   bist;
     uint32         now;
@@ -260,15 +261,20 @@ void prv_CommitSotaOnce(void)
         return;
     }
 
-    /* Do not commit an image that failed its power-on CRC check.  Leaving the
-     * update pending lets the boot counter run out and roll back. */
+    /* While the running image is an update on trial, commit only after the
+     * power-on CRC check passed.  A failed check, a skipped check (e.g. the
+     * revert could not arm the swap) or one that has not run all leave the
+     * update pending, so the boot counter runs out and rolls back.  Boots with
+     * no pending update keep the normal no-op path. */
     Bist_GetStats(&bist);
-    if (bist.postResult == BIST_ERR_CRC)
+    if ((bist.postResult != BIST_OK) && BootValid_IsUpdatePending())
     {
-        if (!s_postBlockLogged)
+        if (!s_blockLogged || (s_blockedResult != (uint32)bist.postResult))
         {
-            s_postBlockLogged = TRUE;
-            Debug_Print("[BOOT] POST failed - not committing the update\r\n");
+            s_blockLogged    = TRUE;
+            s_blockedResult  = (uint32)bist.postResult;
+            Debug_Printf("[BOOT] update pending, POST result %u - not committing\r\n",
+                         (unsigned)bist.postResult);
         }
         return;
     }

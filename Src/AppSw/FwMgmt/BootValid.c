@@ -154,6 +154,19 @@ BootValid_Status_t BootValid_CheckOnStartup(void)
     return BOOTVALID_PENDING;
 }
 
+boolean BootValid_IsUpdatePending(void)
+{
+    DFlash_SotaMeta_t meta;
+
+    if (DFlash_ReadSotaMeta(&meta) != DFLASH_OK)
+    {
+        return FALSE;
+    }
+
+    return (isMetaValid(&meta) && (meta.pendingUpdate != 0u) &&
+            ((uint8)meta.activeBank == Swap_GetActiveBank())) ? TRUE : FALSE;
+}
+
 BootValid_Status_t BootValid_CommitUpdate(void)
 {
     DFlash_SotaMeta_t meta;

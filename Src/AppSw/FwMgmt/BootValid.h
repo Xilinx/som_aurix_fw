@@ -103,6 +103,15 @@ BootValid_Status_t BootValid_CheckOnStartup(void);
 BootValid_Status_t BootValid_CommitUpdate(void);
 
 /**
+ * @brief  Check whether the running image is an update that is still on trial.
+ *
+ * TRUE when valid metadata has pendingUpdate set for the bank that is
+ * currently mapped in.  FALSE for a committed image, a staged update that
+ * has not been swapped in, missing metadata, or a DFlash read error.
+ */
+boolean BootValid_IsUpdatePending(void);
+
+/**
  * @brief  Prepare the SOTA metadata for an incoming update.
  *
  * Called by the FwUpdate module BEFORE triggering the swap.
