@@ -43,6 +43,7 @@ static uint32           s_lastFlushMs   = 0u;
 static uint32           s_totalLogged   = 0u;
 static uint32           s_flushCount    = 0u;
 static uint32           s_flushErrors   = 0u;
+static volatile uint8   s_lastEvtType   = 0u;
 /* ================================================================== */
 /*  Private helpers                                                   */
 /* ================================================================== */
@@ -318,6 +319,7 @@ NvLog_Status_t NvLog_Init(void)
     s_totalLogged  = 0u;
     s_flushCount   = 0u;
     s_flushErrors  = 0u;
+    s_lastEvtType  = 0u;
     s_lastFlushMs  = Stm_GetTimeMs();
     s_initialised  = TRUE;
 
@@ -364,6 +366,8 @@ NvLog_Status_t NvLog_Write(uint8 eventType, uint8 source, uint8 severity,
             return NVLOG_ERR_FULL;
         }
     }
+
+    s_lastEvtType = eventType;
 
     if (severity >= NVLOG_SEV_ERROR)
     {
@@ -586,6 +590,7 @@ void NvLog_GetStats(NvLog_Stats_t *pStats)
     pStats->totalEventsLogged = s_totalLogged;
     pStats->flushCount       = s_flushCount;
     pStats->flushErrors      = s_flushErrors;
+    pStats->lastEventType    = s_lastEvtType;
 }
 
 void NvLog_DumpSlotInfo(void)

@@ -213,6 +213,7 @@ typedef struct
     uint32 totalEventsLogged;   /**< Total events logged this session */
     uint32 flushCount;          /**< Number of flush operations */
     uint32 flushErrors;         /**< Number of failed flush attempts */
+    uint8  lastEventType;       /**< Event type of the last event accepted (0 = none) */
 } NvLog_Stats_t;
 
 /* ================================================================== */

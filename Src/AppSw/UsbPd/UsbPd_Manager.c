@@ -301,6 +301,51 @@ UsbPd_PortState_t UsbPdManager_GetPortState(uint8 portIdx)
     return s_portState[portIdx];
 }
 
+uint32 UsbPdManager_GetPortStatusWord(uint8 portIdx)
+{
+    uint32 w;
+
+    if (portIdx >= CYPD_DEVICE_COUNT)
+    {
+        return 0u;
+    }
+
+    w = (uint32)s_portState[portIdx] & USBPD_STAT_STATE_MASK;
+    if (s_devPresent[portIdx])
+    {
+        w |= USBPD_STAT_DEV_PRESENT;
+    }
+    /* Roles and alt modes are only meaningful while a partner is attached. */
+    if (s_hpiState[portIdx].connected)
+    {
+        if ((s_hpiState[portIdx].pdStatus & HPI_PD_DATA_ROLE) != 0u)
+            w |= USBPD_STAT_DATA_DFP;
+        if ((s_hpiState[portIdx].pdStatus & HPI_PD_PORT_ROLE) != 0u)
+            w |= USBPD_STAT_PWR_SOURCE;
+        if ((s_hpiState[portIdx].altModeStatus & HPI_ALT_DP_ACTIVE) != 0u)
+            w |= USBPD_STAT_ALT_DP;
+        if ((s_hpiState[portIdx].altModeStatus & HPI_ALT_TBT3_ACTIVE) != 0u)
+            w |= USBPD_STAT_ALT_TBT3;
+        if ((s_hpiState[portIdx].altModeStatus & HPI_ALT_USB4_ACTIVE) != 0u)
+            w |= USBPD_STAT_ALT_USB4;
+    }
+    return w;
+}
+
+uint32 UsbPdManager_GetFaultFlags(void)
+{
+    uint32 f = 0u;
+    uint8  i;
+
+    for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
+    {
+        if (!s_devPresent[i])           { f |= (USBPD_FAULT_DEV_ABSENT   << i); }
+        if (s_devRuntimeFails[i] != 0u) { f |= (USBPD_FAULT_RUNTIME_FAIL << i); }
+        if (s_devSpuriousCount[i] != 0u){ f |= (USBPD_FAULT_SPURIOUS_INT<< i); }
+    }
+    return f;
+}
+
 #else /* USBPD_FEATURE_ENABLE == 0 */
 
 void UsbPdManager_Init(void)
@@ -315,5 +360,9 @@ UsbPd_PortState_t UsbPdManager_GetPortState(uint8 portIdx)
     (void)portIdx;
     return USBPD_PORT_DETACHED;
 }
+
+uint32 UsbPdManager_GetPortStatusWord(uint8 portIdx) { (void)portIdx; return 0u; }
+
+uint32 UsbPdManager_GetFaultFlags(void) { return 0u; }
 
 #endif

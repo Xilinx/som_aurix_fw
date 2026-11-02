@@ -81,6 +81,13 @@ PM_ResetCause_t PowerManager_GetResetCause(void);
 uint8 PowerManager_GetRetryCount(void);
 
 /**
+ * @brief  Get the number of thermal shutdown events acted on since boot.
+ *         Counts the THERMTRIP# pin and SysMonitor over-temperature
+ *         shutdowns, which share PowerManager_OnThermtripIsr.
+ */
+uint32 PowerManager_GetThermtripCount(void);
+
+/**
  * @brief Request a power-on transition (equivalent to a PWR_BTN press).
  *        Safe to call from any context; the state machine processes it on
  *        the next PowerManager_Run() call.

@@ -171,3 +171,8 @@ boolean ComHpcWdt_HasFired(void)
 {
     return (boolean)(g_state == WDT_STATE_FIRED);
 }
+
+uint32 ComHpcWdt_GetState(void)
+{
+    return (uint32)g_state;
+}

@@ -122,6 +122,19 @@ void VoltMon_SetSmaTaps(uint8 taps);
  */
 boolean VoltMon_AnyFaultActive(void);
 
+/**
+ * @brief  Per-channel threshold status from the cached readings.
+ *
+ * Bit n corresponds to channel n.  Same thresholds and precedence as
+ * the fault/warning log in VoltMon_Scan().  Channels with no reading
+ * (0 mV, e.g. monitoring gated off) report no flags.
+ *
+ * @param  pUv    UV fault bitmask   (below uvFaultMv)
+ * @param  pOv    OV fault bitmask   (above ovFaultMv)
+ * @param  pWarn  Warning bitmask    (inside a warn band, not yet a fault)
+ */
+void VoltMon_GetFlags(uint32 *pUv, uint32 *pOv, uint32 *pWarn);
+
 
 /**
  * @brief Disables with no timeout

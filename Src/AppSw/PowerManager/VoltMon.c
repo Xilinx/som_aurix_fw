@@ -504,3 +504,26 @@ boolean VoltMon_AnyFaultActive(void)
     }
     return FALSE;
 }
+
+void VoltMon_GetFlags(uint32 *pUv, uint32 *pOv, uint32 *pWarn)
+{
+    uint32 uv = 0u, ov = 0u, warn = 0u;
+    uint32 ch;
+
+    for (ch = 0u; ch < (uint32)VOLTMON_CH_COUNT; ch++)
+    {
+        uint16 mv = s_lastMv[ch];
+
+        if (mv == 0u)
+            continue;  /* no reading */
+
+        if (mv < s_chTable[ch].uvFaultMv)       { uv   |= (1u << ch); }
+        else if (mv < s_chTable[ch].uvWarnMv)   { warn |= (1u << ch); }
+        else if (mv > s_chTable[ch].ovFaultMv)  { ov   |= (1u << ch); }
+        else if (mv > s_chTable[ch].ovWarnMv)   { warn |= (1u << ch); }
+    }
+
+    if (pUv   != NULL_PTR) { *pUv   = uv; }
+    if (pOv   != NULL_PTR) { *pOv   = ov; }
+    if (pWarn != NULL_PTR) { *pWarn = warn; }
+}

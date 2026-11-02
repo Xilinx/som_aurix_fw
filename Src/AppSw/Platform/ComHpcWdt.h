@@ -78,4 +78,10 @@ void ComHpcWdt_Run(void);
  */
 boolean ComHpcWdt_HasFired(void);
 
+/**
+ * @brief  Current watchdog state: 0 = idle, 1 = enable delay,
+ *         2 = active, 3 = fired.
+ */
+uint32 ComHpcWdt_GetState(void);
+
 #endif /* COMHPCWDT_H */

@@ -283,4 +283,8 @@ void Tlf35585_EnableIsrMode(void);
 
 void Tlf35585_PublishRegSnapshot(void);
 
+/** Window-watchdog services issued / windows missed since boot. */
+uint32 Tlf35585_GetWwdServiceCount(void);
+uint32 Tlf35585_GetWwdMissCount(void);
+
 #endif /* TLF35585_H */
