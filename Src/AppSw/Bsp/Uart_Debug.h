@@ -49,6 +49,12 @@ void Debug_FlushBlockingKeepAlive(void (*keepAlive)(void));
 
 IfxAsclin_Asc *Debug_GetAscHandle(void);
 
+/**
+ * @brief TRUE when everything printed so far has left the UART: all per-core rings,
+ *        the software TX FIFO and the hardware TX FIFO are empty.  Callable from any core.
+ */
+boolean Debug_IsIdle(void);
+
 extern volatile boolean g_debugMuted;
 
 
