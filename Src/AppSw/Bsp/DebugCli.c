@@ -187,7 +187,7 @@ static void prv_CmdStatus(void)
     uint32 uptimeS = Stm_GetTimeMs() / 1000u;
 
     Debug_Print("=== System Status ===\r\n");
-    Debug_Printf("  FW: TC387 COM-HPC Controller v0.2\r\n");
+    Debug_Printf("  FW: TC387 COM-HPC Controller v0.3\r\n");
     Debug_Printf("  Uptime:   %u s\r\n", (unsigned)uptimeS);
     Debug_Printf("  PM state: %u\r\n",
                  (unsigned)g_ipcShared.pmc.pmState);
@@ -423,7 +423,7 @@ static void prv_CmdUptime(void)
 
 static void prv_CmdVersion(void)
 {
-    Debug_Printf("  TC387 COM-HPC Controller v0.2\r\n");
+    Debug_Printf("  TC387 COM-HPC Controller v0.3\r\n");
 }
 
 static void prv_CmdUsbPd(void)
@@ -1664,8 +1664,6 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdI2cDiag();
     else if (((args = prv_StartsWith(cmd, "i2cbb")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdI2cBitbang();                                     
-    else if (prv_StrEq(cmd, "uptime"))
-        prv_CmdUptime();
     else if (prv_StrEq(cmd, "uptime"))
         prv_CmdUptime();
     else if (prv_StrEq(cmd, "version"))

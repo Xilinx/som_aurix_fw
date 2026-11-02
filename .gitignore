@@ -40,3 +40,7 @@ iLLD
 # Obtain separately per NDA / AMD partner portal
 Docs/
 
+
+# Python bytecode
+__pycache__/
+*.pyc
