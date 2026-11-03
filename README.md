@@ -48,7 +48,15 @@ make BOARD=eval -j$(nproc)    # Eval board build
 make flash                     # Flash via miniWiggler (requires UDAS.exe running)
 ```
 
-## What's New in v0.2
+## What's New in v0.3
+
+- **OTA safety** — revert swaps bank before clearing metadata; commit only after POST passes; metadata read-back verify; flash self-tests skipped while an update is pending
+- **Boot / IPC** — volatile core-barrier read fixes the Release (`-O2`) boot hang; early UART-owner/ring reset; dedicated ASCLIN4 interrupt priorities; TLF window serviced during the UART flush
+- **Optional UART hand-off** — shared UART can move to the x86 BIOS console after System ON (`PM_UART_HANDOFF_AFTER_ON_MS`; build with `=0u` to keep the AURIX console)
+- **FuSa SPI** — register map populated (v1.1.0); 32-bit frame length and idle-slave re-arm after an SPI error
+- **Version** — firmware reports v0.3 (`FUSA_FW_VERSION = 0x00030000`, CLI and boot banner)
+
+### Carried from v0.2
 
 - **Multicore architecture** — CPU0/1/2/3 with LMU-based IPC, per-core peripheral ownership, TLF WDT handover
 - **Over-the-Air firmware update (SOTA)** — PFlash A/B bank swap, UART transfer protocol, CRC-32 integrity, 3-retry rollback

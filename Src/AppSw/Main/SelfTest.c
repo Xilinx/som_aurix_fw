@@ -70,10 +70,43 @@ static void prv_ServiceWdtIfOwner(void)
 /*  the test rather than erase a hardcoded bank, which is what caused  */
 /*  the Bank-B selftest hang.                                          */
 /* ------------------------------------------------------------------ */
+/* The destructive self-tests (sota/swap/fwup) erase the inactive PFlash bank
+ * and/or rewrite the SOTA metadata.  On a production image the inactive bank is
+ * the rollback copy of the running firmware, so these are gated out of
+ * production builds.  Build the validation image with
+ * -DSELFTEST_ALLOW_DESTRUCTIVE=1 (implied on the eval board) to run them on
+ * target. */
+#ifndef SELFTEST_ALLOW_DESTRUCTIVE
+#  if defined(TARGET_EVAL_BOARD)
+#    define SELFTEST_ALLOW_DESTRUCTIVE 1
+#  else
+#    define SELFTEST_ALLOW_DESTRUCTIVE 0
+#  endif
+#endif
+
+static boolean prv_DestructiveAllowed(const char *tag)
+{
+#if SELFTEST_ALLOW_DESTRUCTIVE
+    (void)tag;
+    return TRUE;
+#else
+    Debug_Printf("[TEST:%s] SKIP: destructive self-test disabled on production "
+                 "build (rebuild with -DSELFTEST_ALLOW_DESTRUCTIVE=1)\r\n", tag);
+    return FALSE;
+#endif
+}
+
 static uint32 prv_InactiveBaseOrSkip(const char *tag)
 {
     DFlash_SotaMeta_t meta;
-    uint32 base = Swap_GetInactiveBase();
+    uint32 base;
+
+    if (!prv_DestructiveAllowed(tag))
+    {
+        return 0u;
+    }
+
+    base = Swap_GetInactiveBase();
 
     if (base == 0u)
     {
@@ -590,7 +623,13 @@ uint32 SelfTest_Swap(void)
             return 0u;                 /* skip, not a failure */
         }
     }
- 
+
+    /* Everything below rewrites the SOTA metadata — gate it on production. */
+    if (!prv_DestructiveAllowed("SWAP"))
+    {
+        return 0u;                     /* skip, not a failure */
+    }
+
     /* Save current metadata */
     ds = DFlash_ReadSotaMeta(&savedMeta);
  
