@@ -763,6 +763,16 @@ void Tlf35585_CheckFaults(void)
                 Debug_Print("[TLF] SAFE STATE active\r\n");
 
             Tlf35585_LogEvent(TLF_EVT_FAULT);
+
+            /* Drive the registered fault handler.  It is set via
+             * Tlf35585_RegisterFaultCb() (the power-off path) but was never
+             * invoked here, so a TLF safe state never forced a power-off
+             * despite the Cpu0_Main comment.  Fire it once per fault edge
+             * when the PMIC has actually entered safe state. */
+            if (safeState && (s_faultCb != NULL_PTR))
+            {
+                s_faultCb();
+            }
         }
         /* level unchanged: fault persists, already reported — silent */
     }
