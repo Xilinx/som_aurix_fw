@@ -49,6 +49,9 @@
 #include "AppPin.h"
 
 static boolean s_fusaReady = FALSE;
+/* PMIC restart cause seen at boot.  Holds ALERT# until the platform has
+ * been brought up to S0 once, i.e. someone retried on purpose. */
+static boolean s_tlfBootCauseLatched = FALSE;
 
 /* ================================================================== */
 /*  Multicore sync                                                    */
@@ -90,9 +93,43 @@ static void prv_OnVoltageFault(const VoltMon_ChCfg_t *ch,
     }
 }
 
+/* TLF safe-state edge.  CPU1 forces the platform off and refuses
+ * power-on while tlfSsPin stays set. */
 static void prv_OnTlfFault(void)
 {
-    Ipc_SignalFault(IPC_FAULT_PMIC, 0u, 0u);
+    FusaSpi_AssertAlert();
+    g_ipcShared.fusa.tlfSsPin = 1u;
+    __dsync();
+    g_ipcShared.fusa.pmicSsSeq++;
+    __dsync();
+}
+
+/* Publish and NV-log the restart cause latched by Tlf35585_Init().
+ * Runs after NvLog_Init(), while CPU0 still owns NvLog. */
+static void prv_ReportTlfBootCause(void)
+{
+    Tlf35585_BootCause_t cause;
+
+    Tlf35585_GetBootCause(&cause);
+    g_ipcShared.fusa.tlfBootInitErr  = (uint32)cause.initerr;
+    g_ipcShared.fusa.tlfBootSysFail  = (uint32)cause.sysfail;
+    g_ipcShared.fusa.tlfBootNormalOk = cause.normalOk ? 1u : 0u;
+    g_ipcShared.fusa.tlfSsPin        = (uint32)Tlf35585_IsSafeStateActive();
+    __dsync();
+
+    if ((cause.initerr != 0u) || (cause.sysfail != 0u) || !cause.normalOk)
+    {
+        uint32 nvData[4] = { (uint32)cause.initerr, (uint32)cause.sysfail,
+                             cause.normalOk ? 1u : 0u,
+                             g_ipcShared.fusa.tlfSsPin };
+
+        s_tlfBootCauseLatched = TRUE;
+        Debug_Printf("[TLF] PMIC restart cause latched: INITERR=0x%02X "
+                     "SYSFAIL=0x%02X NORMAL=%u - platform start held\r\n",
+                     (unsigned)cause.initerr, (unsigned)cause.sysfail,
+                     (unsigned)(cause.normalOk ? 1u : 0u));
+        NvLog_Write(NVLOG_EVT_PMIC_FAULT, NVLOG_SRC_PMIC, NVLOG_SEV_ERROR, nvData);
+    }
 }
 
 static void prv_PublishVoltages(void)
@@ -140,13 +177,15 @@ static void prv_InitFusa(void)
     VoltMon_Init();
     VoltMon_RegisterFaultCb(prv_OnVoltageFault);
 
-    /* Replaces the boot callback. CPU1 turns a PMIC IPC fault into
-     * a forced power-off, which is the path that was live on CPU2. */
     Tlf35585_RegisterFaultCb(prv_OnTlfFault);
     Tlf35585_EnableIsrMode();
     Debug_Print("[CPU0] Init: TLF service stays here\r\n");
 
     FusaSpi_Init();
+    if (s_tlfBootCauseLatched)
+    {
+        FusaSpi_AssertAlert();
+    }
     Debug_Print("[CPU0] Init: FusaSpi OK\r\n");
     s_fusaReady = TRUE;
 }
@@ -162,7 +201,14 @@ static void prv_RunFusa(void)
     prv_PublishVoltages();
     prv_PublishTlfStatus();
 
-    if (!VoltMon_AnyFaultActive() && !Tlf35585_IsErrActive())
+    if (s_tlfBootCauseLatched &&
+        (g_ipcShared.pmc.pmState == (uint32)PM_STATE_ON))
+    {
+        s_tlfBootCauseLatched = FALSE;
+    }
+
+    if (!VoltMon_AnyFaultActive() && !Tlf35585_IsErrActive() &&
+        !Tlf35585_IsSafeStateActive() && !s_tlfBootCauseLatched)
     {
         IfxPort_setPinHigh(
             AppPin_GetPort(PIN_FUSA_VOLTAGE_ERR_L.portIdx),
@@ -233,7 +279,6 @@ int core0_main(void)
     {
         Debug_Print("[SYS] Init: TLF OK\r\n");
     }
-    Tlf35585_RegisterFaultCb(PowerManager_RequestPowerOff);
 
     /* ============================================================== */
     /*  Phase 1: BIOS ROM + IPC init (before core release)            */
@@ -252,6 +297,7 @@ int core0_main(void)
     NvLog_Init();
     if (g_wdtOwner == 0u) Tlf35585_ServiceWdt();
     Debug_Print("[SYS] Init: NvLog OK\r\n");
+    prv_ReportTlfBootCause();
     //SelfTest_DFlash();
 
     PFlash_Init();

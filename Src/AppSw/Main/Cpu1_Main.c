@@ -6,7 +6,7 @@
  * USB-PD (I2C0 master + 0x54 sideband slave) lives on CPU3.
  * Host watchdog runs on CPU0. I2C1 is APML, master only.
  * Reads: g_ipcShared.cmd (commands from CPU0)
- *        g_ipcShared.fusa (voltage/PMIC faults from CPU2)
+ *        g_ipcShared.fusa (voltage faults and TLF safe state from CPU0)
  * Writes: g_ipcShared.pmc (PM state, temp, PROCHOT)
  */
 
@@ -27,6 +27,7 @@
 
 static uint32 s_lastAckedSeq = 0u;
 static uint32 s_lastActedFaultSeq = 0u;
+static uint32 s_lastPmicSsSeq = 0u;
 
 static void prv_ProcessCommands(void)
 {
@@ -83,13 +84,23 @@ static void prv_CheckFusaFaults(void)
                 PowerManager_RequestForcedOff();
             }
             break;
-        case IPC_FAULT_PMIC:
-        case IPC_FAULT_PMIC_SS:
-            PowerManager_RequestForcedOff();
-            break;
         default:
             break;
     }
+}
+
+/* TLF safe state has its own flag in g_ipcShared.fusa: the level gates
+ * every power-on, the edge forces the platform off in any state. */
+static void prv_CheckPmicSafeState(void)
+{
+    uint32 seq = g_ipcShared.fusa.pmicSsSeq;
+
+    PowerManager_SetPmicSafeState(g_ipcShared.fusa.tlfSsPin != 0u);
+
+    if (seq == s_lastPmicSsSeq)
+        return;
+    s_lastPmicSsSeq = seq;
+    PowerManager_OnPmicSafeState();
 }
 
 /* ================================================================== */
@@ -126,6 +137,7 @@ void core1_main(void)
         uint32 loopStartMs = Stm_GetTimeMs();
 
         prv_ProcessCommands();
+        prv_CheckPmicSafeState();
         PowerManager_Run();
         /* Publish PM state before APML.  If SysMonitor ever blocks again,
          * CLI `status` still shows the sequencer's real state (7), not a

@@ -248,6 +248,21 @@ typedef struct
 
 #define TLF_WWDSTAT_WWDECNT_MASK   (0x1Fu) 
 
+/* Debug/validation builds only: lets the CLI force the safe-state pin
+ * reading to "asserted" so the PMIC fault path can be exercised. */
+#ifndef FAULT_INJECT_ENABLE
+#define FAULT_INJECT_ENABLE     0u
+#endif
+
+/* Restart cause captured by Tlf35585_Init() before INITERR/SYSFAIL are
+ * cleared.  A clean power-up or software reset reads 0/0. */
+typedef struct
+{
+    uint8   initerr;
+    uint8   sysfail;
+    boolean normalOk;       /* TRUE once the TLF reached NORMAL */
+} Tlf35585_BootCause_t;
+
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
@@ -286,5 +301,8 @@ void Tlf35585_PublishRegSnapshot(void);
 /** Window-watchdog services issued / windows missed since boot. */
 uint32 Tlf35585_GetWwdServiceCount(void);
 uint32 Tlf35585_GetWwdMissCount(void);
+
+/** Restart cause latched at Tlf35585_Init(). */
+void Tlf35585_GetBootCause(Tlf35585_BootCause_t *pCause);
 
 #endif /* TLF35585_H */

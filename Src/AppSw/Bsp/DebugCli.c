@@ -153,6 +153,22 @@ static const char *prv_SkipSpaces(const char *s)
 }
 
 /* ================================================================== */
+/*  Private: TLF safe state / restart cause (published by CPU0)       */
+/* ================================================================== */
+
+static boolean prv_TlfBootCauseLatched(void)
+{
+    return (g_ipcShared.fusa.tlfBootInitErr != 0u) ||
+           (g_ipcShared.fusa.tlfBootSysFail != 0u) ||
+           (g_ipcShared.fusa.tlfBootNormalOk == 0u);
+}
+
+static boolean prv_TlfSafeStateActive(void)
+{
+    return (g_ipcShared.fusa.tlfSsPin != 0u);
+}
+
+/* ================================================================== */
 /*  Command handlers                                                  */
 /* ================================================================== */
 
@@ -179,6 +195,9 @@ static void prv_CmdHelp(void)
         "  version     Firmware version\r\n"
         "  help        This message\r\n"
         "  selftest    Usage: selftest [all|crc|sota|swap|fusa|pm|usbpd|fwup] \r\n"
+#if (FAULT_INJECT_ENABLE == 1u)
+        "  fault ss on|off  Inject TLF safe state (test build only)\r\n"
+#endif
     );
 }
 
@@ -189,8 +208,9 @@ static void prv_CmdStatus(void)
     Debug_Print("=== System Status ===\r\n");
     Debug_Printf("  FW: TC387 COM-HPC Controller v0.3\r\n");
     Debug_Printf("  Uptime:   %u s\r\n", (unsigned)uptimeS);
-    Debug_Printf("  PM state: %u\r\n",
-                 (unsigned)g_ipcShared.pmc.pmState);
+    Debug_Printf("  PM state: %u  (reset cause %u)\r\n",
+                 (unsigned)g_ipcShared.pmc.pmState,
+                 (unsigned)g_ipcShared.pmc.resetCause);
     Debug_Printf("  Bank:     0x%02X\r\n",
                  (unsigned)Swap_GetCurrentBank());
 
@@ -199,6 +219,15 @@ static void prv_CmdStatus(void)
                  (unsigned)Tlf35585_GetDevState(),
                  (unsigned)Tlf35585_IsErrActive(),
                  (unsigned)Tlf35585_IsSafeStateActive());
+    Debug_Printf("  TLF boot: INITERR=0x%02X SYSFAIL=0x%02X NORMAL=%u%s\r\n",
+                 (unsigned)g_ipcShared.fusa.tlfBootInitErr,
+                 (unsigned)g_ipcShared.fusa.tlfBootSysFail,
+                 (unsigned)g_ipcShared.fusa.tlfBootNormalOk,
+                 prv_TlfBootCauseLatched() ? "  (PMIC restart cause)" : "");
+#if (FAULT_INJECT_ENABLE == 1u)
+    if (g_ipcShared.faultInjectSs != 0u)
+        Debug_Print("  INJECT:   TLF safe state forced (fault ss off to clear)\r\n");
+#endif
 
     /* NvLog summary */
     {
@@ -250,6 +279,13 @@ static void prv_CmdPowerOn(void)
     if ((st != (uint32)PM_STATE_OFF) && (st != (uint32)PM_STATE_S5))
     {
         Debug_Printf("  Rejected: PM state is %u (not OFF/S5)\r\n", (unsigned)st);
+        return;
+    }
+    if (prv_TlfSafeStateActive())
+    {
+        Debug_Print("  Rejected: TLF safe state active (SS low) - not powering on\r\n");
+        NvLog_WriteU32(NVLOG_EVT_PMIC_SAFE_STATE, NVLOG_SRC_DEBUG,
+                       NVLOG_SEV_WARNING, 0x5501u);
         return;
     }
     Debug_Print("  Requesting power on...\r\n");
@@ -861,9 +897,67 @@ static void prv_CmdPin(void)
 }
 
 
+static boolean prv_RangeOverlaps(uint32 a, uint32 aLen, uint32 b, uint32 bLen)
+{
+    return (a < (b + bLen)) && (b < (a + aLen));
+}
+
+/* Refuse firmware image area of both banks.  The only allowed PFlash
+ * test window is the last 16 KB sector of the inactive bank. */
+static boolean prv_CliFlashAddrBlocked(uint32 addr, uint32 len)
+{
+    uint32 aImgLen = PFLASH_BANK_A_SIZE - PFLASH_SECTOR_SIZE;
+    uint32 bImgLen = PFLASH_BANK_B_SIZE - PFLASH_SECTOR_SIZE;
+    uint32 inactive;
+    uint32 inactSize;
+    uint32 inactTail;
+    uint32 active;
+    uint32 actSize;
+    uint32 actTail;
+
+    if (prv_RangeOverlaps(addr, len, PFLASH_BANK_A_BASE, aImgLen) ||
+        prv_RangeOverlaps(addr, len, PFLASH_BANK_B_BASE, bImgLen))
+    {
+        Debug_Print("[PF] refused: address is in a firmware image area\r\n"
+                    "     (only the last 16 KB of the inactive bank is allowed)\r\n");
+        return TRUE;
+    }
+
+    inactive = Swap_GetInactiveBase();
+    if (inactive == 0u)
+    {
+        Debug_Print("[PF] refused: active bank unknown (ADDRCFG)\r\n");
+        return TRUE;
+    }
+
+    inactSize = (inactive == PFLASH_BANK_A_BASE) ? PFLASH_BANK_A_SIZE
+                                                 : PFLASH_BANK_B_SIZE;
+    inactTail = (inactive + inactSize) - PFLASH_SECTOR_SIZE;
+    if (prv_RangeOverlaps(addr, len, inactTail, PFLASH_SECTOR_SIZE))
+    {
+        return FALSE;
+    }
+
+    active  = (inactive == PFLASH_BANK_A_BASE) ? PFLASH_BANK_B_BASE
+                                               : PFLASH_BANK_A_BASE;
+    actSize = (active == PFLASH_BANK_A_BASE) ? PFLASH_BANK_A_SIZE
+                                             : PFLASH_BANK_B_SIZE;
+    actTail = (active + actSize) - PFLASH_SECTOR_SIZE;
+    if (prv_RangeOverlaps(addr, len, actTail, PFLASH_SECTOR_SIZE))
+    {
+        Debug_Print("[PF] refused: last sector of the running bank\r\n");
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
 {
     uint32 a = (uint32)strtoul(args, NULL, 16);
+    if (prv_CliFlashAddrBlocked(a, PFLASH_SECTOR_SIZE))
+    {
+        return;
+    }
     Debug_Printf("[PF] pre  STATUS=%08X ERRSR=%08X\r\n", (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
     PFlash_Status_t s = PFlash_EraseSector(a);
     Debug_Printf("[PF] erase %08X -> %u  post STATUS=%08X ERRSR=%08X\r\n",
@@ -873,8 +967,12 @@ static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
 static void prv_CmdPfWrite(const char *args)       /* pfwrite <addr>: writes 0x5A-filled 256 B */
 {
     static uint8 buf[256] __attribute__((aligned(4)));
-    memset(buf, 0x5A, sizeof(buf));
     uint32 a = (uint32)strtoul(args, NULL, 16);
+    if (prv_CliFlashAddrBlocked(a, PFLASH_BURST_SIZE))
+    {
+        return;
+    }
+    memset(buf, 0x5A, sizeof(buf));
     PFlash_Status_t s = PFlash_WritePage256(a, buf);
     Debug_Printf("[PF] write %08X -> %u  ERRSR=%08X\r\n", (unsigned)a, (unsigned)s, (unsigned)DMU_HF_ERRSR.U);
 }
@@ -1563,6 +1661,29 @@ static void prv_CmdSotaClear(const char *args)
 /*  Command dispatch                                                  */
 /* ================================================================== */
 
+#if (FAULT_INJECT_ENABLE == 1u)
+static void prv_CmdFault(const char *args)
+{
+    args = prv_SkipSpaces(args);
+    if (prv_StrEq(args, "ss on"))
+    {
+        g_ipcShared.faultInjectSs = 1u;
+        __dsync();
+        Debug_Print("  INJECT: TLF safe state forced ON\r\n");
+    }
+    else if (prv_StrEq(args, "ss off"))
+    {
+        g_ipcShared.faultInjectSs = 0u;
+        __dsync();
+        Debug_Print("  INJECT: TLF safe state injection OFF (real SS pin)\r\n");
+    }
+    else
+    {
+        Debug_Print("  Usage: fault ss on|off\r\n");
+    }
+}
+#endif
+
 static void prv_Dispatch(const char *cmd)
 {
     const char *args;
@@ -1594,6 +1715,10 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdNvlog(args);
     else if (prv_StrEq(cmd, "fusa"))
         prv_CmdFusa();
+#if (FAULT_INJECT_ENABLE == 1u)
+    else if (((args = prv_StartsWith(cmd, "fault")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdFault(args);
+#endif
     else if (prv_StrEq(cmd, "bist"))
         prv_CmdBist();
     else if (((args = prv_StartsWith(cmd, "swaptest")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
@@ -1781,6 +1906,20 @@ void DebugCli_Poll(void)
         && (g_ipcShared.pmc.pmState == (uint32)PM_STATE_OFF))
     {
         s_autobootDone = TRUE;
+        if (prv_TlfBootCauseLatched() || prv_TlfSafeStateActive())
+        {
+            Debug_Printf("[SYS] AUTOBOOT held: TLF %s (INITERR=0x%02X SYSFAIL=0x%02X "
+                         "NORMAL=%u SS=%u). Use poweron to retry.\r\n",
+                         prv_TlfSafeStateActive() ? "safe state active"
+                                                  : "PMIC restart cause",
+                         (unsigned)g_ipcShared.fusa.tlfBootInitErr,
+                         (unsigned)g_ipcShared.fusa.tlfBootSysFail,
+                         (unsigned)g_ipcShared.fusa.tlfBootNormalOk,
+                         (unsigned)g_ipcShared.fusa.tlfSsPin);
+            NvLog_WriteU32(NVLOG_EVT_PMIC_SAFE_STATE, NVLOG_SRC_SYSTEM,
+                           NVLOG_SEV_WARNING, 0xAB0Du);
+            return;
+        }
         Debug_Print("[SYS] AUTOBOOT: requesting power on\r\n");
         NvLog_WriteU32(NVLOG_EVT_BOOT, NVLOG_SRC_SYSTEM, NVLOG_SEV_INFO, 0xAB007u);
         if (!Ipc_SendCommandWait(IPC_CMD_POWER_ON, 0u, 200u))

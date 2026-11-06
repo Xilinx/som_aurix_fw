@@ -14,8 +14,6 @@ Makefile
 tools/flasher/
 tools/toolchain/
 
-!Image/*.elf
-
 # Eclipse / ADS workspace metadata (do NOT commit these — they are machine-local)
 .metadata/
 .settings/

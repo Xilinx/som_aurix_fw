@@ -25,6 +25,7 @@
 
 static PM_State_t s_state              = PM_STATE_OFF;
 static boolean    s_powerOnReq         = FALSE;
+static boolean    s_pmicSafeState      = FALSE;
 static boolean    s_powerOffReq        = FALSE;
 static boolean    s_shutdownToOff      = FALSE;
 static volatile boolean s_thermtripIsrFlag = FALSE;
@@ -930,7 +931,12 @@ void PowerManager_Run(void)
     {
         /* ------------------------------------------------------------------ */
         case PM_STATE_OFF:
-            if (s_powerOnReq && prv_VinPwrOk())
+            if (s_powerOnReq && s_pmicSafeState)
+            {
+                Debug_Print("[PM] Power-on refused: TLF safe state active (SS low)\r\n");
+                s_powerOnReq = FALSE;
+            }
+            else if (s_powerOnReq && prv_VinPwrOk())
             {
                 /* After forced shutdown, ignore power-on requests for
                  * 2 seconds to reject button bounce on release. */
@@ -1561,6 +1567,20 @@ void PowerManager_RequestForcedOff(void)
     prv_DeassertKbrst();           /* in case forceoff arrives mid warm-reset */
     prv_DisableAllRails();
     prv_SetState(PM_STATE_OFF);
+}
+
+void PowerManager_SetPmicSafeState(boolean active)
+{
+    s_pmicSafeState = active;
+}
+
+void PowerManager_OnPmicSafeState(void)
+{
+    if (s_state == PM_STATE_OFF) { return; }
+
+    Debug_Print("[PM] TLF safe state - forcing power off\r\n");
+    s_resetCause = PM_RESET_CAUSE_PMIC;
+    PowerManager_RequestForcedOff();
 }
 
 void PowerManager_RequestWarmReset(void)
