@@ -94,7 +94,6 @@ typedef enum
     IPC_FAULT_OV            = 2u,       /* Overvoltage */
     IPC_FAULT_PMIC          = 3u,       /* TLF PMIC fault */
     IPC_FAULT_PMIC_WDT      = 4u,       /* TLF WDT miss */
-    IPC_FAULT_PMIC_SS       = 5u,       /* TLF safe state */
 } Ipc_FaultCode_t;
 
 /* ================================================================== */
@@ -183,6 +182,12 @@ typedef struct
     volatile uint8  tlfSysSf;        /* TLF SYSSF (bit1 = WWD failure)          */
     volatile uint32 tlfLastServiceMs;
     volatile uint32 tlfMaxGapMs;     /* worst interval between services         */
+    /* TLF safe state.  Kept apart from the faultSeq/faultCode slot so a
+     * UV/OV fault posted before CPU1 polls cannot overwrite it. */
+    volatile uint32 pmicSsSeq;       /* bumped per safe-state edge              */
+    volatile uint32 tlfBootInitErr;  /* INITERR at boot, before it was cleared  */
+    volatile uint32 tlfBootSysFail;  /* SYSFAIL at boot, before it was cleared  */
+    volatile uint32 tlfBootNormalOk; /* 1 if the TLF reached NORMAL at boot     */
 } Ipc_FusaStatus_t;
 
 
@@ -208,6 +213,7 @@ typedef struct
     volatile uint32    cpu3Ready;       /**< CPU3 USB-PD init done */
     volatile uint32    sysmonPause;
     volatile uint32    uartOwner;       /**< 0 CPU0, 1 CPU2 requested, 2 CPU0 stopped, 3 CPU2 */
+    volatile uint32    faultInjectSs;   /**< CPU2 CLI -> CPU0: force SS asserted (FAULT_INJECT_ENABLE) */
 } Ipc_SharedMem_t;
 
 typedef struct {

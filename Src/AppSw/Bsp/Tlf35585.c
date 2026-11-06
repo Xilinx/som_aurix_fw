@@ -65,6 +65,7 @@ static boolean                   s_wdiPinState        = FALSE;
 /* Fault monitoring */
 static Tlf35585_FaultCb_t        s_faultCb            = NULL_PTR;
 static uint32                    s_lastFaultPollMs    = 0u;
+static Tlf35585_BootCause_t      s_bootCause          = { 0u, 0u, FALSE };
 
 /* Counters */
 static uint32                    s_wwdServiceCount    = 0u;
@@ -508,6 +509,8 @@ Tlf35585_Status_t Tlf35585_Init(void)
         Tlf35585_ReadReg(TLF_RW_SYSFAIL, &sysfail);
         Debug_Printf("[TLF] Restart cause: INITERR=0x%02X SYSFAIL=0x%02X\r\n",
                      (unsigned)initerr, (unsigned)sysfail);
+        s_bootCause.initerr = initerr;
+        s_bootCause.sysfail = sysfail;
         if (initerr != 0u) Tlf35585_WriteReg(TLF_RW_INITERR, TLF_CLEAR_STATUS);
         if (sysfail != 0u) Tlf35585_WriteReg(TLF_RW_SYSFAIL, TLF_CLEAR_STATUS);
     }
@@ -544,6 +547,7 @@ Tlf35585_Status_t Tlf35585_Init(void)
         s_wdtLastServiceMs = Stm_GetTimeMs();
         s_lastFaultPollMs  = Stm_GetTimeMs();
         s_initialised      = TRUE;
+        s_bootCause.normalOk = TRUE;
         Tlf35585_LogEvent(TLF_EVT_INIT);
         Debug_Print("[TLF] Warm init complete\r\n");
         return TLF_OK;
@@ -606,6 +610,7 @@ Tlf35585_Status_t Tlf35585_Init(void)
     s_wdtLastServiceMs = Stm_GetTimeMs();
     s_lastFaultPollMs  = Stm_GetTimeMs();
     s_initialised      = TRUE;
+    s_bootCause.normalOk = TRUE;
     Tlf35585_LogEvent(TLF_EVT_INIT);
     Debug_Print("[TLF] Init complete\r\n");
     return TLF_OK;
@@ -729,8 +734,13 @@ void Tlf35585_CheckFaults(void)
     uint32 sig;
     boolean safeState;
 
+    /* Starts at 0, so a safe state already present when FuSa starts
+     * is reported as an edge on the first poll.  That is intended: it
+     * is the boot-time report of a latched safe state. */
     static uint32 s_lastFaultSig = 0u;     /* 0 = no fault condition */
 
+    /* s_initialised is set only once the TLF is in NORMAL, so this never
+     * runs while SS is low just because the TLF is still in INIT. */
     if (!s_initialised) return;
     nowMs = Stm_GetTimeMs();
     if ((nowMs - s_lastFaultPollMs) < TLF_FAULT_POLL_INTERVAL_MS) return;
@@ -764,11 +774,9 @@ void Tlf35585_CheckFaults(void)
 
             Tlf35585_LogEvent(TLF_EVT_FAULT);
 
-            /* Drive the registered fault handler.  It is set via
-             * Tlf35585_RegisterFaultCb() (the power-off path) but was never
-             * invoked here, so a TLF safe state never forced a power-off
-             * despite the Cpu0_Main comment.  Fire it once per fault edge
-             * when the PMIC has actually entered safe state. */
+            /* Once per safe-state edge.  Other SYSSF/MONSF changes are
+             * logged only; WWDE/FWDE overflow resets the MCU instead and
+             * is reported from the restart cause at the next boot. */
             if (safeState && (s_faultCb != NULL_PTR))
             {
                 s_faultCb();
@@ -810,8 +818,22 @@ boolean Tlf35585_IsErrActive(void)
 
 boolean Tlf35585_IsSafeStateActive(void)
 {
+#if (FAULT_INJECT_ENABLE == 1u)
+    if (g_ipcShared.faultInjectSs != 0u)
+    {
+        return TRUE;
+    }
+#endif
     return (IfxPort_getPinState(AppPin_GetPort(PIN_TLF_SS.portIdx),
                                 PIN_TLF_SS.pinIdx) == FALSE);
+}
+
+void Tlf35585_GetBootCause(Tlf35585_BootCause_t *pCause)
+{
+    if (pCause != NULL_PTR)
+    {
+        *pCause = s_bootCause;
+    }
 }
 
 /* ================================================================== */
@@ -835,7 +857,9 @@ void Tlf35585_LogEvent(uint8 eventType)
     Tlf35585_ReadReg(TLF_RW_SPISF,  &evt.spisf);
     
 
-    if (IfxCpu_getCoreIndex() == 0u)
+    /* NvLog belongs to CPU0 only until CPU2 takes the debug UART
+     * (uartOwner == 3).  After that, publish and let CPU2 log it. */
+    if ((IfxCpu_getCoreIndex() == 0u) && (g_ipcShared.uartOwner != 3u))
     {
         Debug_Printf("[TLF] EVT[%u] t=%ums DEV=0x%02X SYSSF=0x%02X "
                  "M1=0x%02X WDD=0x%02X IE=0x%02X WD=0x%02X SPI=0x%02X "

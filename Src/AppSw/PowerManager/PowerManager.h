@@ -50,7 +50,8 @@ typedef enum
     PM_RESET_CAUSE_HOST_REQUEST = 5u,   /* SLP_S5 or PWRBTN shutdown */
     PM_RESET_CAUSE_VOLTAGE      = 6u,   /* EVADC UV/OV fault */
     PM_RESET_CAUSE_BIOS_FAIL    = 7u,    /* BIOS ROM validation failure */
-    PM_RESET_CAUSE_COLD_RST     = 8u   /* CF9 cold reset — auto-restart after dwell */
+    PM_RESET_CAUSE_COLD_RST     = 8u,  /* CF9 cold reset — auto-restart after dwell */
+    PM_RESET_CAUSE_PMIC         = 9u   /* TLF35585 safe state */
 } PM_ResetCause_t;
 
 /**
@@ -140,6 +141,17 @@ void PowerManager_RequestColdReset(void);
  *
  */
 void PowerManager_RequestForcedOff(void);
+
+/**
+ * @brief  Current TLF safe-state level.  While TRUE every power-on
+ *         request is refused.  Called by CPU1 each loop from IPC.
+ */
+void PowerManager_SetPmicSafeState(boolean active);
+
+/**
+ * @brief  TLF safe-state edge: force the platform off (any state but OFF).
+ */
+void PowerManager_OnPmicSafeState(void);
 
 /**
  * @brief  Clear a latched fault and return to PM_STATE_OFF.
