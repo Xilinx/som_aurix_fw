@@ -373,9 +373,9 @@ void prv_ForwardVoltageWarnings(void)
     }
 }
 
-/* Print + NV-log TLF events published by CPU2 (seq/data in IPC).
- * One print and one NV entry per new event — CPU2 itself must not
- * print or touch NvLog for these (see Tlf35585_LogEvent). */
+/* Print + NV-log TLF events published by CPU0 after the UART handoff
+ * (seq/data in IPC).  One print and one NV entry per new event; CPU0
+ * must not touch NvLog once CPU2 owns it (see Tlf35585_LogEvent). */
 void prv_ForwardTlfEvents(void)
 {
     static uint32 s_lastTlfEvtSeq = 0u;
