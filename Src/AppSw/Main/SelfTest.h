@@ -1,11 +1,10 @@
 /* ================================================================== */
-/*  SelfTest.h — eval-board-only destructive self-tests               */
+/*  SelfTest.h — on-target self-tests                                 */
 /*                                                                    */
-/*  DFlash/PFlash self-tests extracted from Cpu0_Main.c.  These are   */
-/*  destructive (they erase real sectors) and know the SOTA metadata  */
-/*  layout, so they are compiled only for TARGET_EVAL_BOARD and must  */
-/*  only be called from CPU0 during Phase 2 init, after Ipc_Init()    */
-/*  (they read g_wdtOwner) and before the core-release barrier.       */
+/*  Flash tests (sota/fwup) only touch the last 16 KB sector of the   */
+/*  inactive bank, and only if that sector reads blank.  Swap is a    */
+/*  DFlash metadata round-trip.  Production and bench builds behave   */
+/*  the same; there is no SELFTEST_ALLOW_DESTRUCTIVE flag.            */
 /* ================================================================== */
 #ifndef SELFTEST_H
 #define SELFTEST_H
@@ -37,8 +36,11 @@ void prv_CommitSotaOnce(void);
 boolean prv_WaitForCores(uint32 timeoutMs);
 
 uint32 SelfTest_RunAll(void);
- 
-/** Individual tests — return 0 on pass, 1 on fail. */
+
+/** Returned instead of 0 when a test is skipped (not a pass, not a fail). */
+#define SELFTEST_SKIP           0xFFFFFFFFu
+
+/** Individual tests — return 0 on pass, SELFTEST_SKIP if skipped, else fail count. */
 uint32 SelfTest_Crc(void);
 uint32 SelfTest_Sota(void);
 uint32 SelfTest_Swap(void);

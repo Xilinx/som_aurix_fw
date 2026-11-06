@@ -897,9 +897,67 @@ static void prv_CmdPin(void)
 }
 
 
+static boolean prv_RangeOverlaps(uint32 a, uint32 aLen, uint32 b, uint32 bLen)
+{
+    return (a < (b + bLen)) && (b < (a + aLen));
+}
+
+/* Refuse firmware image area of both banks.  The only allowed PFlash
+ * test window is the last 16 KB sector of the inactive bank. */
+static boolean prv_CliFlashAddrBlocked(uint32 addr, uint32 len)
+{
+    uint32 aImgLen = PFLASH_BANK_A_SIZE - PFLASH_SECTOR_SIZE;
+    uint32 bImgLen = PFLASH_BANK_B_SIZE - PFLASH_SECTOR_SIZE;
+    uint32 inactive;
+    uint32 inactSize;
+    uint32 inactTail;
+    uint32 active;
+    uint32 actSize;
+    uint32 actTail;
+
+    if (prv_RangeOverlaps(addr, len, PFLASH_BANK_A_BASE, aImgLen) ||
+        prv_RangeOverlaps(addr, len, PFLASH_BANK_B_BASE, bImgLen))
+    {
+        Debug_Print("[PF] refused: address is in a firmware image area\r\n"
+                    "     (only the last 16 KB of the inactive bank is allowed)\r\n");
+        return TRUE;
+    }
+
+    inactive = Swap_GetInactiveBase();
+    if (inactive == 0u)
+    {
+        Debug_Print("[PF] refused: active bank unknown (ADDRCFG)\r\n");
+        return TRUE;
+    }
+
+    inactSize = (inactive == PFLASH_BANK_A_BASE) ? PFLASH_BANK_A_SIZE
+                                                 : PFLASH_BANK_B_SIZE;
+    inactTail = (inactive + inactSize) - PFLASH_SECTOR_SIZE;
+    if (prv_RangeOverlaps(addr, len, inactTail, PFLASH_SECTOR_SIZE))
+    {
+        return FALSE;
+    }
+
+    active  = (inactive == PFLASH_BANK_A_BASE) ? PFLASH_BANK_B_BASE
+                                               : PFLASH_BANK_A_BASE;
+    actSize = (active == PFLASH_BANK_A_BASE) ? PFLASH_BANK_A_SIZE
+                                             : PFLASH_BANK_B_SIZE;
+    actTail = (active + actSize) - PFLASH_SECTOR_SIZE;
+    if (prv_RangeOverlaps(addr, len, actTail, PFLASH_SECTOR_SIZE))
+    {
+        Debug_Print("[PF] refused: last sector of the running bank\r\n");
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
 {
     uint32 a = (uint32)strtoul(args, NULL, 16);
+    if (prv_CliFlashAddrBlocked(a, PFLASH_SECTOR_SIZE))
+    {
+        return;
+    }
     Debug_Printf("[PF] pre  STATUS=%08X ERRSR=%08X\r\n", (unsigned)DMU_HF_STATUS.U, (unsigned)DMU_HF_ERRSR.U);
     PFlash_Status_t s = PFlash_EraseSector(a);
     Debug_Printf("[PF] erase %08X -> %u  post STATUS=%08X ERRSR=%08X\r\n",
@@ -909,8 +967,12 @@ static void prv_CmdPfErase(const char *args)       /* pferase <addr> */
 static void prv_CmdPfWrite(const char *args)       /* pfwrite <addr>: writes 0x5A-filled 256 B */
 {
     static uint8 buf[256] __attribute__((aligned(4)));
-    memset(buf, 0x5A, sizeof(buf));
     uint32 a = (uint32)strtoul(args, NULL, 16);
+    if (prv_CliFlashAddrBlocked(a, PFLASH_BURST_SIZE))
+    {
+        return;
+    }
+    memset(buf, 0x5A, sizeof(buf));
     PFlash_Status_t s = PFlash_WritePage256(a, buf);
     Debug_Printf("[PF] write %08X -> %u  ERRSR=%08X\r\n", (unsigned)a, (unsigned)s, (unsigned)DMU_HF_ERRSR.U);
 }
