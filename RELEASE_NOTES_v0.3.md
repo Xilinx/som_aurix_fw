@@ -18,6 +18,10 @@ integrates the reviewed PRs merged into `v0.3-testing`:
   to the x86 SoC for the BIOS console until the next AURIX reset. The automatic
   hand-off after System ON from PR #9 (`PM_UART_HANDOFF_AFTER_ON_MS`) is kept
   but now defaults to `0u` (off), for the v0.4 dedicated Ryzen-AURIX UART.
+- **UCB_SWAP table full** — the 16-entry swap table is erased only when full and
+  only after the user confirms at the `fwswap` prompt (UCB flash endures ~100
+  erase/program cycles); the last entry stays free for the automatic rollback.
+  `status` / `swaptest` show the entries used.
 - **FuSa SPI (PR #4 / PR #5)** — register map populated at version 1.1.0; frame
   length corrected to 32 bits and an idle slave is re-armed after an SPI error.
 - **Version / cleanup (PR #8)** — firmware version reported as v0.3

@@ -88,6 +88,7 @@ static boolean s_autobootArmed = (AUTOBOOT_DEFAULT != 0u);
 static boolean s_autobootDone  = FALSE;   /* one shot per AURIX boot      */
 static uint32  s_cliUpMs       = 0u;
 static uint32  s_onSeenMs      = 0u;
+static boolean s_fwswapEraseAsked = FALSE;   /* next line answers "Erase OTA swap table?" */
 
 
 /* ================================================================== */
@@ -264,6 +265,8 @@ static void prv_CmdStatus(void)
     Debug_Printf("  ADDRCFG:  %u  (SWAPCTRL=0x%08X)\r\n",
                  (unsigned)SCU_SWAPCTRL.B.ADDRCFG,
                  (unsigned)SCU_SWAPCTRL.U);
+    Debug_Printf("  UCB_SWAP: %u/%u entries used\r\n",
+                 (unsigned)Swap_EntriesUsed(), (unsigned)SWAP_NUM_ENTRIES);
     Debug_Print("=====================\r\n");
     Debug_Printf("  BootTrace: this=0x%08X prev=0x%08X\r\n",
                 (unsigned)g_bootTrace, (unsigned)g_prevBootTrace);
@@ -687,6 +690,8 @@ static void prv_CmdSwapTest(const char *args)
     /* Always dump, scanning every slot; the helper stops at the first erased entry */
     dumpSwapBlock("ORIG", UCB_SWAP_ORIG_BASE, UCB_NUM_ENTRIES - 1u);
     dumpSwapBlock("COPY", UCB_SWAP_COPY_BASE, UCB_NUM_ENTRIES - 1u);
+    Debug_Printf("[SWAP] %u/%u entries used\r\n",
+                 (unsigned)Swap_EntriesUsed(), (unsigned)SWAP_NUM_ENTRIES);
 
     if (target == 0u)
     {
@@ -1627,19 +1632,20 @@ static void prv_CmdPfDump(const char *args)
     Debug_Print("\r\n");
 }
 
-static void prv_CmdFwSwap(const char *args)
+/* TRUE if a verified update is staged in the unmapped bank; *pTarget = its bank. */
+static boolean prv_FwSwapStaged(uint8 *pTarget)
 {
     DFlash_SotaMeta_t meta;
     uint8 active = Swap_GetActiveBank();
     uint8 target = (active == SWAP_BANK_A) ? SWAP_BANK_B : SWAP_BANK_A;
 
-    if (active == 0u) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return; }
+    if (active == 0u) { Debug_Print("[FWSWAP] active bank unknown - refusing\r\n"); return FALSE; }
 
     if ((DFlash_ReadSotaMeta(&meta) != DFLASH_OK) || (meta.magic != DFLASH_SOTA_MAGIC) ||
         (meta.pendingUpdate != 1u) || ((uint8)meta.activeBank != target))
     {
         Debug_Print("[FWSWAP] no verified update staged in the other bank - refusing\r\n");
-        return;
+        return FALSE;
     }
     /* CRC via the CPU map (0xA0600000 = unmapped bank).  Do not use the
      * physical inactive base — when B is running that is 0xA0000000, which
@@ -1650,6 +1656,51 @@ static void prv_CmdFwSwap(const char *args)
     {
         Debug_Printf("[FWSWAP] staged image CRC mismatch at logical 0x%08X - refusing\r\n",
                      (unsigned)stagedBase);
+        return FALSE;
+    }
+    *pTarget = target;
+    return TRUE;
+}
+
+/* Answer to the "Erase OTA swap table?" prompt (the line after fwswap). */
+static void prv_FwSwapEraseAnswer(const char *answer)
+{
+    uint8 target;
+
+    if (!prv_StrEq(answer, "yes"))
+    {
+        Debug_Print("[FWSWAP] cancelled - UCB_SWAP not erased, update not applied\r\n");
+        return;
+    }
+    if (!prv_FwSwapStaged(&target)) { return; }
+
+    /* Entry 0 of the rebuilt table selects the staged bank, so the erase is
+     * followed by the normal update path: reset, then BootValid/POST commit. */
+    if (Swap_ResetTable(target) != SWAP_OK)
+    {
+        Debug_Print("[FWSWAP] UCB_SWAP erase failed - update not applied\r\n");
+        return;
+    }
+    Debug_Print("[FWSWAP] entry 0 written, resetting...\r\n");
+    Debug_FlushBlocking();
+    Swap_TriggerSystemReset();
+}
+
+static void prv_CmdFwSwap(const char *args)
+{
+    uint8 target;
+
+    if (!prv_FwSwapStaged(&target)) { return; }
+
+    if (Swap_TableFullForUpdate())
+    {
+        Debug_Printf("[FWSWAP] Update refused: UCB_SWAP table full (%u/%u entries used, "
+                     "%u kept for automatic rollback)\r\n",
+                     (unsigned)Swap_EntriesUsed(), (unsigned)SWAP_NUM_ENTRIES,
+                     (unsigned)SWAP_ROLLBACK_RESERVE);
+        Debug_Print("[FWSWAP] Erasing it uses 1 of ~100 UCB erase cycles (flash endurance).\r\n"
+                    "[FWSWAP] Erase OTA swap table and apply the update? Type 'yes' to confirm:\r\n");
+        s_fwswapEraseAsked = TRUE;
         return;
     }
     Swap_Status_t ss = Swap_ChangeMode(target);
@@ -1707,6 +1758,13 @@ static void prv_CmdFault(const char *args)
 static void prv_Dispatch(const char *cmd)
 {
     const char *args;
+
+    if (s_fwswapEraseAsked)
+    {
+        s_fwswapEraseAsked = FALSE;
+        prv_FwSwapEraseAnswer(cmd);
+        return;
+    }
 
     if (cmd[0] == '\0')
         return;

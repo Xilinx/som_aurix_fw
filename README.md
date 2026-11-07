@@ -280,7 +280,8 @@ PFlash A/B bank management with UART-based transfer protocol:
 - **DFlash metadata:** SOTA metadata (magic, pending flag, boot counter, image CRC, active bank)
 - **Transfer protocol:** SYNC→HEADER→erase→DATA chunks→verify→commit, per-chunk CRC-32 with retry
 - **BootValid:** checks pending update on startup, increments boot counter, commits after PM_STATE_ON reached, 3-retry automatic revert
-- **Swap controller:** reads current bank configuration
+- **Swap controller:** reads current bank configuration; each `fwswap` or automatic rollback writes the next of the 16 UCB_SWAP entries
+- **UCB_SWAP table full:** UCB flash endures ~100 erase/program cycles per UCB (500 for all UCBs together), so the table is erased only when it is full and only on request, giving ~16 × 100 swaps over the device life. `fwswap` leaves the last entry for the automatic rollback (`SWAP_ROLLBACK_RESERVE`), so at 15/16 used it refuses the update and asks `Erase OTA swap table and apply the update? Type 'yes' to confirm`. On `yes` it rebuilds UCB_SWAP_COPY, then UCB_SWAP_ORIG, with entry 0 = the staged bank (logged as `NVLOG_EVT_SWAP_TABLE_RESET`), and resets into the update as usual; anything else cancels with nothing erased. `status` and `swaptest` show the entries used, and a swap that leaves 2 or fewer entries prints a warning. A board already at 16/16 running older firmware cannot activate an OTA image (activating it needs a swap), so reprogram it once with a debugger (AURIXFlasher `-ucb on` with the provision hex)
 - **POST integrity check:** CRC-32 of active PFlash bank at boot vs stored reference
 - **Recovery mode:** RSTBTN# held at boot enters dedicated update loop without starting the Ryzen
 - **Python upload script:** `aurix_update.py` (pyserial) for pushing firmware from Ryzen or external PC

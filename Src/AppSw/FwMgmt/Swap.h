@@ -9,10 +9,11 @@
  * reset).  The SSW evaluates UCB_SWAP_ORIG for the latest valid
  * marker entry and installs the corresponding address map.
  *
- * UCB_SWAP has 16 marker entry slots.  Each swap consumes one
- * slot (invalidate previous + write new).  When all 16 are used
- * the entire UCB_SWAP sector is erased and the next entry is
- * written at index 0.
+ * UCB_SWAP has 16 marker entry slots.  Each swap (fwswap or an
+ * automatic rollback) writes the next free slot.  A full table is
+ * never erased automatically: UCB flash endures ~100 erase/program
+ * cycles, so the erase is a confirmed user action (CLI fwswap ->
+ * Swap_ResetTable), which rewrites entry 0 with the target bank.
  *
  * WARNING: Incorrect UCB writes can permanently brick the device.
  * Always write UCB_SWAP_COPY before UCB_SWAP_ORIG.
@@ -38,6 +39,15 @@
 /* Number of marker entry slots in UCB_SWAP */
 #define SWAP_NUM_ENTRIES    16u
 
+/* Entries fwswap leaves free for the automatic rollback in BootValid,
+ * which runs at boot with no user to confirm a table erase. */
+#ifndef SWAP_ROLLBACK_RESERVE
+#define SWAP_ROLLBACK_RESERVE   1u
+#endif
+
+/* Warn after a swap once this many entries (or fewer) are left. */
+#define SWAP_LOW_ENTRIES_WARN   2u
+
 /* ------------------------------------------------------------------ */
 /*  Status / debug info                                               */
 /* ------------------------------------------------------------------ */
@@ -48,6 +58,7 @@ typedef enum
     SWAP_ERR_INVALID_BANK = 2,   /* targetBank not 0x55 or 0xAA       */
     SWAP_ERR_UCB_WRITE    = 3,   /* UCB write/erase failed            */
     SWAP_ERR_FULL         = 4,   /* all 16 swap entries used          */
+    SWAP_ERR_NOT_FULL     = 5,   /* table reset refused: room left    */
 } Swap_Status_t;
 
 /* ------------------------------------------------------------------ */
@@ -114,12 +125,10 @@ uint32 Swap_InactivePhysToLogical(uint32 physAddr);
 /**
  * @brief  Write a new UCB_SWAP marker to select the given bank.
  *
- * Follows the [SOTA-DEMO] strategy:
- *   1. Read current marker index from SCU_STMEM1.SWAP_DW_INDEX
- *   2. Invalidate the current entry (write 0xFFFFFFFF to CONFIRMATION)
- *   3. Write new marker at next index with targetBank + CONFIRMATION
- *   4. If index would exceed 15, erase UCB_SWAP and write at 0
- *   5. Mirror to UCB_SWAP_COPY
+ * Writes targetBank + CONFIRMATION to the first erased entry, COPY
+ * before ORIG.  The free entry is found from the UCB itself (verify-
+ * erased), not from STMEM1.  Warns when SWAP_LOW_ENTRIES_WARN or fewer
+ * entries are left.  Never erases: a full table returns SWAP_ERR_FULL.
  *
  * Does NOT trigger a reset — call Swap_TriggerSystemReset() after.
  *
@@ -128,14 +137,28 @@ uint32 Swap_InactivePhysToLogical(uint32 physAddr);
  */
 Swap_Status_t Swap_ChangeMode(uint8 targetBank);
 
+/** Number of programmed UCB_SWAP entries (0..16). */
+uint32 Swap_EntriesUsed(void);
+
+/** TRUE when fwswap has no entry left (SWAP_ROLLBACK_RESERVE kept free). */
+boolean Swap_TableFullForUpdate(void);
+
+/**
+ * @brief  Erase UCB_SWAP and rewrite entry 0 = bank (user-confirmed only).
+ *
+ * Refuses (SWAP_ERR_NOT_FULL) unless Swap_TableFullForUpdate().  Rebuilds
+ * COPY, reads it back, then ORIG, each block exactly as provisioned by
+ * tools/gen_ucb_swap.py.  Logs NVLOG_EVT_SWAP_TABLE_RESET.  Costs one of
+ * ~100 erase/program cycles of each UCB.  Does NOT reset.
+ */
+Swap_Status_t Swap_ResetTable(uint8 bank);
+
 /**
  * @brief  Trigger a system reset so SSW re-evaluates UCB_SWAP.
  *
  * Uses the SCU system reset request.  This function does not return.
  */
 void Swap_TriggerSystemReset(void) __attribute__((noreturn));
-
-Swap_Status_t Swap_EraseAll(void);
 
 uint8 Swap_GetActiveBank(void);      /* bank the SSW mapped at 0xA0000000: 0x55 / 0xAA, or 0 if unknown */
 
