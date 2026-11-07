@@ -1476,6 +1476,17 @@ void PowerManager_Run(void)
                 else if ((Stm_GetTimeMs() - s_retryDelayStartMs) >= PM_RETRY_DELAY_MS)
                 {
                     s_retryDelayActive = FALSE;
+                    /* Rails are already down here.  Park in OFF so the OFF
+                     * gate keeps refusing power-on until SS clears. */
+                    if (s_pmicSafeState)
+                    {
+                        Debug_Print("[PM] Retry cancelled: TLF safe state active (SS low)\r\n");
+                        s_retryCount   = 0u;
+                        s_pendingCause = PM_RESET_CAUSE_NONE;
+                        s_resetCause   = PM_RESET_CAUSE_PMIC;
+                        prv_SetState(PM_STATE_OFF);
+                        break;
+                    }
                     Debug_Printf("[PM] Retrying power-on (attempt %u)...\r\n",
                                 (unsigned)s_retryCount);
                     prv_SetState(PM_STATE_POWER_UP);

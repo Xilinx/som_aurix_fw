@@ -118,6 +118,12 @@ else
     BOARD_DEFINE += -DTARGET_GP_SOM=1
 endif
 
+# Validation images only: make FAULT_INJECT_ENABLE=1 adds the TLF fault-injection CLI
+FAULT_INJECT_ENABLE ?= 0
+ifeq ($(FAULT_INJECT_ENABLE),1)
+    BOARD_DEFINE += -DFAULT_INJECT_ENABLE=1u
+endif
+
 ALL_SRCS    := $(APP_SRCS) $(ILLD_SRCS)
 
 # Collect .S / .sx startup assembly files (iLLD startup code)
