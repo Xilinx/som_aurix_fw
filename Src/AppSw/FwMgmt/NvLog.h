@@ -96,6 +96,7 @@ typedef enum
     NVLOG_EVT_FWUPDATE_START    = 0x80u,    /* FW update started */
     NVLOG_EVT_FWUPDATE_OK       = 0x81u,    /* FW update completed */
     NVLOG_EVT_FWUPDATE_FAIL     = 0x82u,    /* FW update failed */
+    NVLOG_EVT_SWAP_TABLE_RESET  = 0x83u,    /* UCB_SWAP erased (user-confirmed); data = bank, 0x100/0x200 = COPY/ORIG fail */
 
     NVLOG_EVT_SLOT_SEALED       = 0xFEu,    /* Slot sealed (last event in slot) */
     NVLOG_EVT_MARKER            = 0xFFu,    /* Placeholder / marker */

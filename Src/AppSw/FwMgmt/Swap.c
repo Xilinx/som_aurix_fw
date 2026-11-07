@@ -6,17 +6,23 @@
  * Addresses from the TC38x User Manual:
  *
  *   UCB_SWAP_ORIG  : 0xAF402E00  (UCB sector 23)
- *   UCB_SWAP_COPY  : 0xAF406E00  (UCB sector 23 copy)
+ *   UCB_SWAP_COPY  : 0xAF403E00  (as provisioned by tools/gen_ucb_swap.py)
  *
  * Each UCB_SWAP block has 16 entries, each entry is 16 bytes:
  *   Offset +0x00 : MARKERLx     (swap mode: 0x55=A, 0xAA=B)
  *   Offset +0x04 : MARKERHx     (address of MARKERLx for validity)
  *   Offset +0x08 : CONFIRMATIONLx (0x57B5327F = confirmed)
  *   Offset +0x0C : CONFIRMATIONHx (address of CONFIRMATIONLx)
+ * and the UCB confirmation at +0x1F0 (0x43211234 UNLOCKED, then 0).
  *
  * The SSW scans entries 0..15 and uses the LAST one with a valid
  * CONFIRMATION.  Invalidation is done by writing 0xFFFFFFFF to
  * CONFIRMATIONLx (breaks the confirmation code check).
+ *
+ * Endurance: ~100 erase/program cycles per UCB, 500 for all UCBs together
+ * (TC38x data sheet).  Entries are used round-robin, so the table is only
+ * erased once it is full (~16 x 100 swaps over the device life), and only
+ * as a confirmed user action (Swap_ResetTable via CLI fwswap).
  */
 
 #include "Swap.h"
@@ -26,6 +32,7 @@
 #include "IfxCpu.h"
 #include "Uart_Debug.h"
 #include "IfxScuRcu.h"
+#include "NvLog.h"
 
 
 #include "IfxScu_reg.h"
@@ -44,6 +51,10 @@
 #define OFF_MARKERH             0x04U
 #define OFF_CONFIRML            0x08U
 #define OFF_CONFIRMH            0x0CU
+
+/* UCB confirmation word, identical to the factory block */
+#define OFF_UCB_CONFIRM         0x1F0U
+#define UCB_CONFIRM_UNLOCKED    0x43211234U
 
 /* DFlash page size — UCB writes use the same 8-byte page mechanism */
 #define DFLASH_PAGE             8U
@@ -204,9 +215,28 @@ uint32 Swap_InactivePhysToLogical(uint32 physAddr)
     return logBase + (physAddr - physBase);
 }
 
+/* Next free slot = first entry whose MARKER page is erased.
+ * Derived from the UCB itself, not from STMEM1. */
+uint32 Swap_EntriesUsed(void)
+{
+    uint32 n = 0u;
+
+    while ((n < SWAP_NUM_ENTRIES) &&
+           ucbPageProgrammed(UCB_SWAP_ORIG_BASE + (n * UCB_ENTRY_SIZE)))
+    {
+        n++;
+    }
+    return n;
+}
+
+boolean Swap_TableFullForUpdate(void)
+{
+    return (Swap_EntriesUsed() >= (SWAP_NUM_ENTRIES - SWAP_ROLLBACK_RESERVE));
+}
+
 Swap_Status_t Swap_ChangeMode(uint8 targetBank)
 {
-    uint32  next = 0u;
+    uint32  next;
     boolean irq, ok;
 
     if (targetBank != SWAP_BANK_A && targetBank != SWAP_BANK_B)
@@ -215,16 +245,11 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank)
         return SWAP_ERR_INVALID_BANK;
     }
 
-    /* Next free slot = first entry whose MARKER page is erased.
-     * Derived from the UCB itself, not from STMEM1.                   */
-    while (next < SWAP_NUM_ENTRIES &&
-           ucbPageProgrammed(UCB_SWAP_ORIG_BASE + next * UCB_ENTRY_SIZE))
-    {
-        next++;
-    }
+    next = Swap_EntriesUsed();
     if (next >= SWAP_NUM_ENTRIES)
     {
-        Debug_Print("[SWAP] all 16 entries used - run Swap_EraseAll first\r\n");
+        Debug_Printf("[SWAP] UCB_SWAP table full (%u/%u entries used)\r\n",
+                     (unsigned)next, (unsigned)SWAP_NUM_ENTRIES);
         return SWAP_ERR_FULL;
     }
 
@@ -241,6 +266,12 @@ Swap_Status_t Swap_ChangeMode(uint8 targetBank)
         Debug_Print("[SWAP] UCB write failed\r\n");
         return SWAP_ERR_UCB_WRITE;
     }
+    if ((SWAP_NUM_ENTRIES - (next + 1u)) <= SWAP_LOW_ENTRIES_WARN)
+    {
+        Debug_Printf("[SWAP] WARNING: %u of %u UCB_SWAP entries left; when the table is "
+                     "full, fwswap asks before erasing it\r\n",
+                     (unsigned)(SWAP_NUM_ENTRIES - (next + 1u)), (unsigned)SWAP_NUM_ENTRIES);
+    }
     return SWAP_OK;
 }
 
@@ -254,22 +285,62 @@ void Swap_TriggerSystemReset(void)
     for (;;) {}                              /* not reached */
 }
 
-Swap_Status_t Swap_EraseAll(void)
+/* Erase one UCB_SWAP block and rebuild it as tools/gen_ucb_swap.py
+ * provisions it: entry 0 = bank, UCB confirmation = UNLOCKED. */
+static boolean prv_RebuildBlock(uint32 base, uint8 bank)
 {
     boolean irq = IfxCpu_disableInterrupts();
-    boolean ok;
+    boolean ok  = ucbEraseSector(base) &&
+                  writeEntry(base, 0u, (uint32)bank) &&
+                  ucbWritePage(base + OFF_UCB_CONFIRM, UCB_CONFIRM_UNLOCKED, 0u);
+    IfxCpu_restoreInterrupts(irq);
 
-    Debug_Print("[SWAP] Erasing UCB_SWAP...\r\n");
-    ok = ucbEraseSector(UCB_SWAP_COPY_BASE) && ucbEraseSector(UCB_SWAP_ORIG_BASE);
-    if (ok)
+    return ok &&
+           (MEM32(base + OFF_MARKERL)  == (uint32)bank) &&
+           (MEM32(base + OFF_CONFIRML) == SWAP_CONFIRMATION) &&
+           (MEM32(base + OFF_UCB_CONFIRM) == UCB_CONFIRM_UNLOCKED);
+}
+
+Swap_Status_t Swap_ResetTable(uint8 bank)
+{
+    uint32 used = Swap_EntriesUsed();
+
+    if ((bank != SWAP_BANK_A) && (bank != SWAP_BANK_B))
     {
-        ok = writeEntry(UCB_SWAP_COPY_BASE, 0u, (uint32)SWAP_BANK_A) &&
-             writeEntry(UCB_SWAP_ORIG_BASE, 0u, (uint32)SWAP_BANK_A);
+        return SWAP_ERR_INVALID_BANK;
+    }
+    /* Each erase costs one of ~100 cycles: never erase a table with room left. */
+    if (used < (SWAP_NUM_ENTRIES - SWAP_ROLLBACK_RESERVE))
+    {
+        Debug_Printf("[SWAP] table not full (%u/%u) - not erasing\r\n",
+                     (unsigned)used, (unsigned)SWAP_NUM_ENTRIES);
+        return SWAP_ERR_NOT_FULL;
     }
 
-    IfxCpu_restoreInterrupts(irq);
-    Debug_Printf("[SWAP] UCB_SWAP reset: %s\r\n", ok ? "OK" : "FAILED");
-    return ok ? SWAP_OK : SWAP_ERR_UCB_WRITE;
+    /* COPY first, ORIG only once COPY reads back good: a power loss or
+     * failure at any step leaves at least one block with a valid entry. */
+    Debug_Printf("[SWAP] erasing UCB_SWAP (%u/%u used), entry 0 = 0x%02X\r\n",
+                 (unsigned)used, (unsigned)SWAP_NUM_ENTRIES, (unsigned)bank);
+    if (!prv_RebuildBlock(UCB_SWAP_COPY_BASE, bank))
+    {
+        Debug_Print("[SWAP] COPY rebuild failed - ORIG untouched\r\n");
+        NvLog_WriteU32(NVLOG_EVT_SWAP_TABLE_RESET, NVLOG_SRC_FWUPDATE,
+                       NVLOG_SEV_ERROR, 0x100u | bank);
+        return SWAP_ERR_UCB_WRITE;
+    }
+    if (!prv_RebuildBlock(UCB_SWAP_ORIG_BASE, bank) || (Swap_GetCurrentBank() != bank))
+    {
+        Debug_Print("[SWAP] ORIG rebuild failed - COPY holds entry 0\r\n");
+        NvLog_WriteU32(NVLOG_EVT_SWAP_TABLE_RESET, NVLOG_SRC_FWUPDATE,
+                       NVLOG_SEV_ERROR, 0x200u | bank);
+        return SWAP_ERR_UCB_WRITE;
+    }
+
+    Debug_Print("[SWAP] UCB_SWAP table reset OK\r\n");
+    NvLog_WriteU32(NVLOG_EVT_SWAP_TABLE_RESET, NVLOG_SRC_FWUPDATE,
+                   NVLOG_SEV_WARNING, bank);
+    (void)NvLog_Flush();
+    return SWAP_OK;
 }
 
 boolean Swap_PageProgrammed(uint32 pageAddr)
