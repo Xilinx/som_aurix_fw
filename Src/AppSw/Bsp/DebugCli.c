@@ -194,6 +194,7 @@ static void prv_CmdHelp(void)
         "  uptime      Seconds since boot\r\n"
         "  version     Firmware version\r\n"
         "  help        This message\r\n"
+        "  swap uart   Hand the shared UART to the x86 SoC until AURIX reset\r\n"
         "  selftest    Usage: selftest [all|crc|sota|swap|fusa|pm|usbpd|fwup] \r\n"
 #if (FAULT_INJECT_ENABLE == 1u)
         "  fault ss on|off  Inject TLF safe state (test build only)\r\n"
@@ -486,16 +487,35 @@ static void prv_CmdTemp(void)
     Debug_Print("  APU temp: read via 'status' (SB-TSI polled in SysMonitor)\r\n");
 }
 
+/* One shot per AURIX boot: CPU1 latches the mux (P14.6 LOW) so the power
+ * manager stops reclaiming it on shutdown/reset, and this port can no
+ * longer reach the CLI to undo it. */
+static void prv_UartToSoc(void)
+{
+    Debug_Print("  UART MUX -> x86 SoC until the next AURIX reset.\r\n"
+                "  The AURIX CLI is unreachable on this port from now on.\r\n");
+    Debug_FlushBlocking();
+    if (!Ipc_SendCommandWait(IPC_CMD_UART_TO_SOC, 0u, 200u))
+    {
+        Debug_Print("  ERROR: CPU1 did not ack - UART stays with the AURIX\r\n");
+    }
+}
+
+static void prv_CmdSwap(const char *args)
+{
+    const char *a = prv_SkipSpaces(args);
+    if (prv_StrEq(a, "uart"))
+        prv_UartToSoc();
+    else
+        Debug_Print("  usage: swap uart\r\n");
+}
+
 static void prv_CmdMux(const char *args)
 {
     const char *a = prv_SkipSpaces(args);
     if (prv_StrEq(a, "apu"))
     {
-        Debug_Print("  UART MUX -> APU. CLI unreachable on this port;\r\n"
-                    "  use side UART or reset to return.\r\n");
-        Stm_DelayMs(20u);                    /* let the warning flush */
-        IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
-                          PIN_UART_MUX_SEL.pinIdx);   /* check polarity! */
+        prv_UartToSoc();
     }
     else if (prv_StrEq(a, "aurix"))
     {
@@ -1781,6 +1801,8 @@ static void prv_Dispatch(const char *cmd)
         prv_CmdSysmon(args);
     else if (((args = prv_StartsWith(cmd, "mux")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         prv_CmdMux(args);
+    else if (((args = prv_StartsWith(cmd, "swap")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdSwap(args);
     else if (((args = prv_StartsWith(cmd, "test-nvlog")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
         SelfTest_NvLogStress();
     else if (((args = prv_StartsWith(cmd, "i2cprobe")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))

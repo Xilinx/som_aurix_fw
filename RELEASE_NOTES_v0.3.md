@@ -13,10 +13,11 @@ integrates the reviewed PRs merged into `v0.3-testing`:
   rings are reset before CPU0's first print; the ASCLIN4 transfer UART gets its
   own interrupt priorities; the UART flush at handoff keeps the TLF window
   watchdog serviced.
-- **Optional UART hand-off (PR #9)** — after System ON the shared UART can be
-  handed to the x86 SoC for the BIOS console (`PM_UART_HANDOFF_AFTER_ON_MS`).
-  Build with `-DPM_UART_HANDOFF_AFTER_ON_MS=0u` to keep the AURIX console for
-  CLI/OTA.
+- **UART hand-off on request** — the AURIX keeps the shared UART by default, so
+  the CLI and CLI OTA stay available. CLI `swap uart` (alias `mux apu`) hands it
+  to the x86 SoC for the BIOS console until the next AURIX reset. The automatic
+  hand-off after System ON from PR #9 (`PM_UART_HANDOFF_AFTER_ON_MS`) is kept
+  but now defaults to `0u` (off), for the v0.4 dedicated Ryzen-AURIX UART.
 - **FuSa SPI (PR #4 / PR #5)** — register map populated at version 1.1.0; frame
   length corrected to 32 bits and an idle slave is re-armed after an SPI error.
 - **Version / cleanup (PR #8)** — firmware version reported as v0.3

@@ -67,7 +67,7 @@ build prints `Fault injection:  OFF` and has no `fault` command.
 
 - **OTA safety** — revert swaps bank before clearing metadata; commit only after POST passes; metadata read-back verify; flash self-tests skipped while an update is pending
 - **Boot / IPC** — volatile core-barrier read fixes the Release (`-O2`) boot hang; early UART-owner/ring reset; dedicated ASCLIN4 interrupt priorities; TLF window serviced during the UART flush
-- **Optional UART hand-off** — shared UART can move to the x86 BIOS console after System ON (`PM_UART_HANDOFF_AFTER_ON_MS`; build with `=0u` to keep the AURIX console)
+- **UART hand-off on request** — the AURIX keeps the shared UART; CLI `swap uart` hands it to the x86 BIOS console until the next AURIX reset. The automatic hand-off after System ON (`PM_UART_HANDOFF_AFTER_ON_MS`) is kept but off by default
 - **FuSa SPI** — register map populated (v1.1.0); 32-bit frame length and idle-slave re-arm after an SPI error
 - **Version** — firmware reports v0.3 (`FUSA_FW_VERSION = 0x00030000`, CLI and boot banner)
 
@@ -237,9 +237,11 @@ The ASCLIN0 debug UART is shared between the AURIX and the x86 SoC via a board-l
 - **UART_MUX_SEL = 1 (HIGH):** AURIX owns the UART (power-on through SYS_RESET_L release)
 - **UART_MUX_SEL = 0 (LOW):** x86 SoC owns the UART (after SYS_RESET_L is deasserted)
 
-By default (`PM_UART_HANDOFF_AFTER_ON_MS 1u` in `Platform_Cfg.h`) the UART is handed to the x86 SoC right after `System ON`, so the BIOS console is visible. The AURIX keeps its console through `System ON`, then prints `[PM] UART MUX -> x86 SoC (AURIX console goes quiet)` and drives UART_MUX_SEL low as soon as everything the AURIX printed has left the UART (a few tens of ms; 300 ms at the latest). BIOS output in that short window is lost. The value is the minimum delay after ON before the handoff starts. The AURIX console and CLI are unreachable on this port afterwards, and the mux returns to the AURIX when the power manager leaves ON (shutdown, S3, reset) or in recovery mode (RSTBTN# held at power-on, where the power manager never starts).
+By default the AURIX keeps the UART for the whole run, so the CLI (and CLI firmware updates over ASCLIN0) stays available.
 
-- To keep the AURIX console for the whole run, for example for CLI firmware updates over ASCLIN0, build with `-DPM_UART_HANDOFF_AFTER_ON_MS=0u`.
+**Handing the UART to the x86 SoC: `swap uart`.** The CLI command `swap uart` (alias `mux apu`) prints a last message, flushes the console and drives UART_MUX_SEL low. It is one shot per AURIX boot: the mux stays with the SoC through x86 shutdown, S3, warm/cold reset and faults, so the BIOS console survives x86 reboots. The AURIX CLI is unreachable on this port afterwards; reset or power-cycle the AURIX to get it back (recovery mode, RSTBTN# held at power-on, also starts with the AURIX console).
+
+- **Automatic handoff (dormant, PR #9).** `PM_UART_HANDOFF_AFTER_ON_MS` in `Platform_Cfg.h` now defaults to `0u` (off). A non-zero value restores the automatic handoff a few ms after `System ON`, with the mux returning to the AURIX when the power manager leaves ON. It is kept for the v0.4 dedicated Ryzen-AURIX UART. Enable with `-DCMAKE_C_FLAGS=-DPM_UART_HANDOFF_AFTER_ON_MS=1u` (a plain `cmake -D` does not reach the compiler).
 - `PM_MUX_FOLLOW_POWER 1u` (off by default) hands the UART over earlier, before the SoC starts: the BIOS sees all of its output and the AURIX console is silent from then on, including the `System ON` line.
 
 ### 17. USB PD Sideband Management
