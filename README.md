@@ -48,6 +48,21 @@ make BOARD=eval -j$(nproc)    # Eval board build
 make flash                     # Flash via miniWiggler (requires UDAS.exe running)
 ```
 
+### Validation build (TLF fault injection)
+The `fault ss on|off` CLI forces the TLF safe-state signal so the power-off,
+power-on refusal and retry paths can be tested on target. It is compiled out
+by default and must never be in a shipped image.
+```bash
+# CMake: use a separate build dir; the option is cached
+cmake --preset som-debug -B build/som-debug-val -DFAULT_INJECT_ENABLE=ON
+cmake --build build/som-debug-val -j16
+
+# Makefile
+make BOARD=som FAULT_INJECT_ENABLE=1 -j$(nproc)
+```
+Configure prints `FAULT_INJECT_ENABLE=ON: validation image only`. A plain
+build prints `Fault injection:  OFF` and has no `fault` command.
+
 ## What's New in v0.3
 
 - **OTA safety** — revert swaps bank before clearing metadata; commit only after POST passes; metadata read-back verify; flash self-tests skipped while an update is pending
@@ -130,7 +145,7 @@ The firmware implements a non-blocking cooperative state machine driven by `Powe
 On any power-good timeout, PG loss, or voltage-monitor fault:
 - All reset and power-down signals are asserted (COLD_RST, KBRST_L, RSMRST_L, PWRGD deasserted), all rails disabled in reverse order.
 - If retries remain (PM_MAX_RETRIES), the firmware enters PM_STATE_FAULT with a non-blocking retry delay so that THERMTRIP, VoltMon, and USB PD servicing continue unblocked during the wait.
-- After the delay expires, the state machine re-enters PM_STATE_POWER_UP for a full re-sequencing attempt.
+- After the delay expires, the state machine re-enters PM_STATE_POWER_UP for a full re-sequencing attempt. If the TLF safe state is still active at that point, the retry is cancelled and the state machine parks in PM_STATE_OFF, where power-on stays refused until SS clears.
 - If all retries are exhausted, the firmware latches off in PM_STATE_FAULT until a physical power cycle.
 - Fault causes are tracked via `PM_ResetCause_t`: PG_TIMEOUT, PG_LOSS, THERMAL, HOST_REQUEST, VOLTAGE, BIOS_FAIL, COLD_RST.
 
@@ -516,6 +531,7 @@ Key compile-time parameters in `Platform_Cfg.h`:
 | SYSMON_CARRIER_WD_ENABLE | Enables COM-HPC carrier watchdog integration |
 | MAIN_LOOP_PERIOD_MS | Main loop pacing period |
 | MAIN_LOOP_OVERRUN_LOG_INTERVAL_MS | Minimum interval between overrun log messages |
+| FAULT_INJECT_ENABLE | Validation only: `fault ss on\|off` CLI. Set via the CMake option / Makefile variable above, default off (`Tlf35585.h`) |
 
 ## References
 

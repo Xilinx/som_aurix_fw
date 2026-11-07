@@ -39,6 +39,10 @@ set_property(CACHE BOARD PROPERTY STRINGS som eval)
 
 set(CPU "tc38xx" CACHE STRING "TriCore CPU variant for -mcpu flag")
 
+# Validation images only. Cached: reconfigure with -DFAULT_INJECT_ENABLE=OFF
+# (or use a fresh build dir) before building a release image.
+option(FAULT_INJECT_ENABLE "Compile the TLF fault-injection CLI (fault ss on|off)" OFF)
+
 # =============================================================================
 # Target executable
 # =============================================================================
@@ -252,6 +256,10 @@ else()
     target_compile_definitions(${TARGET_NAME} PRIVATE TARGET_GP_SOM=1)
 endif()
 
+if(FAULT_INJECT_ENABLE)
+    target_compile_definitions(${TARGET_NAME} PRIVATE FAULT_INJECT_ENABLE=1u)
+endif()
+
 # =============================================================================
 # Compiler flags
 # =============================================================================
@@ -375,6 +383,11 @@ message(STATUS " AURIX Build Environment")
 message(STATUS "===============================")
 message(STATUS "Board:            ${BOARD}")
 message(STATUS "Build type:       ${CMAKE_BUILD_TYPE}")
+if(FAULT_INJECT_ENABLE)
+    message(WARNING "FAULT_INJECT_ENABLE=ON: validation image only, do not ship")
+else()
+    message(STATUS "Fault injection:  OFF")
+endif()
 message(STATUS "Toolchain prefix: ${TC_PREFIX}")
 if(FLASHER)
     message(STATUS "Flasher:          ${FLASHER}")
