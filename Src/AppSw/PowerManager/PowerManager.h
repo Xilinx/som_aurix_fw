@@ -154,6 +154,12 @@ void PowerManager_SetPmicSafeState(boolean active);
 void PowerManager_OnPmicSafeState(void);
 
 /**
+ * @brief  Hand the shared UART to the x86 SoC and keep it there until the
+ *         next AURIX reset (CLI "swap uart").  Called by CPU1 from IPC.
+ */
+void PowerManager_LatchUartToSoc(void);
+
+/**
  * @brief  Clear a latched fault and return to PM_STATE_OFF.
  *
  */

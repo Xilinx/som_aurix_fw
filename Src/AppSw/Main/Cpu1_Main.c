@@ -45,6 +45,7 @@ static void prv_ProcessCommands(void)
         case IPC_CMD_WARM_RESET:    PowerManager_RequestWarmReset();  break;
         case IPC_CMD_COLD_RESET:    PowerManager_RequestColdReset();  break;
         case IPC_CMD_CLEAR_FAULT:   PowerManager_ClearFault();        break;
+        case IPC_CMD_UART_TO_SOC:   PowerManager_LatchUartToSoc();    break;
         default:                                                      break;
     }
 

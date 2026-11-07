@@ -59,6 +59,7 @@ static uint32  s_retryDelayStartMs  = 0u;
 static uint8 s_pwrokLossDebounce = 0u;
 static boolean s_biosRevalidate = TRUE;
 static uint32 s_onEntryMs = 0u;
+static boolean s_uartLatchedSoc = FALSE;   /* "swap uart": SoC keeps the UART until AURIX reset */
 #if (PM_UART_HANDOFF_AFTER_ON_MS > 0u)
 static uint8  s_uartHandoffStage   = 0u;   /* 0 waiting, 1 announced, 2 handed over */
 static uint32 s_uartHandoffStartMs = 0u;
@@ -413,9 +414,14 @@ static void prv_AssertPwrgd(void)
  * ensuring all boot-time diagnostic output is visible.  The MUX hands
  * off to the SoC immediately before COLD_RST is deasserted and is
  * reclaimed immediately after COLD_RST is (re-)asserted.
+ *
+ * After "swap uart" the mux is latched to the SoC for the rest of this
+ * AURIX boot: shutdown, reset and fault paths no longer reclaim it, so the
+ * BIOS console survives x86 reboots.  Only an AURIX reset returns it.
  * --------------------------------------------------------------------- */
 static void prv_UartClaimByAurix(void)
 {
+    if (s_uartLatchedSoc) { return; }
     IfxPort_setPinHigh(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
                        PIN_UART_MUX_SEL.pinIdx);
 }
@@ -1578,6 +1584,13 @@ void PowerManager_RequestForcedOff(void)
     prv_DeassertKbrst();           /* in case forceoff arrives mid warm-reset */
     prv_DisableAllRails();
     prv_SetState(PM_STATE_OFF);
+}
+
+void PowerManager_LatchUartToSoc(void)
+{
+    s_uartLatchedSoc = TRUE;
+    IfxPort_setPinLow(AppPin_GetPort(PIN_UART_MUX_SEL.portIdx),
+                      PIN_UART_MUX_SEL.pinIdx);
 }
 
 void PowerManager_SetPmicSafeState(boolean active)

@@ -81,6 +81,7 @@ typedef enum
     IPC_CMD_COLD_RESET      = 5u,
     IPC_CMD_CLEAR_FAULT     = 6u,
     IPC_CMD_CONFIG_UPDATE   = 7u,
+    IPC_CMD_UART_TO_SOC     = 8u,       /* CLI "swap uart": latch the UART mux to the SoC */
 } Ipc_Command_t;
 
 /* ================================================================== */
