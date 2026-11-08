@@ -61,26 +61,6 @@ static void prv_ServiceWdtIfOwner(void)
 /*  A valid image never occupies that tail, so a blank sector can be  */
 /*  erased without touching the rollback copy.  Returns 0 to skip.    */
 /* ------------------------------------------------------------------ */
-static boolean prv_SectorIsBlank(uint32 logAddr)
-{
-    const volatile uint32 *p = (const volatile uint32 *)logAddr;
-    uint32 words = PFLASH_SECTOR_SIZE / 4u;
-    uint32 i;
-
-    for (i = 0u; i < words; i++)
-    {
-        if (p[i] != 0xFFFFFFFFu)
-        {
-            return FALSE;
-        }
-        if ((i & 0x3FFu) == 0u)
-        {
-            prv_ServiceWdtIfOwner();
-        }
-    }
-    return TRUE;
-}
-
 static uint32 prv_BankSize(uint32 base)
 {
     if (base == PFLASH_BANK_A_BASE) { return PFLASH_BANK_A_SIZE; }
@@ -121,7 +101,7 @@ static uint32 prv_InactiveTailOrSkip(const char *tag)
         return 0u;
     }
 
-    if (!prv_SectorIsBlank(logAddr))
+    if (!PFlash_IsSectorErased(tail))
     {
         Debug_Printf("[TEST:%s] SKIP: last sector 0x%08X is not blank - "
                      "not erasing a live image tail\r\n",
@@ -539,7 +519,7 @@ uint32 SelfTest_Sota(void)
     }
 
     ps = PFlash_EraseSector(tail);
-    if ((ps != PFLASH_OK) || !prv_SectorIsBlank(logAddr))
+    if ((ps != PFLASH_OK) || !PFlash_IsSectorErased(tail))
     {
         Debug_Print("[TEST:SOTA] FAIL: tail not left erased\r\n");
         return 1u;
@@ -1599,7 +1579,7 @@ uint32 SelfTest_FwUpdate(void)
     }
 
     ps = PFlash_EraseSector(tail);
-    if ((ps != PFLASH_OK) || !prv_SectorIsBlank(logBase))
+    if ((ps != PFLASH_OK) || !PFlash_IsSectorErased(tail))
     {
         Debug_Print("[TEST:FWUP] FAIL: tail not left erased\r\n");
         err++;
