@@ -198,6 +198,42 @@ PFlash_Status_t PFlash_EraseSector(uint32 sectorAddr)
     return PFLASH_OK;
 }
 
+boolean PFlash_IsSectorErased(uint32 sectorAddr)
+{
+    Ifx_DMU_HF_ERRSR notErased;
+    boolean erased = TRUE;
+    uint32  off;
+
+    if (!isSectorAligned(sectorAddr) ||
+        !isInSwappableRange(sectorAddr, PFLASH_SECTOR_SIZE))
+    {
+        return FALSE;
+    }
+
+    notErased.U      = PFLASH_ERRSR_FAIL_MASK;
+    notErased.B.EVER = 1u;
+
+    /* DMU "verify erased" per 32-byte page: a CPU load of an erased page
+     * raises an uncorrectable-ECC trap, so the array is never read here. */
+    for (off = 0u; erased && (off < PFLASH_SECTOR_SIZE); off += IFXFLASH_PFLASH_PAGE_LENGTH)
+    {
+        boolean irqState = IfxCpu_disableInterrupts();
+
+        IfxFlash_clearStatus(FLASH_MODULE);
+        IfxFlash_verifyErasedPage(sectorAddr + off);
+        PFlash_WaitAllUnbusy();
+        erased = ((DMU_HF_ERRSR.U & notErased.U) == 0u);
+        IfxCpu_restoreInterrupts(irqState);
+
+        if (((off & 0xFFFu) == 0u) && (s_keepAliveCb != NULL_PTR))
+        {
+            s_keepAliveCb();
+        }
+    }
+    IfxFlash_clearStatus(FLASH_MODULE);
+    return erased;
+}
+
 PFlash_Status_t PFlash_EraseBank(uint32 bankBase)
 {
     uint32          bankSize;

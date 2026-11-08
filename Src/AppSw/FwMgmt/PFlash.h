@@ -103,6 +103,17 @@ void PFlash_Init(void);
 PFlash_Status_t PFlash_EraseSector(uint32 sectorAddr);
 
 /**
+ * @brief  TRUE if every page of a 16 KB sector is in the erased state.
+ *
+ * Uses the DMU "verify erased" command, never a CPU load (loading an
+ * erased page traps on ECC).  Erased PFlash reads as all zeros, not 0xFF.
+ *
+ * @param  sectorAddr  Physical sector-aligned address in bank A or B.
+ * @return FALSE if any page is programmed, or on a bad address.
+ */
+boolean PFlash_IsSectorErased(uint32 sectorAddr);
+
+/**
  * @brief  Erase an entire 4 MB bank (256 sectors).
  *
  * Convenience wrapper that erases every sector in the bank
