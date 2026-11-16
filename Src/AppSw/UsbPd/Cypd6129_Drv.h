@@ -17,6 +17,23 @@
 
 
 
+/* ---- DEVICE_MODE decode -------------------------------------------------- */
+/*
+ * DEVICE_MODE[1:0] encodes the running image per the CCGx HPI spec:
+ *   0 = bootloader, 1 = FW1, 2 = FW2, 3 = reserved/invalid.
+ * Only these two bits select the image; the upper bits carry port count and
+ * HPI version and must NOT be used for the mode test.
+ */
+#define CYPD_DEVICE_MODE_IMAGE_MASK 0x0003u
+
+typedef enum
+{
+    CYPD_IMG_BOOTLOADER = 0,
+    CYPD_IMG_FW1        = 1,
+    CYPD_IMG_FW2        = 2,
+    CYPD_IMG_INVALID    = 3,
+} Cypd_FwImage_t;
+
 /* ---- HPI Register Map ---------------------------------------------------- */
 #define CYPD_REG_DEVICE_MODE        0x0000u  /* R  — device mode/fw status    */
 #define CYPD_REG_BOOT_MODE_REASON   0x0002u  /* R  — reason for boot mode     */
@@ -61,6 +78,7 @@ typedef enum
     CYPD_ERR_I2C,
     CYPD_ERR_TIMEOUT,
     CYPD_ERR_BOOT_MODE, /* device still in bootloader */
+    CYPD_ERR_BAD_IMAGE, /* DEVICE_MODE[1:0] = 3 (invalid image) */
     CYPD_ERR_INVALID,
 } Cypd_Status_t;
 
@@ -89,6 +107,16 @@ Cypd_Status_t Cypd_HardReset(uint8 devIdx);
  * @param pMode    Output: raw DEVICE_MODE word.
  */
 Cypd_Status_t Cypd_ReadDeviceMode(uint8 devIdx, uint16 *pMode);
+
+/**
+ * @brief Decode the running image from a raw DEVICE_MODE word (bits [1:0]).
+ */
+Cypd_FwImage_t Cypd_DecodeImage(uint16 mode);
+
+/**
+ * @brief Human-readable name for a decoded image ("bootloader"/"FW1"/...).
+ */
+const char *Cypd_ImageName(Cypd_FwImage_t img);
 
 /**
  * @brief Read and decode the port status into a Cypd_PortStatus_t struct.

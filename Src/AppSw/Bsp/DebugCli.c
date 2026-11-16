@@ -190,7 +190,7 @@ static void prv_CmdHelp(void)
         "  nvlog recent [N]  Last N events\r\n"
         "  fusa        FUSA_SPI register dump\r\n"
         "  bist        POST/BIST status\r\n"
-        "  usbpd       USB PD port states\r\n"
+        "  usbpd       USB PD port states ('usbpd reinit' to retry init)\r\n"
         "  temp        APU temperature\r\n"
         "  uptime      Seconds since boot\r\n"
         "  version     Firmware version\r\n"
@@ -466,9 +466,19 @@ static void prv_CmdVersion(void)
     Debug_Printf("  TC387 COM-HPC Controller v0.3\r\n");
 }
 
-static void prv_CmdUsbPd(void)
+static void prv_CmdUsbPd(const char *args)
 {
     uint8 i;
+
+    args = prv_SkipSpaces(args);
+    if (prv_StrEq(args, "reinit"))
+    {
+        uint8 present = UsbPdManager_Reinit();
+        Debug_Printf("  usbpd reinit: %u/%u controller(s) present\r\n",
+                     (unsigned)present, (unsigned)CYPD_DEVICE_COUNT);
+        return;
+    }
+
     for (i = 0u; i < 2u; i++)
     {
         UsbPd_PortState_t st = UsbPdManager_GetPortState(i);
@@ -831,8 +841,12 @@ static void prv_CmdI2cId(const char *args)
 
     st = I2cMaster_ReadReg16_Bus(0u, addr, CYPD_REG_DEVICE_MODE, buf, 2u);
     if (st == I2C_OK)
-        Debug_Printf("[I2C] 0x%02X: DEVICE_MODE=0x%02X%02X\r\n",
-                     (unsigned)addr, (unsigned)buf[1], (unsigned)buf[0]);
+    {
+        uint16 mode = (uint16)(((uint16)buf[1] << 8u) | (uint16)buf[0]);
+        Cypd_FwImage_t img = Cypd_DecodeImage(mode);
+        Debug_Printf("[I2C] 0x%02X: DEVICE_MODE=0x%04X (running %s)\r\n",
+                     (unsigned)addr, (unsigned)mode, Cypd_ImageName(img));
+    }
 }
 
 static uint32 prv_HexToU32(const char *s)
@@ -1881,8 +1895,8 @@ static void prv_Dispatch(const char *cmd)
         SelfTest_UsbPdTopology();
     else if (prv_StrEq(args, "usbpd_edge"))
         SelfTest_UsbPdEdgeCases();
-    else if (prv_StrEq(cmd, "usbpd"))
-        prv_CmdUsbPd();
+    else if (((args = prv_StartsWith(cmd, "usbpd")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))
+        prv_CmdUsbPd(args);
     else if (prv_StrEq(cmd, "temp"))
         prv_CmdTemp();
     else if (((args = prv_StartsWith(cmd, "autoboot")) != NULL_PTR) && ((*args == ' ') || (*args == '\0')))   /* ADD */

@@ -12,6 +12,10 @@
 #define USBPD_RUNTIME_FAIL_LIMIT   10u
 #define USBPD_SPURIOUS_INT_LIMIT   100u
 
+/* How often the Run() loop retries init for a controller that is not yet
+ * present (never came up at boot, or was disabled after runtime failures). */
+#define USBPD_REINIT_INTERVAL_MS   2000u
+
 /** Per-port connection state tracked by the manager. */
 typedef enum
 {
@@ -32,6 +36,14 @@ void UsbPdManager_Init(void);
  *        Polls INT_L for each device; on assertion reads and dispatches events.
  */
 void UsbPdManager_Run(void);
+
+/**
+ * @brief Attempt to (re-)initialise every CYPD controller that is not
+ *        currently present. Safe to call at runtime; used by the periodic
+ *        recovery path and the 'usbpd reinit' CLI command.
+ * @return Number of controllers that are present after the attempt.
+ */
+uint8 UsbPdManager_Reinit(void);
 
 /**
  * @brief Return the current connection state of a port (0 or 1).

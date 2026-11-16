@@ -175,6 +175,33 @@ static void prv_ServiceDevice(uint8 devIdx, uint8 intr)
     }
 }
 
+/**
+ * Attempt to bring one controller up via a hard reset, and on success mark it
+ * present and prime its HPI/APU state. Clears the per-device fault counters so
+ * a device recovered at runtime starts from a clean slate.
+ * @return TRUE if the controller is present after the attempt.
+ */
+static boolean prv_BringUpDevice(uint8 devIdx)
+{
+    Cypd_Status_t st = Cypd_HardReset(devIdx);
+    if (st != CYPD_OK)
+    {
+        s_devPresent[devIdx] = FALSE;
+        Debug_Printf("[USBPD %s] INIT FAILED (err=%d) — polling disabled\r\n",
+                     CYPD_DEVICES[devIdx].name, (int)st);
+        return FALSE;
+    }
+
+    s_devPresent[devIdx]       = TRUE;
+    s_devRuntimeFails[devIdx]  = 0u;
+    s_devSpuriousCount[devIdx] = 0u;
+    Debug_Printf("[USBPD %s] Init OK\r\n", CYPD_DEVICES[devIdx].name);
+
+    /* Initial HPI state read */
+    prv_RefreshHpiState(devIdx);
+    return TRUE;
+}
+
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
@@ -188,7 +215,6 @@ void UsbPdManager_Init(void)
     UsbPd_ApuProxy_Init();
 
     uint8 i;
-    Cypd_Status_t st;
 
     for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
     {
@@ -199,28 +225,49 @@ void UsbPdManager_Init(void)
 
         memset(&s_hpiState[i], 0, sizeof(UsbPd_HpiState_t));
 
-        st = Cypd_HardReset(i);
-        if (st != CYPD_OK)
-        {
-            Debug_Printf("[USBPD %s] INIT FAILED (err=%d) — polling disabled\r\n",
-                         CYPD_DEVICES[i].name, (int)st);
-        }
-        else
-        {
-            s_devPresent[i] = TRUE;
-            Debug_Printf("[USBPD %s] Init OK\r\n", CYPD_DEVICES[i].name);
+        (void)prv_BringUpDevice(i);
+    }
+}
 
-            /* Initial HPI state read */
-            prv_RefreshHpiState(i);
+uint8 UsbPdManager_Reinit(void)
+{
+    uint8 i;
+    uint8 present = 0u;
+
+    for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
+    {
+        if (!s_devPresent[i])
+        {
+            (void)prv_BringUpDevice(i);
+        }
+        if (s_devPresent[i])
+        {
+            present++;
         }
     }
+    return present;
 }
 
 void UsbPdManager_Run(void)
 {
     static uint32 s_lastPoll = 0u;
     static uint32 s_lastRefresh = 0u;
+    static uint32 s_lastReinit = 0u;
     uint8 i;
+
+    /* Recovery: periodically retry any controller that is not present, so a
+     * device that comes up late or a transient I2C error no longer disables
+     * USB PD until the next AURIX reset. */
+    if (Stm_IsElapsedMs(&s_lastReinit, USBPD_REINIT_INTERVAL_MS))
+    {
+        for (i = 0u; i < CYPD_DEVICE_COUNT; i++)
+        {
+            if (!s_devPresent[i])
+            {
+                (void)prv_BringUpDevice(i);
+            }
+        }
+    }
 
     if (!Stm_IsElapsedMs(&s_lastPoll, USBPD_MGR_POLL_INTERVAL_MS))
     {

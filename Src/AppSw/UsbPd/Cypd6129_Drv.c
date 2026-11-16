@@ -67,10 +67,27 @@ static Cypd_Status_t prv_Write8(uint8 devIdx, uint16 reg, uint8 val)
 }
 /* ---- Public API ---------------------------------------------------------- */
 
+Cypd_FwImage_t Cypd_DecodeImage(uint16 mode)
+{
+    return (Cypd_FwImage_t)(mode & CYPD_DEVICE_MODE_IMAGE_MASK);
+}
+
+const char *Cypd_ImageName(Cypd_FwImage_t img)
+{
+    switch (img)
+    {
+        case CYPD_IMG_BOOTLOADER: return "bootloader";
+        case CYPD_IMG_FW1:        return "FW1";
+        case CYPD_IMG_FW2:        return "FW2";
+        default:                  return "invalid";
+    }
+}
+
 Cypd_Status_t Cypd_HardReset(uint8 devIdx)
 {
     const Cypd_DevCfg_t *dev;
     uint16 mode = 0u;
+    Cypd_FwImage_t img;
     Cypd_Status_t st;
 
     if (devIdx >= CYPD_DEVICE_COUNT)
@@ -97,30 +114,58 @@ Cypd_Status_t Cypd_HardReset(uint8 devIdx)
         I2cMaster_ReinitBus(dev->i2cBus);
         return CYPD_ERR_I2C;
     }
-    /* Bit 0 of DEVICE_MODE: 0 = bootloader, 1 = firmware */
-    if ((mode & 0x0001u) == 0u)
+    /*
+     * DEVICE_MODE[1:0] selects the running image: 0 = bootloader, 1 = FW1,
+     * 2 = FW2, 3 = invalid. A controller running either firmware image is
+     * operational; only the bootloader (0) warrants a reset/retry. Testing
+     * bit 0 alone wrongly rejects FW2 (e.g. MODE=0x0092 → bits[1:0]=10=FW2).
+     */
+    img = Cypd_DecodeImage(mode);
+    if ((img == CYPD_IMG_FW1) || (img == CYPD_IMG_FW2))
     {
-        Debug_Printf("[CYPD %s] Reset: device in boot mode — retrying\r\n",
-                     dev->name);
-
-        /* Second reset attempt */
-        IfxPort_setPinLow(AppPin_GetPort(dev->resetPin.portIdx),
-                          dev->resetPin.pinIdx);
-        Stm_DelayMs(CYPD_RESET_PULSE_MS);
-        IfxPort_setPinHigh(AppPin_GetPort(dev->resetPin.portIdx),
-                           dev->resetPin.pinIdx);
-        Stm_DelayMs(CYPD_BOOT_DELAY_MS);
-
-        st = Cypd_ReadDeviceMode(devIdx, &mode);
-        if ((st != CYPD_OK) || ((mode & 0x0001u) == 0u))
-        {
-            Debug_Printf("[CYPD %s] Reset: still in boot mode after retry "
-                         "(MODE=0x%04X)\r\n", dev->name, mode);
-            return CYPD_ERR_BOOT_MODE;
-        }
+        Debug_Printf("[CYPD %s] Reset OK, running %s (MODE=0x%04X)\r\n",
+                     dev->name, Cypd_ImageName(img), mode);
+        s_devInitOk[devIdx] = TRUE;
+        return CYPD_OK;
+    }
+    if (img == CYPD_IMG_INVALID)
+    {
+        Debug_Printf("[CYPD %s] Reset: invalid image (MODE=0x%04X)\r\n",
+                     dev->name, mode);
+        return CYPD_ERR_BAD_IMAGE;
     }
 
-    Debug_Printf("[CYPD %s] Reset OK. MODE=0x%04X\r\n", dev->name, mode);
+    /* img == CYPD_IMG_BOOTLOADER: device stuck in bootloader — retry once. */
+    Debug_Printf("[CYPD %s] Reset: device in bootloader — retrying\r\n",
+                 dev->name);
+
+    /* Second reset attempt */
+    IfxPort_setPinLow(AppPin_GetPort(dev->resetPin.portIdx),
+                      dev->resetPin.pinIdx);
+    Stm_DelayMs(CYPD_RESET_PULSE_MS);
+    IfxPort_setPinHigh(AppPin_GetPort(dev->resetPin.portIdx),
+                       dev->resetPin.pinIdx);
+    Stm_DelayMs(CYPD_BOOT_DELAY_MS);
+
+    st = Cypd_ReadDeviceMode(devIdx, &mode);
+    if (st != CYPD_OK)
+    {
+        Debug_Printf("[CYPD %s] Reset: I2C error reading DEVICE_MODE\r\n",
+                     dev->name);
+        I2cMaster_ReinitBus(dev->i2cBus);
+        return CYPD_ERR_I2C;
+    }
+
+    img = Cypd_DecodeImage(mode);
+    if ((img != CYPD_IMG_FW1) && (img != CYPD_IMG_FW2))
+    {
+        Debug_Printf("[CYPD %s] Reset: still in boot mode after retry "
+                     "(MODE=0x%04X)\r\n", dev->name, mode);
+        return CYPD_ERR_BOOT_MODE;
+    }
+
+    Debug_Printf("[CYPD %s] Reset OK, running %s (MODE=0x%04X)\r\n",
+                 dev->name, Cypd_ImageName(img), mode);
     s_devInitOk[devIdx] = TRUE;
     return CYPD_OK;
 }
