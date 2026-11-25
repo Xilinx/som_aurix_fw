@@ -67,7 +67,7 @@ extern const AppPin_t PIN_FAN_PWM;              /* P10.1 GPIO Out */
 extern const AppPin_t PIN_CARRIER_HOT;          /* P10.2 ERUIN2 */
 extern const AppPin_t PIN_THERMTRIP_L;          /* P10.3 ERUIN3 */
 extern const AppPin_t PIN_USBC_PD_ALERT_L;      /* P10.7 ERUIN0 — wired-OR from CYPDs */
-extern const AppPin_t PIN_USBC_PD_INT_TO_APU;   /* P10.8 GPIO Out — forwards PD event to APU */
+extern const AppPin_t PIN_USBC_PD_INT;          /* P10.8 ERUIN1 — Input from APU: USBC_PD_INT (active high, cmd-complete) */
 
 
 /* ==========================================================================

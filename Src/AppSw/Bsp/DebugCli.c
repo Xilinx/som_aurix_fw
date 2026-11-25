@@ -930,8 +930,8 @@ static void prv_CmdPin(void)
                      (unsigned)apmlHi,
                      (apmlHi == 10u) ? "(pulled up)" :
                      (apmlHi == 0u)  ? "(solid low)" : "(UNSTABLE - floating!)");
-        Debug_Printf("[PIN] USBC_PD_INT (10.8) %u\r\n",
-                     (unsigned)prv_ReadPin(&PIN_USBC_PD_INT_TO_APU));
+        Debug_Printf("[PIN] USBC_PD_INT (10.8, in) %u\r\n",
+                     (unsigned)prv_ReadPin(&PIN_USBC_PD_INT));
     }
 }
 

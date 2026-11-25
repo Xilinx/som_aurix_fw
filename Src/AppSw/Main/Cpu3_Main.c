@@ -2,9 +2,11 @@
  * @file    Cpu3_Main.c
  * @brief   CPU3 — USB-PD core
  *
- * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager, and the I2C0
- * sideband slave at 0x54. CYPD master and that slave share MODULE_I2C0;
- * master transfers park the slave and restore it.
+ * Owns: UsbPd_Hpd, UsbPd_ApuProxy, UsbPd_Manager. CPU3 is the sole
+ * I2C0 master to the carrier CYPD controllers. The I2C0 sideband slave
+ * at 0x54 is not armed at boot, because 0x54 is the APU's own USB-PD
+ * target address. It stays available as an on-demand emulator via the
+ * 'i2cslave' CLI command.
  * Reads: g_ipcShared.pmc.pmState (published by CPU1) to gate HPI polling.
  * Does not touch I2C1 (APML, CPU1, master only).
  *
@@ -39,7 +41,11 @@ void core3_main(void)
     Debug_Print("[CPU3] Init: UsbPd...\r\n");
     UsbPd_Hpd_Init();
     UsbPd_ApuProxy_Init();
-    I2cSlave_Init(NULL_PTR);
+    /* Do NOT arm the I2C0 slave at 0x54. The AURIX is the only I2C master
+     * on this bus; 0x54/0x58/0x5C are the APU's own USB-PD I2C target
+     * addresses (APU Programming Guide, Table 2). A slave ACKing 0x54 on
+     * the shared bus would collide with the APU. The 0x54 emulator remains
+     * available on demand via the 'i2cslave' CLI command. */
     UsbPdManager_Init();
     Debug_Print("[CPU3] Init: UsbPd OK\r\n");
 #else
