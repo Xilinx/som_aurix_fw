@@ -34,13 +34,6 @@ static uint8 prv_ReadReg32(uint8 i2cAddr, uint16 regAddr, uint32 *pVal)
     return 0u;
 }
 
-static uint8 prv_WriteReg8(uint8 i2cAddr, uint16 regAddr, uint8 val)
-{
-    I2c_Status_t st = I2cMaster_WriteReg16_Bus(HPI_I2C_BUS, i2cAddr,
-                                                regAddr, &val, 1u);
-    return (st == I2C_OK) ? 0u : 1u;
-}
-
 /* ================================================================== */
 /*  Public API                                                        */
 /* ================================================================== */
@@ -50,9 +43,13 @@ uint8 UsbPd_Hpi_ReadPortState(uint8 i2cAddr, uint16 portBase,
 {
     uint8 err = 0u;
     uint8 altMode8 = 0u;
+    uint8 typeC8   = 0u;
 
-    err |= prv_ReadReg32(i2cAddr, portBase + HPI_PORT_TYPE_C_STATUS,
-                         &pState->typeCStatus);
+    /* TYPE_C_STATUS is a 1-byte register; read 1 byte (was wrongly read as 4,
+     * which pulled in BUS_VOLTAGE / CURRENT_PDO bytes). */
+    err |= prv_ReadReg8(i2cAddr, portBase + HPI_PORT_TYPE_C_STATUS, &typeC8);
+    pState->typeCStatus = (uint32)typeC8;
+
     err |= prv_ReadReg32(i2cAddr, portBase + HPI_PORT_PD_STATUS,
                          &pState->pdStatus);
     err |= prv_ReadReg8(i2cAddr, portBase + HPI_PORT_ALT_MODE_STATUS,
@@ -74,39 +71,7 @@ uint8 UsbPd_Hpi_ReadPortState(uint8 i2cAddr, uint16 portBase,
     return err;
 }
 
-uint8 UsbPd_Hpi_ReadClearEvents(uint8 i2cAddr, uint16 portBase,
-                                uint32 *pEvents)
-{
-    uint32 events = 0u;
-    uint8 err = prv_ReadReg32(i2cAddr, portBase + HPI_PORT_EVENT_MASK,
-                              &events);
-    if (err != 0u) return err;
-
-    *pEvents = events;
-
-    /* Clear by writing back the event bits (write-1-to-clear) */
-    if (events != 0u)
-    {
-        uint8 clearBuf[6];
-        uint16 regAddr = portBase + HPI_PORT_EVENT_MASK;
-        clearBuf[0] = (uint8)(regAddr >> 8u);
-        clearBuf[1] = (uint8)(regAddr & 0xFFu);
-        clearBuf[2] = (uint8)(events);
-        clearBuf[3] = (uint8)(events >> 8u);
-        clearBuf[4] = (uint8)(events >> 16u);
-        clearBuf[5] = (uint8)(events >> 24u);
-        I2cMaster_Write(i2cAddr, clearBuf, 6u);
-    }
-
-    return 0u;
-}
-
 uint8 UsbPd_Hpi_ReadDevIntr(uint8 i2cAddr, uint8 *pIntr)
 {
     return prv_ReadReg8(i2cAddr, HPI_INTR_REG, pIntr);
-}
-
-uint8 UsbPd_Hpi_WriteHpdCtrl(uint8 i2cAddr, uint16 portBase, uint8 hpdCmd)
-{
-    return prv_WriteReg8(i2cAddr, portBase + HPI_PORT_DP_HPD_CTRL, hpdCmd);
 }

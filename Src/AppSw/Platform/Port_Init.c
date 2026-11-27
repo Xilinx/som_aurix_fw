@@ -137,7 +137,10 @@ void Port_Init(void)
     initInputPU(&PIN_THERMTRIP_L);
     initInputPU(&PIN_CARRIER_HOT);
     initInputPU(&PIN_USBC_PD_ALERT_L);
-    initOutput(&PIN_USBC_PD_INT_TO_APU, FALSE);
+    /* USBC_PD_INT is driven by the APU (push-pull, active high) — it is an
+     * input to the EC, not an output. Driving it low here fought the APU.
+     * No pull: the APU drives both edges. */
+    initInputNP(&PIN_USBC_PD_INT);
 
     /* ---- Fan Control (Port 10) ------------------------------------------ */
     initInputNP(&PIN_FAN_TACHIN);

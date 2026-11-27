@@ -96,7 +96,7 @@ const AppPin_t PIN_FAN_PWM              = {11u, 13u};  /* P11.13 */
 
 /* USB PD (stubs — no CYPD6129 on eval) */
 const AppPin_t PIN_USBC_PD_ALERT_L      = {13u,  0u};  /* P13.0 */
-const AppPin_t PIN_USBC_PD_INT_TO_APU   = {13u,  1u};  /* P13.1 */
+const AppPin_t PIN_USBC_PD_INT          = {13u,  1u};  /* P13.1 (eval) */
 const AppPin_t PIN_DP2_HPD              = {13u,  2u};  /* P13.2 */
 const AppPin_t PIN_DP3_HPD              = {13u,  3u};  /* P13.3 */
 
@@ -179,7 +179,7 @@ const AppPin_t PIN_FAN_PWM            = {10u,  1u};
 const AppPin_t PIN_CARRIER_HOT        = {10u,  2u};
 const AppPin_t PIN_THERMTRIP_L        = {10u,  3u};
 const AppPin_t PIN_USBC_PD_ALERT_L    = {10u,  7u};
-const AppPin_t PIN_USBC_PD_INT_TO_APU = {10u,  8u};
+const AppPin_t PIN_USBC_PD_INT        = {10u,  8u};
 
 /* ==========================================================================
  * APU APML Interface (Port 11)
