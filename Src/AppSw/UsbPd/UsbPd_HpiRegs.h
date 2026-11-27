@@ -145,12 +145,20 @@
 #define HPI_PDCMD_EC_INIT_COMPLETE  0x10u
 
 /* ====================================================================== */
-/*  EVENT_MASK value                                                      */
+/*  EVENT_MASK value (spec Table 87, 4 bytes, port-0 address 0x1024)      */
 /* ---------------------------------------------------------------------- */
-/*  0x00000C3E enables the events we care about: Type-C connect/disconnect,*/
-/*  PD contract, over-current / over-voltage and the DP/alt-mode events.   */
-/*  (Bit 0 is reserved and stays 0. AMD embedded events 0xE0-0xE3 / 0xC0   */
-/*  have no mask bit and are always delivered.)                            */
+/*  0x00000C3E sets these bits (1 = the EC is notified):                  */
+/*    b1  Over-current detected          (event 0x82)                     */
+/*    b2  Over/under-voltage detected    (event 0x83)                     */
+/*    b3  Type-C port connect            (event 0x84)                     */
+/*    b4  Type-C port disconnect         (event 0x85)                     */
+/*    b5  PD contract negotiation done   (event 0x86)                     */
+/*    b10 DP alternate-mode events       (events 0x93, 0x94, ...)         */
+/*    b11 Error and timeout events       (hard/soft reset sent, timers)   */
+/*  NOT enabled (0 in this value): b0 reserved, b6 PD control message,     */
+/*  b7 VDM, b8 source capabilities, b9 sink capabilities.                  */
+/*  AMD embedded events 0xE0-0xE3 and 0xC0 have no mask bit, so this mask  */
+/*  does not control them.                                                 */
 /* ====================================================================== */
 #define HPI_EVENT_MASK_VALUE        0x00000C3Eu
 

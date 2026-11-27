@@ -20,7 +20,7 @@
  *   Bit 18     Cable_CLx          (custom)
  *   Bit 17     TBT3               ALT_MODE_STATUS[0]
  *   Bit 16     USB4               ALT_MODE_STATUS[6]
- *   Bit 15     Port_Role          PD_STATUS[6]
+ *   Bit 15     Port_Role          PD_STATUS[8] (power role; was [6] before Phase 1)
  *   Bit 14     Data_Reset         (custom)
  *   Bit 13     Reserved
  *   Bit 12     Orientation        TYPE_C_STATUS[1]
