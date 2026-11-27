@@ -424,13 +424,19 @@ uint32 UsbPdManager_GetPortStatusWord(uint8 portIdx)
     {
         w |= USBPD_STAT_DEV_PRESENT;
     }
-    /* Roles and alt modes are only meaningful while a partner is attached. */
-    if (s_hpiState[portIdx].connected)
+    /* Per HPI spec Table 74, the current data/power role fields are valid
+     * only while a PD contract exists (PD_STATUS b10). Gate the role bits on
+     * the contract, not just on the Type-C connection. Alt modes stay gated on
+     * the connection. */
+    if (s_hpiState[portIdx].contractValid)
     {
         if ((s_hpiState[portIdx].pdStatus & HPI_PD_DATA_ROLE) != 0u)
             w |= USBPD_STAT_DATA_DFP;
         if ((s_hpiState[portIdx].pdStatus & HPI_PD_PORT_ROLE) != 0u)
             w |= USBPD_STAT_PWR_SOURCE;
+    }
+    if (s_hpiState[portIdx].connected)
+    {
         if ((s_hpiState[portIdx].altModeStatus & HPI_ALT_DP_ACTIVE) != 0u)
             w |= USBPD_STAT_ALT_DP;
         if ((s_hpiState[portIdx].altModeStatus & HPI_ALT_TBT3_ACTIVE) != 0u)
