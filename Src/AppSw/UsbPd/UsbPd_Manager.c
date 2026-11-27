@@ -71,108 +71,155 @@ static void prv_RefreshHpiState(uint8 devIdx)
     }
 }
 
-static void prv_HandleEvent(uint8 devIdx, uint32 events)
+/* Most events we can read in one service call before the loop re-checks. */
+#define USBPD_MAX_EVENTS_PER_SVC    8u
+
+/**
+ * Act on a single decoded HPI message (one RESPONSE / PD_RESPONSE entry).
+ * In Phase 1 we recognise and log every message code so attach / detach /
+ * contract and the AMD embedded events are visible in the log. The full
+ * state-machine reactions to the AMD events (0xE0-0xE3, 0xC0) are built in
+ * Phases 3, 5 and 6; here they are decoded and traced only.
+ */
+static void prv_HandleMessage(uint8 devIdx, const Cypd_Event_t *ev)
 {
     const char *name = CYPD_DEVICES[devIdx].name;
 
-    if (events & CYPD_EVT_TYPEC_ATTACH)
+    /* Command responses (Success/error) are consumed inside the driver; by
+     * the time a message reaches us it should be an asynchronous event. */
+    if (!ev->isEvent)
     {
-        s_portState[devIdx] = USBPD_PORT_ATTACHED;
-        Debug_Printf("[USBPD %s] Type-C ATTACH\r\n", name);
-
-        uint32 nvData[4] = { devIdx, USBPD_PORT_ATTACHED, 0u, 0u };
-        NvLog_Write(NVLOG_EVT_USBPD_ATTACH, NVLOG_SRC_USBPD,
-                    NVLOG_SEV_INFO, nvData);
+        Debug_Printf("[USBPD %s] response code 0x%02X (%s)\r\n",
+                     name, ev->code, Cypd_EventName(ev->code));
+        return;
     }
 
-    if (events & CYPD_EVT_TYPEC_DETACH)
+    switch (ev->code)
     {
-        s_portState[devIdx] = USBPD_PORT_DETACHED;
-        Debug_Printf("[USBPD %s] Type-C DETACH\r\n", name);
+        case HPI_EVT_RESET_COMPLETE:
+            /* The controller rebooted on its own; its HPI setup is gone. */
+            Debug_Printf("[USBPD %s] RESET_COMPLETE - controller rebooted, "
+                         "re-running HPI init\r\n", name);
+            (void)Cypd_HpiInit(devIdx);
+            break;
 
-        /* Deassert HPD on detach */
-        UsbPd_Hpd_ProcessEvent(devIdx, HPD_EVENT_LOW);
+        case HPI_EVT_QUEUE_OVERFLOW:
+            /* An event was dropped. A full status re-sync belongs to Phase 5;
+             * for now we flag it so lost events are never silent. */
+            Debug_Printf("[USBPD %s] WARNING: event queue overflow - an event "
+                         "was dropped\r\n", name);
+            NvLog_WriteU32(NVLOG_EVT_USBPD_FAULT, NVLOG_SRC_USBPD,
+                           NVLOG_SEV_WARNING, ((uint32)devIdx << 8u) | 0x03u);
+            break;
 
-        uint32 nvData[4] = { devIdx, USBPD_PORT_DETACHED, 0u, 0u };
-        NvLog_Write(NVLOG_EVT_USBPD_DETACH, NVLOG_SRC_USBPD,
-                    NVLOG_SEV_INFO, nvData);
+        case HPI_EVT_TYPEC_CONNECT:
+            s_portState[devIdx] = USBPD_PORT_ATTACHED;
+            Debug_Printf("[USBPD %s] Type-C CONNECT\r\n", name);
+            {
+                uint32 nvData[4] = { devIdx, USBPD_PORT_ATTACHED, 0u, 0u };
+                NvLog_Write(NVLOG_EVT_USBPD_ATTACH, NVLOG_SRC_USBPD,
+                            NVLOG_SEV_INFO, nvData);
+            }
+            break;
+
+        case HPI_EVT_TYPEC_DISCONNECT:
+            s_portState[devIdx] = USBPD_PORT_DETACHED;
+            Debug_Printf("[USBPD %s] Type-C DISCONNECT\r\n", name);
+            UsbPd_Hpd_ProcessEvent(devIdx, HPD_EVENT_LOW);  /* drop HPD */
+            {
+                uint32 nvData[4] = { devIdx, USBPD_PORT_DETACHED, 0u, 0u };
+                NvLog_Write(NVLOG_EVT_USBPD_DETACH, NVLOG_SRC_USBPD,
+                            NVLOG_SEV_INFO, nvData);
+            }
+            break;
+
+        case HPI_EVT_PD_CONTRACT:
+            s_portState[devIdx] = USBPD_PORT_CONTRACT;
+            {
+                Cypd_PortStatus_t status;
+                if (Cypd_ReadPortStatus(devIdx, &status) == CYPD_OK)
+                {
+                    uint32 vbus_mV = (uint32)status.vbusVoltage_100mV * 100u;
+                    Debug_Printf("[USBPD %s] PD CONTRACT: VBUS=%u mV, CC%u, "
+                                 "%s, %s\r\n", name, (unsigned)vbus_mV,
+                                 status.cc2Polarity ? 2u : 1u,
+                                 status.isDfp ? "DFP" : "UFP",
+                                 status.isSource ? "source" : "sink");
+
+                    uint32 nvData[4] = { devIdx, vbus_mV,
+                                         (uint32)status.cc2Polarity,
+                                         (uint32)status.isDfp };
+                    NvLog_Write(NVLOG_EVT_USBPD_CONTRACT, NVLOG_SRC_USBPD,
+                                NVLOG_SEV_INFO, nvData);
+                }
+            }
+            break;
+
+        case HPI_EVT_OVER_CURRENT:
+            Debug_Printf("[USBPD %s] WARNING: VBUS Over-Current!\r\n", name);
+            NvLog_WriteU32(NVLOG_EVT_USBPD_FAULT, NVLOG_SRC_USBPD,
+                           NVLOG_SEV_ERROR, ((uint32)devIdx << 8u) | 0x02u);
+            break;
+
+        case HPI_EVT_OVER_VOLTAGE:
+            Debug_Printf("[USBPD %s] WARNING: VBUS Over-Voltage!\r\n", name);
+            NvLog_WriteU32(NVLOG_EVT_USBPD_FAULT, NVLOG_SRC_USBPD,
+                           NVLOG_SEV_ERROR, ((uint32)devIdx << 8u) | 0x01u);
+            break;
+
+        case HPI_EVT_DP_MODE_ENTERED:
+        case HPI_EVT_DP_STATUS_UPDATE:
+            Debug_Printf("[USBPD %s] DP event %s (0x%02X)\r\n",
+                         name, Cypd_EventName(ev->code), ev->code);
+            break;
+
+        /* AMD embedded events: decoded and logged in Phase 1. The handshake
+         * reactions arrive in later phases (0xE0 -> Phase 3, 0xC0 -> Phase 5,
+         * 0xE1-0xE3 -> Phase 6). */
+        case HPI_EVT_AMD_APU_REQUEST:
+        case HPI_EVT_AMD_APU_TIMEOUT:
+        case HPI_EVT_AMD_HPD_LOW_HIGH:
+        case HPI_EVT_AMD_HPD_HIGH_LOW:
+        case HPI_EVT_AMD_HPD_IRQ:
+            Debug_Printf("[USBPD %s] AMD event %s (0x%02X), %u data byte(s)\r\n",
+                         name, Cypd_EventName(ev->code), ev->code,
+                         (unsigned)ev->dataLen);
+            break;
+
+        default:
+            Debug_Printf("[USBPD %s] unhandled event 0x%02X\r\n",
+                         name, ev->code);
+            break;
     }
 
-    if (events & CYPD_EVT_PD_CONTRACT)
-    {
-        s_portState[devIdx] = USBPD_PORT_CONTRACT;
-
-        Cypd_PortStatus_t status;
-        if (Cypd_ReadPortStatus(devIdx, &status) == CYPD_OK)
-        {
-            uint32 vbus_mV = (uint32)status.vbusVoltage_100mV * 100u;
-            Debug_Printf("[USBPD %s] PD CONTRACT: VBUS=%u mV, CC%u, %s\r\n",
-                         name, (unsigned)vbus_mV,
-                         status.cc2Polarity ? 2u : 1u,
-                         status.isDfp ? "DFP" : "UFP");
-
-            uint32 nvData[4] = { devIdx, vbus_mV,
-                                 (uint32)status.cc2Polarity,
-                                 (uint32)status.isDfp };
-            NvLog_Write(NVLOG_EVT_USBPD_CONTRACT, NVLOG_SRC_USBPD,
-                        NVLOG_SEV_INFO, nvData);
-        }
-    }
-
-    /* v0.2: DP HPD events from PD controller */
-    if (events & HPI_EVT_DP_HPD)
-    {
-        /* Read HPD state from HPI to determine HIGH/LOW/IRQ */
-        /* For now, map alt-mode active → HPD HIGH, inactive → HPD LOW */
-        UsbPd_HpiState_t *hpi = &s_hpiState[devIdx];
-        if (hpi->altModeStatus & (HPI_ALT_DP_ACTIVE | HPI_ALT_USB4_ACTIVE))
-        {
-            UsbPd_Hpd_ProcessEvent(devIdx, HPD_EVENT_HIGH);
-        }
-        else
-        {
-            UsbPd_Hpd_ProcessEvent(devIdx, HPD_EVENT_LOW);
-        }
-    }
-
-    if (events & CYPD_EVT_VBUS_OVP)
-    {
-        Debug_Printf("[USBPD %s] WARNING: VBUS Over-Voltage!\r\n", name);
-        NvLog_WriteU32(NVLOG_EVT_USBPD_FAULT, NVLOG_SRC_USBPD,
-                       NVLOG_SEV_ERROR,
-                       ((uint32)devIdx << 8u) | 0x01u);
-    }
-
-    if (events & CYPD_EVT_VBUS_OCP)
-    {
-        Debug_Printf("[USBPD %s] WARNING: VBUS Over-Current!\r\n", name);
-        NvLog_WriteU32(NVLOG_EVT_USBPD_FAULT, NVLOG_SRC_USBPD,
-                       NVLOG_SEV_ERROR,
-                       ((uint32)devIdx << 8u) | 0x02u);
-    }
-
-    /* Refresh full HPI state after any event */
+    /* Refresh the cached HPI/APU state after any event. */
     prv_RefreshHpiState(devIdx);
 }
 
-static void prv_ServiceDevice(uint8 devIdx, uint8 intr)
+/**
+ * Drain and dispatch every pending HPI message for one controller.
+ * @param pServiced Output: number of messages handled (0 = spurious INT).
+ * @return CYPD_OK if the service completed, or an I2C error.
+ */
+static Cypd_Status_t prv_ServiceDevice(uint8 devIdx, uint8 *pServiced)
 {
-    uint8 clearMask = 0u;
+    Cypd_Event_t evts[USBPD_MAX_EVENTS_PER_SVC];
+    uint8 count = 0u;
+    uint8 i;
+    Cypd_Status_t st;
 
-    if (intr & CYPD_INTR_PORT_EVENT)
+    *pServiced = 0u;
+    st = Cypd_ServiceInterrupts(devIdx, evts, USBPD_MAX_EVENTS_PER_SVC, &count);
+    if (st != CYPD_OK)
     {
-        uint32 events = 0u;
-        if (Cypd_ReadPortEvent(devIdx, &events) == CYPD_OK)
-        {
-            prv_HandleEvent(devIdx, events);
-            clearMask |= CYPD_INTR_PORT_EVENT;
-        }
+        return st;
     }
-
-    if (clearMask != 0u)
+    for (i = 0u; i < count; i++)
     {
-        Cypd_ClearIntr(devIdx, clearMask);
+        prv_HandleMessage(devIdx, &evts[i]);
     }
+    *pServiced = count;
+    return CYPD_OK;
 }
 
 /**
@@ -187,7 +234,19 @@ static boolean prv_BringUpDevice(uint8 devIdx)
     if (st != CYPD_OK)
     {
         s_devPresent[devIdx] = FALSE;
-        Debug_Printf("[USBPD %s] INIT FAILED (err=%d) — polling disabled\r\n",
+        Debug_Printf("[USBPD %s] INIT FAILED (err=%d) - polling disabled\r\n",
+                     CYPD_DEVICES[devIdx].name, (int)st);
+        return FALSE;
+    }
+
+    /* Run the HPIv2 bring-up handshake (drain Reset-Complete, program
+     * EVENT_MASK, send EC-Init-Complete). Treat a failure here as a failed
+     * bring-up so the periodic recovery path retries the whole sequence. */
+    st = Cypd_HpiInit(devIdx);
+    if (st != CYPD_OK)
+    {
+        s_devPresent[devIdx] = FALSE;
+        Debug_Printf("[USBPD %s] HPI INIT FAILED (err=%d) - polling disabled\r\n",
                      CYPD_DEVICES[devIdx].name, (int)st);
         return FALSE;
     }
@@ -283,14 +342,16 @@ void UsbPdManager_Run(void)
 
         if (Cypd_IsIntAsserted(i))
         {
-            uint8 intr = 0u;
-            if (Cypd_ReadIntrReg(i, &intr) != CYPD_OK)
+            uint8 serviced = 0u;
+
+            /* Drain and dispatch every queued HPI message. */
+            if (prv_ServiceDevice(i, &serviced) != CYPD_OK)
             {
                 s_devRuntimeFails[i]++;
                 if (s_devRuntimeFails[i] >= USBPD_RUNTIME_FAIL_LIMIT)
                 {
                     s_devPresent[i] = FALSE;
-                    Debug_Printf("[USBPD %s] I2C failed %u times — disabling\r\n",
+                    Debug_Printf("[USBPD %s] I2C failed %u times - disabling\r\n",
                                  CYPD_DEVICES[i].name,
                                  (unsigned)s_devRuntimeFails[i]);
                     Cypd_RecoverBus(i);
@@ -300,14 +361,16 @@ void UsbPdManager_Run(void)
 
             s_devRuntimeFails[i] = 0u;
 
-            if (intr == 0u)
+            /* INT_L asserted but nothing in the queue: count as spurious and
+             * disable the port if it stays stuck low. */
+            if (serviced == 0u)
             {
                 s_devSpuriousCount[i]++;
                 if (s_devSpuriousCount[i] >= USBPD_SPURIOUS_INT_LIMIT)
                 {
                     s_devPresent[i] = FALSE;
                     Debug_Printf("[USBPD %s] INT_L stuck low (%u spurious) "
-                                 "— disabling\r\n",
+                                 "- disabling\r\n",
                                  CYPD_DEVICES[i].name,
                                  (unsigned)s_devSpuriousCount[i]);
                 }
@@ -315,7 +378,6 @@ void UsbPdManager_Run(void)
             }
 
             s_devSpuriousCount[i] = 0u;
-            prv_ServiceDevice(i, intr);
         }
         else
         {

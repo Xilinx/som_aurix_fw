@@ -51,10 +51,12 @@
 #define HPI_TC_ATTACHED_DEV     (0x07u << 2)
 #define HPI_TC_CURRENT_LEVEL    (0x03u << 6)
 
-/* PD_STATUS bit positions */
-#define HPI_PD_CONTRACT_EXISTS  (1u << 0)
-#define HPI_PD_PORT_ROLE        (1u << 6)   /* 0=sink, 1=source */
-#define HPI_PD_DATA_ROLE        (1u << 7)   /* 0=UFP, 1=DFP */
+/* PD_STATUS (0x1008) bit positions — per HPI spec Table 74.
+ * Phase 1 fix: the CURRENT data role is bit 6 and the CURRENT power role is
+ * bit 8. The old header used bits 6 and 7, so the reported roles were wrong. */
+#define HPI_PD_CONTRACT_EXISTS  (1u << 0)   /* contract flag (derived)       */
+#define HPI_PD_DATA_ROLE        (1u << 6)   /* b6: 1 = DFP, 0 = UFP          */
+#define HPI_PD_PORT_ROLE        (1u << 8)   /* b8: 1 = source, 0 = sink      */
 #define HPI_PD_CABLE_TYPE       (1u << 22)
 #define HPI_PD_EMCA_PRESENT     (1u << 24)
 
