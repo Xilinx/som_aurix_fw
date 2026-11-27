@@ -21,6 +21,10 @@
 #define CYPD_RESP_TIMEOUT_MS        20u
 /* Spec: INTR# may re-assert up to ~50 us after the EC clears INTR_REG. */
 #define CYPD_INTR_RECHECK_US        60u
+/* Minimum settle time after releasing RESET_L before the first I2C poll. */
+#define CYPD_RESET_SETTLE_MS        5u
+/* Interval between boot-readiness polls (see prv_PulseResetAndReadMode). */
+#define CYPD_BOOT_POLL_MS           2u
 
 static boolean s_devInitOk[CYPD_DEVICE_COUNT];
 
@@ -169,7 +173,13 @@ static Cypd_Status_t prv_ReadMessage(uint8 devIdx, uint16 respReg,
         return CYPD_ERR_I2C;
     }
 
-    pEv->code    = (uint8)(hdr[0] & HPI_RESP_CODE_MASK);
+    /* Keep the FULL byte as the code. The spec's event codes already include
+     * the b7 "event" flag (0x80, 0x84, 0x86, ...), and the command-response
+     * codes have b7 = 0 (0x00, 0x02, 0x05, ...), so the two sets never
+     * overlap. Masking b7 off here would be wrong: 0x84 would become 0x04 and
+     * never match the 0x84 the manager compares against, and 0x80 -> 0x00 /
+     * 0x82 -> 0x02 would collide with the NO_RESPONSE / SUCCESS codes. */
+    pEv->code    = hdr[0];
     pEv->isEvent = (boolean)((hdr[0] & HPI_RESP_IS_EVENT) != 0u);
     pEv->port    = port;
     pEv->dataLen = (hdr[1] <= CYPD_EVENT_DATA_MAX) ? hdr[1] : CYPD_EVENT_DATA_MAX;
@@ -341,17 +351,43 @@ Cypd_Status_t Cypd_ReadDeviceMode(uint8 devIdx, uint16 *pMode)
     return CYPD_OK;
 }
 
-/* Toggle RESET_L and wait for boot; return the DEVICE_MODE read afterwards. */
+/*
+ * Toggle RESET_L and wait for the controller to finish booting, then return
+ * the DEVICE_MODE it reports.
+ *
+ * We POLL for readiness instead of using one fixed delay. The reason is the
+ * EC-Init-Complete deadline: the chip gives the EC at most 100 ms AFTER its
+ * "Reset Complete" notification to send EC-Init-Complete, and it raises Reset
+ * Complete only once it has booted. A fixed blind wait (reset-release + 100 ms)
+ * pushes our EVENT_MASK / EC-Init-Complete writes to a point whose margin
+ * inside that window depends on the unknown boot time. By polling DEVICE_MODE
+ * and returning the instant the chip answers, the caller sends EC-Init-Complete
+ * promptly after Reset Complete, with comfortable margin. CYPD_BOOT_DELAY_MS is
+ * reused only as the upper bound on how long we wait before giving up.
+ */
 static Cypd_Status_t prv_PulseResetAndReadMode(uint8 devIdx, uint16 *pMode)
 {
     const Cypd_DevCfg_t *dev = &CYPD_DEVICES[devIdx];
+    uint32 tStart;
+    Cypd_Status_t st;
 
     IfxPort_setPinLow(AppPin_GetPort(dev->resetPin.portIdx), dev->resetPin.pinIdx);
     Stm_DelayMs(CYPD_RESET_PULSE_MS);
     IfxPort_setPinHigh(AppPin_GetPort(dev->resetPin.portIdx), dev->resetPin.pinIdx);
-    Stm_DelayMs(CYPD_BOOT_DELAY_MS);
 
-    return Cypd_ReadDeviceMode(devIdx, pMode);
+    Stm_DelayMs(CYPD_RESET_SETTLE_MS);
+    tStart = Stm_GetTimeMs();
+    do
+    {
+        st = Cypd_ReadDeviceMode(devIdx, pMode);
+        if (st == CYPD_OK)
+        {
+            return CYPD_OK;         /* chip is up: proceed immediately */
+        }
+        Stm_DelayMs(CYPD_BOOT_POLL_MS);
+    } while ((Stm_GetTimeMs() - tStart) < CYPD_BOOT_DELAY_MS);
+
+    return st;                      /* timed out: return the last I2C error */
 }
 
 Cypd_Status_t Cypd_HardReset(uint8 devIdx)
