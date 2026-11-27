@@ -35,15 +35,10 @@
 #define HPI_PORT_PD_CTRL            0x0026u
 #define HPI_PORT_DP_HPD_CTRL        0x0060u  /* Vendor-specific HPD control */
 
-/* Interrupt/event register bit positions */
-#define HPI_EVT_TYPE_C_ATTACH   (1u << 0)
-#define HPI_EVT_TYPE_C_DETACH   (1u << 1)
-#define HPI_EVT_PD_CONTRACT     (1u << 2)
-#define HPI_EVT_ALT_MODE        (1u << 4)
-#define HPI_EVT_DP_HPD          (1u << 8)
-#define HPI_EVT_VBUS_OV         (1u << 10)
-#define HPI_EVT_VBUS_OC         (1u << 11)
-#define HPI_EVT_ERROR           (1u << 15)
+/* NOTE: HPI event codes (HPI_EVT_*) live in UsbPd_HpiRegs.h as one-byte
+ * message codes (0x84 connect, 0x86 contract, ...). The old bit-mask macros
+ * that used to be here described a register that does not exist in HPIv2 and
+ * reused the same names with different values, so they were removed. */
 
 /* TYPE_C_STATUS bit positions */
 #define HPI_TC_CONNECTED        (1u << 0)

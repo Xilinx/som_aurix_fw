@@ -46,8 +46,8 @@
 /*  Device registers (no port offset)                                     */
 /* ====================================================================== */
 #define HPI_REG_DEVICE_MODE         0x0000u  /* R  : image + HPI version   */
-#define HPI_REG_BOOT_MODE_REASON    0x0002u  /* R  : why still in boot     */
-#define HPI_REG_SILICON_ID          0x0004u  /* R  : 2-byte silicon ID     */
+#define HPI_REG_BOOT_MODE_REASON    0x0001u  /* R  : 1 byte, why in boot   */
+#define HPI_REG_SILICON_ID          0x0002u  /* R  : 2-byte silicon ID     */
 #define HPI_REG_INTR_REG            0x0006u  /* RW : interrupt status, W1C */
 #define HPI_REG_JUMP_TO_BOOT        0x0007u  /* W  : jump to bootloader    */
 #define HPI_REG_RESET               0x0008u  /* W  : device/I2C reset      */
@@ -63,7 +63,7 @@
 #define HPI_REG_CURRENT_PDO         0x1010u  /* R  : active PDO (4 bytes)  */
 #define HPI_REG_CURRENT_RDO         0x1014u  /* R  : active RDO (4 bytes)  */
 #define HPI_REG_EVENT_MASK          0x1024u  /* RW : 4-byte event enable   */
-#define HPI_REG_DP_ALT_MODE_STATUS  0x102Bu  /* R  : DP/alt-mode status    */
+#define HPI_REG_ALT_MODE_STATUS     0x102Bu  /* R  : 1-byte alt-mode status */
 #define HPI_REG_PORT_INTR_STATUS    0x1034u  /* R  : live port status bits */
 #define HPI_REG_PORT_USER_REGS      0x1038u  /* RW : AMD handoff area       */
 #define HPI_REG_PD_RESPONSE         0x1400u  /* R  : PORT response/event   */

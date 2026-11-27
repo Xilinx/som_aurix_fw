@@ -831,7 +831,7 @@ static void prv_CmdI2cId(const char *args)
     if (*a == '\0') { Debug_Print("[I2C] usage: i2cid <hex addr, e.g. 54>\r\n"); return; }
     addr = (uint8)prv_AtoiHex(a);                       /* see below */
 
-    st = I2cMaster_ReadReg16_Bus(0u, addr, CYPD_REG_SILICON_ID, buf, 2u);
+    st = I2cMaster_ReadReg16_Bus(0u, addr, HPI_REG_SILICON_ID, buf, 2u);
     if (st == I2C_OK)
         Debug_Printf("[I2C] 0x%02X: SILICON_ID=0x%02X%02X\r\n",
                      (unsigned)addr, (unsigned)buf[1], (unsigned)buf[0]);
@@ -839,7 +839,7 @@ static void prv_CmdI2cId(const char *args)
         Debug_Printf("[I2C] 0x%02X: SILICON_ID read failed (%u) — not HPI?\r\n",
                      (unsigned)addr, (unsigned)st);
 
-    st = I2cMaster_ReadReg16_Bus(0u, addr, CYPD_REG_DEVICE_MODE, buf, 2u);
+    st = I2cMaster_ReadReg16_Bus(0u, addr, HPI_REG_DEVICE_MODE, buf, 2u);
     if (st == I2C_OK)
     {
         uint16 mode = (uint16)(((uint16)buf[1] << 8u) | (uint16)buf[0]);
